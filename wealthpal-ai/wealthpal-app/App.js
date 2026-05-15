@@ -1,16 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, FlatList, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, FlatList, Alert, ActivityIndicator } from 'react-native';
 
 const API_URL = 'https://financial-ai-advisor-app-production.up.railway.app';
 
 export default function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [screen, setScreen] = useState('login'); // login, signup, dashboard
   const [userId, setUserId] = useState(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [backendStatus, setBackendStatus] = useState('Connecting...');
+  const [activeTab, setActiveTab] = useState('dashboard');
   const [transactions, setTransactions] = useState([]);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
   const [chatMessages, setChatMessages] = useState([
@@ -18,8 +20,6 @@ export default function App() {
   ]);
   const [chatInput, setChatInput] = useState('');
   const [loadingChat, setLoadingChat] = useState(false);
-  const [connectedAccounts, setConnectedAccounts] = useState([]);
-  const [linkingBank, setLinkingBank] = useState(false);
   const [dashboardData, setDashboardData] = useState({
     totalBalance: 0,
     monthlySpending: 0,
@@ -41,45 +41,14 @@ export default function App() {
     }
   };
 
-  const handleSignup = async () => {
-    if (!email || !password) {
-      Alert.alert('Error', 'Please enter email and password');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const response = await fetch(`${API_URL}/api/auth/signup`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        setUserId(data.user.id);
-        setIsLoggedIn(true);
-        setEmail('');
-        setPassword('');
-        Alert.alert('Success', 'Account created! Welcome to WealthPal AI');
-      } else {
-        Alert.alert('Error', data.error || 'Signup failed');
-      }
-    } catch (error) {
-      Alert.alert('Error', 'Could not connect to backend');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleLogin = async () => {
     if (!email || !password) {
-      Alert.alert('Error', 'Please enter email and password');
+      setError('Please enter email and password');
       return;
     }
 
     setLoading(true);
+    setError('');
     try {
       const response = await fetch(`${API_URL}/api/auth/login`, {
         method: 'POST',
@@ -89,67 +58,66 @@ export default function App() {
 
       const data = await response.json();
 
-      if (response.ok) {
-        setUserId(data.session.user.id);
-        setIsLoggedIn(true);
-        setEmail('');
-        setPassword('');
-        Alert.alert('Success', 'Logged in successfully!');
-      } else {
-        Alert.alert('Error', data.error || 'Login failed');
+      if (!response.ok) {
+        setError(data.error || 'Login failed');
+        return;
       }
+
+      setUserId(data.session.user.id);
+      setScreen('dashboard');
+      setEmail('');
+      setPassword('');
+      loadDashboardData(data.session.user.id);
     } catch (error) {
-      Alert.alert('Error', 'Could not connect to backend');
+      setError('Could not connect to backend');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleLogout = () => {
-    setIsLoggedIn(false);
-    setUserId(null);
-    setEmail('');
-    setPassword('');
-    setTransactions([]);
-    setChatMessages([{ id: '0', role: 'assistant', text: 'Hi! I\'m your financial assistant. Ask me anything about your finances!' }]);
-    setConnectedAccounts([]);
-    setDashboardData({
-      totalBalance: 0,
-      monthlySpending: 0,
-      topCategories: [],
-      debts: [],
-    });
-  };
+  const handleSignup = async () => {
+    if (!email || !password || !fullName) {
+      setError('Please fill in all fields');
+      return;
+    }
 
-  const createPlaidLinkToken = async () => {
-    setLinkingBank(true);
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
     try {
-      const response = await fetch(`${API_URL}/api/plaid/create-link-token`, {
+      const response = await fetch(`${API_URL}/api/auth/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId }),
+        body: JSON.stringify({ email, password }),
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        Alert.alert(
-          'Bank Linking',
-          'Link token created! In production, this would open Plaid Link.\n\nFor testing, use sandbox credentials:\nUsername: user_good\nPassword: pass_good',
-          [{ text: 'OK' }]
-        );
-      } else {
-        Alert.alert('Error', 'Failed to create link token');
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(data.error || 'Signup failed');
+        return;
       }
+
+      setUserId(data.user.id);
+      setScreen('dashboard');
+      setEmail('');
+      setPassword('');
+      setFullName('');
+      loadDashboardData(data.user.id);
     } catch (error) {
-      Alert.alert('Error', 'Could not connect to backend');
+      setError('Could not connect to backend');
     } finally {
-      setLinkingBank(false);
+      setLoading(false);
     }
   };
 
-  const loadDashboardData = async () => {
+  const loadDashboardData = async (uid) => {
     try {
-      const response = await fetch(`${API_URL}/api/ai/financial-summary/${userId}`);
+      const response = await fetch(`${API_URL}/api/ai/financial-summary/${uid}`);
       if (response.ok) {
         const data = await response.json();
         setDashboardData(data);
@@ -159,16 +127,26 @@ export default function App() {
     }
   };
 
-  useEffect(() => {
-    if (isLoggedIn) {
-      loadDashboardData();
-    }
-  }, [isLoggedIn]);
+  const handleLogout = () => {
+    setScreen('login');
+    setUserId(null);
+    setEmail('');
+    setPassword('');
+    setFullName('');
+    setError('');
+    setTransactions([]);
+    setChatMessages([{ id: '0', role: 'assistant', text: 'Hi! I\'m your financial assistant. Ask me anything about your finances!' }]);
+    setDashboardData({
+      totalBalance: 0,
+      monthlySpending: 0,
+      topCategories: [],
+      debts: [],
+    });
+  };
 
   const loadTransactions = async () => {
     setLoadingTransactions(true);
     try {
-      // For now, show sample transactions
       const sampleTransactions = [
         { id: '1', merchant: 'Walmart', amount: 45.50, category: 'Groceries', date: '2026-05-15' },
         { id: '2', merchant: 'Shell Gas', amount: 60.00, category: 'Gas', date: '2026-05-14' },
@@ -191,6 +169,7 @@ export default function App() {
       text: chatInput,
     };
     setChatMessages([...chatMessages, userMessage]);
+    const message = chatInput;
     setChatInput('');
     setLoadingChat(true);
 
@@ -198,7 +177,7 @@ export default function App() {
       const response = await fetch(`${API_URL}/api/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, message: chatInput }),
+        body: JSON.stringify({ userId, message }),
       });
 
       if (response.ok) {
@@ -230,12 +209,16 @@ export default function App() {
   };
 
   // LOGIN SCREEN
-  if (!isLoggedIn) {
+  if (screen === 'login') {
     return (
       <View style={styles.container}>
-        <View style={styles.authContainer}>
+        <ScrollView style={styles.authContainer}>
           <Text style={styles.authTitle}>WealthPal AI</Text>
           <Text style={styles.authSubtitle}>Your AI Finance Assistant</Text>
+
+          {error ? <View style={styles.errorBox}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View> : null}
 
           <TextInput
             style={styles.authInput}
@@ -244,6 +227,7 @@ export default function App() {
             value={email}
             onChangeText={setEmail}
             keyboardType="email-address"
+            editable={!loading}
           />
 
           <TextInput
@@ -253,35 +237,103 @@ export default function App() {
             value={password}
             onChangeText={setPassword}
             secureTextEntry
+            editable={!loading}
           />
 
           <TouchableOpacity
-            style={styles.authButton}
+            style={[styles.authButton, loading && styles.buttonDisabled]}
             onPress={handleLogin}
             disabled={loading}
           >
-            <Text style={styles.authButtonText}>
-              {loading ? 'Loading...' : 'Login'}
-            </Text>
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.authButtonText}>Login</Text>
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.authButton, styles.signupButton]}
-            onPress={handleSignup}
+            style={[styles.signupLink]}
+            onPress={() => { setScreen('signup'); setError(''); }}
             disabled={loading}
           >
-            <Text style={styles.authButtonText}>
-              {loading ? 'Loading...' : 'Sign Up'}
-            </Text>
+            <Text style={styles.signupText}>Don't have an account? Sign up</Text>
           </TouchableOpacity>
 
           <Text style={styles.status}>{backendStatus}</Text>
-        </View>
+        </ScrollView>
       </View>
     );
   }
 
-  // MAIN APP SCREEN
+  // SIGNUP SCREEN
+  if (screen === 'signup') {
+    return (
+      <View style={styles.container}>
+        <ScrollView style={styles.authContainer}>
+          <Text style={styles.authTitle}>Create Account</Text>
+          <Text style={styles.authSubtitle}>Join WealthPal AI</Text>
+
+          {error ? <View style={styles.errorBox}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View> : null}
+
+          <TextInput
+            style={styles.authInput}
+            placeholder="Full Name"
+            placeholderTextColor="#64748b"
+            value={fullName}
+            onChangeText={setFullName}
+            editable={!loading}
+          />
+
+          <TextInput
+            style={styles.authInput}
+            placeholder="Email"
+            placeholderTextColor="#64748b"
+            value={email}
+            onChangeText={setEmail}
+            keyboardType="email-address"
+            editable={!loading}
+          />
+
+          <TextInput
+            style={styles.authInput}
+            placeholder="Password (min 6 characters)"
+            placeholderTextColor="#64748b"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+            editable={!loading}
+          />
+
+          <TouchableOpacity
+            style={[styles.authButton, loading && styles.buttonDisabled]}
+            onPress={handleSignup}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.authButtonText}>Sign Up</Text>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.signupLink}
+            onPress={() => { setScreen('login'); setError(''); }}
+            disabled={loading}
+          >
+            <Text style={styles.signupText}>Already have an account? Login</Text>
+          </TouchableOpacity>
+
+          <Text style={styles.status}>{backendStatus}</Text>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  // DASHBOARD SCREEN
   const renderScreen = () => {
     switch(activeTab) {
       case 'dashboard':
@@ -381,29 +433,6 @@ export default function App() {
             </View>
           </View>
         );
-      case 'bank':
-        return (
-          <ScrollView style={styles.bankContainer}>
-            <Text style={styles.bankTitle}>Connect Your Bank</Text>
-
-            <TouchableOpacity 
-              style={styles.plaidButton}
-              onPress={createPlaidLinkToken}
-              disabled={linkingBank}
-            >
-              <Text style={styles.plaidButtonText}>
-                {linkingBank ? 'Connecting...' : '🏦 Connect with Plaid'}
-              </Text>
-            </TouchableOpacity>
-
-            <View style={styles.benefitsBox}>
-              <Text style={styles.benefitsTitle}>What you get:</Text>
-              <Text style={styles.benefit}>✓ Automatic transaction sync</Text>
-              <Text style={styles.benefit}>✓ Real-time balance updates</Text>
-              <Text style={styles.benefit}>✓ Smart spending insights</Text>
-            </View>
-          </ScrollView>
-        );
       default:
         return <Text style={styles.screenText}>Dashboard</Text>;
     }
@@ -436,13 +465,6 @@ export default function App() {
         >
           <Text style={styles.tabText}>Chat</Text>
         </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={[styles.tab, activeTab === 'bank' && styles.activeTab]}
-          onPress={() => setActiveTab('bank')}
-        >
-          <Text style={styles.tabText}>Bank</Text>
-        </TouchableOpacity>
       </View>
     </View>
   );
@@ -455,20 +477,31 @@ const styles = StyleSheet.create({
   },
   authContainer: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
     padding: 24,
+    paddingTop: 60,
   },
   authTitle: {
     fontSize: 32,
     fontWeight: 'bold',
     color: '#fff',
     marginBottom: 8,
+    textAlign: 'center',
   },
   authSubtitle: {
     fontSize: 16,
     color: '#94a3b8',
     marginBottom: 32,
+    textAlign: 'center',
+  },
+  errorBox: {
+    backgroundColor: '#7f1d1d',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+  },
+  errorText: {
+    color: '#fecaca',
+    fontSize: 14,
   },
   authInput: {
     width: '100%',
@@ -490,20 +523,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
-  signupButton: {
-    backgroundColor: '#1e293b',
-    borderWidth: 1,
-    borderColor: '#334155',
+  buttonDisabled: {
+    opacity: 0.6,
   },
   authButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
   },
+  signupLink: {
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  signupText: {
+    color: '#3b82f6',
+    fontSize: 14,
+  },
   status: {
     color: '#94a3b8',
     fontSize: 12,
     marginTop: 24,
+    textAlign: 'center',
   },
   content: {
     flex: 1,
@@ -702,50 +742,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: '600',
-  },
-  bankContainer: {
-    flex: 1,
-    padding: 16,
-  },
-  bankTitle: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 24,
-  },
-  plaidButton: {
-    backgroundColor: '#3b82f6',
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  plaidButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  benefitsBox: {
-    backgroundColor: '#1e293b',
-    borderRadius: 8,
-    padding: 16,
-  },
-  benefitsTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#94a3b8',
-    marginBottom: 8,
-  },
-  benefit: {
-    fontSize: 13,
-    color: '#cbd5e1',
-    marginBottom: 6,
-  },
-  screenText: {
-    color: '#fff',
-    fontSize: 24,
-    fontWeight: 'bold',
   },
   tabBar: {
     flexDirection: 'row',
