@@ -13,6 +13,18 @@ export default function App() {
   ]);
   const [chatInput, setChatInput] = useState('');
   const [loadingChat, setLoadingChat] = useState(false);
+  const [dashboardData, setDashboardData] = useState({
+    totalBalance: 5234.56,
+    monthlySpending: 1842.33,
+    topCategories: [
+      { name: 'Groceries', amount: 520 },
+      { name: 'Gas', amount: 280 },
+      { name: 'Dining', amount: 215 },
+    ],
+    debts: [
+      { name: 'Car Loan', balance: 10500, interest: 5.2 },
+    ],
+  });
 
   useEffect(() => {
     testBackend();
@@ -49,7 +61,6 @@ export default function App() {
   const sendChatMessage = async () => {
     if (!chatInput.trim()) return;
 
-    // Add user message
     const userMessage = {
       id: Date.now().toString(),
       role: 'user',
@@ -60,7 +71,6 @@ export default function App() {
     setLoadingChat(true);
 
     try {
-      // Call backend chat endpoint
       const response = await fetch(`${API_URL}/api/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -103,10 +113,49 @@ export default function App() {
     switch(activeTab) {
       case 'dashboard':
         return (
-          <View style={styles.screenContent}>
-            <Text style={styles.screenText}>Dashboard</Text>
-            <Text style={styles.statusText}>{backendStatus}</Text>
-          </View>
+          <ScrollView style={styles.dashboardContainer}>
+            <Text style={styles.greeting}>Your Finances</Text>
+            <Text style={styles.status}>{backendStatus}</Text>
+
+            {/* Total Balance */}
+            <View style={styles.card}>
+              <Text style={styles.cardLabel}>Total Balance</Text>
+              <Text style={styles.balanceAmount}>${dashboardData.totalBalance.toFixed(2)}</Text>
+            </View>
+
+            {/* Monthly Spending */}
+            <View style={[styles.card, styles.spendingCard]}>
+              <Text style={styles.cardLabel}>This Month's Spending</Text>
+              <Text style={styles.spendingAmount}>${dashboardData.monthlySpending.toFixed(2)}</Text>
+            </View>
+
+            {/* Top Categories */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Spending by Category</Text>
+              {dashboardData.topCategories.map((cat, idx) => (
+                <View key={idx} style={styles.categoryRow}>
+                  <Text style={styles.categoryName}>{cat.name}</Text>
+                  <Text style={styles.categoryAmount}>${cat.amount.toFixed(2)}</Text>
+                </View>
+              ))}
+            </View>
+
+            {/* Debts */}
+            {dashboardData.debts.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Active Debts</Text>
+                {dashboardData.debts.map((debt, idx) => (
+                  <View key={idx} style={styles.debtRow}>
+                    <View>
+                      <Text style={styles.debtName}>{debt.name}</Text>
+                      <Text style={styles.debtRate}>{debt.interest}% interest</Text>
+                    </View>
+                    <Text style={styles.debtBalance}>${debt.balance.toFixed(2)}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </ScrollView>
         );
       case 'transactions':
         return (
@@ -227,20 +276,99 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
   },
-  screenContent: {
+  dashboardContainer: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+    padding: 16,
+    paddingTop: 20,
+  },
+  greeting: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 8,
+  },
+  status: {
+    color: '#94a3b8',
+    fontSize: 14,
+    marginBottom: 16,
+  },
+  card: {
+    backgroundColor: '#1e293b',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: '#3b82f6',
+  },
+  spendingCard: {
+    borderLeftColor: '#ef4444',
+  },
+  cardLabel: {
+    color: '#94a3b8',
+    fontSize: 13,
+    marginBottom: 8,
+  },
+  balanceAmount: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  spendingAmount: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  section: {
+    marginTop: 16,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 12,
+  },
+  categoryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: '#1e293b',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  categoryName: {
+    color: '#fff',
+    fontSize: 14,
+  },
+  categoryAmount: {
+    color: '#3b82f6',
+    fontWeight: '600',
+  },
+  debtRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: '#1e293b',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  debtName: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  debtRate: {
+    color: '#94a3b8',
+    fontSize: 12,
+  },
+  debtBalance: {
+    color: '#ef4444',
+    fontWeight: '600',
   },
   screenText: {
     color: '#fff',
     fontSize: 24,
     fontWeight: 'bold',
-  },
-  statusText: {
-    color: '#94a3b8',
-    fontSize: 14,
-    marginTop: 12,
   },
   transactionsContainer: {
     flex: 1,
