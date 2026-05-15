@@ -11,9 +11,10 @@
       "resizeMode": "contain",
       "backgroundColor": "#0f172a"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
-      "supportsTabletMode": true,
       "bundleIdentifier": "com.wealthpal.ai"
     },
     "android": {
@@ -23,8 +24,19 @@
       },
       "package": "com.wealthpal.ai"
     },
-      "web": {
-    "favicon": ""
-  }
+    "web": {
+      "favicon": ""
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "9a50c8f6-f805-44c0-8a47-bdac5df0e438"
+      }
+    }
   }
 }
