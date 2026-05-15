@@ -1,5 +1,6 @@
 {
   "expo": {
+    "sdkVersion": "49",
     "name": "WealthPal AI",
     "slug": "wealthpal-ai",
     "version": "1.0.0",
@@ -11,9 +12,7 @@
       "resizeMode": "contain",
       "backgroundColor": "#0f172a"
     },
-    "assetBundlePatterns": [
-      "**/*"
-    ],
+    "assetBundlePatterns": ["**/*"],
     "ios": {
       "bundleIdentifier": "com.wealthpal.ai"
     },
@@ -27,9 +26,7 @@
     "web": {
       "favicon": ""
     },
-    "plugins": [
-      "expo-router"
-    ],
+    "plugins": ["expo-router"],
     "extra": {
       "router": {
         "origin": false
