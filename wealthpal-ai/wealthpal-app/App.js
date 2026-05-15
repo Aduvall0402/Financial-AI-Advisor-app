@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, FlatList } from 'react-native';
 
 const API_URL = 'https://financial-ai-advisor-app-production.up.railway.app';
 
@@ -8,6 +8,11 @@ export default function App() {
   const [backendStatus, setBackendStatus] = useState('Connecting...');
   const [transactions, setTransactions] = useState([]);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
+  const [chatMessages, setChatMessages] = useState([
+    { id: '0', role: 'assistant', text: 'Hi! I\'m your financial assistant. Ask me anything about your finances!' }
+  ]);
+  const [chatInput, setChatInput] = useState('');
+  const [loadingChat, setLoadingChat] = useState(false);
 
   useEffect(() => {
     testBackend();
@@ -26,8 +31,6 @@ export default function App() {
   const loadTransactions = async () => {
     setLoadingTransactions(true);
     try {
-      // For now, we'll show sample data
-      // In production, you'd fetch from backend with user ID
       const sampleTransactions = [
         { id: '1', merchant: 'Walmart', amount: 45.50, category: 'Groceries', date: '2026-05-15' },
         { id: '2', merchant: 'Shell Gas', amount: 60.00, category: 'Gas', date: '2026-05-14' },
@@ -40,6 +43,59 @@ export default function App() {
       console.error('Error loading transactions:', error);
     } finally {
       setLoadingTransactions(false);
+    }
+  };
+
+  const sendChatMessage = async () => {
+    if (!chatInput.trim()) return;
+
+    // Add user message
+    const userMessage = {
+      id: Date.now().toString(),
+      role: 'user',
+      text: chatInput,
+    };
+    setChatMessages([...chatMessages, userMessage]);
+    setChatInput('');
+    setLoadingChat(true);
+
+    try {
+      // Call backend chat endpoint
+      const response = await fetch(`${API_URL}/api/ai/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: 'demo-user',
+          message: chatInput,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const assistantMessage = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          text: data.response,
+        };
+        setChatMessages(prev => [...prev, assistantMessage]);
+      } else {
+        const errorMessage = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          text: '❌ Error: Could not get response from AI',
+        };
+        setChatMessages(prev => [...prev, errorMessage]);
+      }
+    } catch (error) {
+      console.error('Error sending chat:', error);
+      const errorMessage = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        text: '❌ Error: Could not reach backend',
+      };
+      setChatMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setLoadingChat(false);
     }
   };
 
@@ -84,7 +140,39 @@ export default function App() {
           </ScrollView>
         );
       case 'chat':
-        return <Text style={styles.screenText}>Chat Coming Soon</Text>;
+        return (
+          <View style={styles.chatContainer}>
+            <FlatList
+              data={chatMessages}
+              renderItem={({ item }) => (
+                <View style={[styles.messageBubble, item.role === 'user' && styles.userBubble]}>
+                  <Text style={[styles.messageText, item.role === 'user' && styles.userText]}>
+                    {item.text}
+                  </Text>
+                </View>
+              )}
+              keyExtractor={(item) => item.id}
+              style={styles.messagesList}
+            />
+            <View style={styles.inputContainer}>
+              <TextInput
+                style={styles.input}
+                placeholder="Ask about your finances..."
+                placeholderTextColor="#64748b"
+                value={chatInput}
+                onChangeText={setChatInput}
+                editable={!loadingChat}
+              />
+              <TouchableOpacity 
+                style={[styles.sendButton, loadingChat && styles.sendButtonDisabled]}
+                onPress={sendChatMessage}
+                disabled={loadingChat || !chatInput.trim()}
+              >
+                <Text style={styles.sendText}>Send</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        );
       case 'bank':
         return <Text style={styles.screenText}>Bank Link Coming Soon</Text>;
       default:
@@ -208,6 +296,64 @@ const styles = StyleSheet.create({
   category: {
     color: '#3b82f6',
     fontSize: 12,
+  },
+  chatContainer: {
+    flex: 1,
+    flexDirection: 'column',
+  },
+  messagesList: {
+    flex: 1,
+    padding: 16,
+  },
+  messageBubble: {
+    backgroundColor: '#1e293b',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    maxWidth: '80%',
+  },
+  userBubble: {
+    backgroundColor: '#3b82f6',
+    alignSelf: 'flex-end',
+  },
+  messageText: {
+    color: '#e2e8f0',
+    fontSize: 14,
+    lineHeight: 18,
+  },
+  userText: {
+    color: '#fff',
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    padding: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#1e293b',
+    backgroundColor: '#0f172a',
+  },
+  input: {
+    flex: 1,
+    backgroundColor: '#1e293b',
+    color: '#fff',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginRight: 8,
+    fontSize: 14,
+  },
+  sendButton: {
+    backgroundColor: '#3b82f6',
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    justifyContent: 'center',
+  },
+  sendButtonDisabled: {
+    backgroundColor: '#475569',
+  },
+  sendText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
   },
   tabBar: {
     flexDirection: 'row',
