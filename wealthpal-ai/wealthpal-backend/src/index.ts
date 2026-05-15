@@ -1,17 +1,16 @@
+import dotenv from "dotenv";
+dotenv.config();
+
 import express, { Express, Request, Response } from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import supabase from "./supabase";
 import * as plaidService from "./plaidService";
 import * as openaiService from "./openaiService";
-dotenv.config();
+import * as auth from "./auth";
 
 const app: Express = express();
 const PORT = process.env.PORT || 3000;
 
-// ============================================
-// MIDDLEWARE
-// ============================================
 app.use(express.json());
 app.use(cors());
 
@@ -23,10 +22,61 @@ app.get("/health", (req: Request, res: Response) => {
 });
 
 // ============================================
+// AUTH ROUTES
+// ============================================
+
+// Signup
+app.post("/api/auth/signup", async (req: Request, res: Response) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password required" });
+    }
+
+    const { user, error } = await auth.signupUser(email, password);
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    if (user) {
+      await auth.createUserProfile(user.id, email);
+    }
+
+    res.json({ user, message: "Signup successful" });
+  } catch (error) {
+    console.error("Error signing up:", error);
+    res.status(500).json({ error: "Signup failed" });
+  }
+});
+
+// Login
+app.post("/api/auth/login", async (req: Request, res: Response) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password required" });
+    }
+
+    const { session, error } = await auth.loginUser(email, password);
+
+    if (error) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    res.json({ session, message: "Login successful" });
+  } catch (error) {
+    console.error("Error logging in:", error);
+    res.status(500).json({ error: "Login failed" });
+  }
+});
+
+// ============================================
 // PLAID ROUTES
 // ============================================
 
-// Create Plaid Link Token
 app.post("/api/plaid/create-link-token", async (req: Request, res: Response) => {
   try {
     const { userId } = req.body;
@@ -43,30 +93,39 @@ app.post("/api/plaid/create-link-token", async (req: Request, res: Response) => 
   }
 });
 
-// Exchange Public Token
 app.post("/api/plaid/exchange-token", async (req: Request, res: Response) => {
   try {
     const { publicToken, userId } = req.body;
 
     if (!publicToken || !userId) {
-      return res
-        .status(400)
-        .json({ error: "Public token and user ID required" });
+      return res.status(400).json({ error: "Public token and user ID required" });
     }
 
-    const { accessToken, itemId } =
-      await plaidService.exchangePublicToken(publicToken);
+    const { accessToken, itemId } = await plaidService.exchangePublicToken(publicToken);
 
-    // Store access token in Supabase (encrypted would be better in production)
-    // For now, we'll just return it to the client
-    res.json({ accessToken, itemId });
+    // Store in database
+    const { error } = await supabase
+      .from("accounts")
+      .insert([
+        {
+          user_id: userId,
+          plaid_account_id: itemId,
+          plaid_access_token: accessToken,
+          account_name: "Connected Account",
+          account_type: "checking",
+          current_balance: 0,
+        },
+      ]);
+
+    if (error) throw error;
+
+    res.json({ accessToken, itemId, message: "Account connected" });
   } catch (error) {
     console.error("Error exchanging token:", error);
     res.status(500).json({ error: "Failed to exchange token" });
   }
 });
 
-// Sync Transactions
 app.post("/api/transactions/sync", async (req: Request, res: Response) => {
   try {
     const { userId, accessToken, startDate, endDate } = req.body;
@@ -75,24 +134,22 @@ app.post("/api/transactions/sync", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    // Get transactions from Plaid
     const transactions = await plaidService.getTransactions(
       accessToken,
       startDate,
       endDate
     );
 
-    // Categorize with AI
     const transactionsToCategories = transactions.map((t) => ({
       merchant: t.merchant_name || "Unknown",
       amount: t.amount,
       description: t.name,
     }));
 
-    const categories =
-      await openaiService.categorizeTransactions(transactionsToCategories);
+    const categories = await openaiService.categorizeTransactions(
+      transactionsToCategories
+    );
 
-    // Save to Supabase
     const savedTransactions = [];
     for (const transaction of transactions) {
       const merchant = transaction.merchant_name || "Unknown";
@@ -130,24 +187,24 @@ app.post("/api/transactions/sync", async (req: Request, res: Response) => {
 // AI ROUTES
 // ============================================
 
-// Generate Financial Summary
 app.get("/api/ai/financial-summary/:userId", async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
 
-    // Get user's transactions
     const { data: transactions, error: txError } = await supabase
       .from("transactions")
       .select("*")
       .eq("user_id", userId)
-      .gte("transaction_date", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+      .gte(
+        "transaction_date",
+        new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
+      );
 
     if (txError) throw txError;
 
-    // Calculate summary
-    const monthly_spending = transactions?.reduce((sum, t) => sum + t.amount, 0) || 0;
+    const monthly_spending =
+      transactions?.reduce((sum, t) => sum + t.amount, 0) || 0;
 
-    // Group by category
     const categoryMap: { [key: string]: number } = {};
     transactions?.forEach((t) => {
       categoryMap[t.category] = (categoryMap[t.category] || 0) + t.amount;
@@ -158,7 +215,6 @@ app.get("/api/ai/financial-summary/:userId", async (req: Request, res: Response)
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 5);
 
-    // Get debts
     const { data: debts, error: debtsError } = await supabase
       .from("debts")
       .select("*")
@@ -173,7 +229,7 @@ app.get("/api/ai/financial-summary/:userId", async (req: Request, res: Response)
     }));
 
     const summary = {
-      monthly_income: 0, // Would need to calculate from income transactions
+      monthly_income: 0,
       monthly_spending,
       top_categories,
       debt,
@@ -186,7 +242,6 @@ app.get("/api/ai/financial-summary/:userId", async (req: Request, res: Response)
   }
 });
 
-// Chat Endpoint
 app.post("/api/ai/chat", async (req: Request, res: Response) => {
   try {
     const { userId, message } = req.body;
@@ -195,16 +250,43 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "User ID and message required" });
     }
 
-    // Get financial summary
-    const summaryRes = await fetch(
-      `http://localhost:${PORT}/api/ai/financial-summary/${userId}`
-    );
-    const summary = await summaryRes.json();
+    const { data: summaryData } = await supabase
+      .from("transactions")
+      .select("*")
+      .eq("user_id", userId);
 
-    // Chat with AI
+    const monthly_spending = summaryData?.reduce((sum, t) => sum + t.amount, 0) || 0;
+
+    const categoryMap: { [key: string]: number } = {};
+    summaryData?.forEach((t) => {
+      categoryMap[t.category] = (categoryMap[t.category] || 0) + t.amount;
+    });
+
+    const top_categories = Object.entries(categoryMap)
+      .map(([name, amount]) => ({ name, amount }))
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 5);
+
+    const { data: debts } = await supabase
+      .from("debts")
+      .select("*")
+      .eq("user_id", userId);
+
+    const debt = (debts || []).map((d) => ({
+      name: d.debt_name,
+      balance: d.current_balance,
+      interest: d.interest_rate,
+    }));
+
+    const summary = {
+      monthly_income: 0,
+      monthly_spending,
+      top_categories,
+      debt,
+    };
+
     const response = await openaiService.chatWithAssistant(message, summary as any);
 
-    // Save message to database
     await supabase.from("chat_messages").insert([
       { user_id: userId, role: "user", content: message },
       { user_id: userId, role: "assistant", content: response },
