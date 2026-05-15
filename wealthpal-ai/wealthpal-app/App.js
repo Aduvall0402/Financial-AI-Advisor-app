@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, FlatList } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, FlatList, Alert } from 'react-native';
 
 const API_URL = 'https://financial-ai-advisor-app-production.up.railway.app';
 
@@ -13,6 +13,8 @@ export default function App() {
   ]);
   const [chatInput, setChatInput] = useState('');
   const [loadingChat, setLoadingChat] = useState(false);
+  const [connectedAccounts, setConnectedAccounts] = useState([]);
+  const [linkingBank, setLinkingBank] = useState(false);
   const [dashboardData, setDashboardData] = useState({
     totalBalance: 5234.56,
     monthlySpending: 1842.33,
@@ -38,6 +40,43 @@ export default function App() {
     } catch (error) {
       setBackendStatus('❌ Backend Offline');
     }
+  };
+
+  const createPlaidLinkToken = async () => {
+    setLinkingBank(true);
+    try {
+      const response = await fetch(`${API_URL}/api/plaid/create-link-token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: 'demo-user' }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        Alert.alert(
+          'Bank Linking',
+          'Link token created! In production, this would open Plaid Link.\n\nFor now, use sandbox credentials:\nUsername: user_good\nPassword: pass_good',
+          [{ text: 'OK' }]
+        );
+      } else {
+        Alert.alert('Error', 'Failed to create link token');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Could not connect to backend');
+    } finally {
+      setLinkingBank(false);
+    }
+  };
+
+  const addSampleAccount = () => {
+    const sampleAccount = {
+      id: Date.now().toString(),
+      name: 'My Checking Account',
+      type: 'checking',
+      balance: 5234.56,
+    };
+    setConnectedAccounts([...connectedAccounts, sampleAccount]);
+    Alert.alert('Success', 'Sample account added!');
   };
 
   const loadTransactions = async () => {
@@ -117,19 +156,16 @@ export default function App() {
             <Text style={styles.greeting}>Your Finances</Text>
             <Text style={styles.status}>{backendStatus}</Text>
 
-            {/* Total Balance */}
             <View style={styles.card}>
               <Text style={styles.cardLabel}>Total Balance</Text>
               <Text style={styles.balanceAmount}>${dashboardData.totalBalance.toFixed(2)}</Text>
             </View>
 
-            {/* Monthly Spending */}
             <View style={[styles.card, styles.spendingCard]}>
               <Text style={styles.cardLabel}>This Month's Spending</Text>
               <Text style={styles.spendingAmount}>${dashboardData.monthlySpending.toFixed(2)}</Text>
             </View>
 
-            {/* Top Categories */}
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Spending by Category</Text>
               {dashboardData.topCategories.map((cat, idx) => (
@@ -140,7 +176,6 @@ export default function App() {
               ))}
             </View>
 
-            {/* Debts */}
             {dashboardData.debts.length > 0 && (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Active Debts</Text>
@@ -223,7 +258,63 @@ export default function App() {
           </View>
         );
       case 'bank':
-        return <Text style={styles.screenText}>Bank Link Coming Soon</Text>;
+        return (
+          <ScrollView style={styles.bankContainer}>
+            <View style={styles.bankHeader}>
+              <Text style={styles.bankTitle}>Connect Your Bank</Text>
+              <Text style={styles.bankSubtitle}>Link your bank accounts securely</Text>
+            </View>
+
+            {connectedAccounts.length > 0 && (
+              <View style={styles.connectedSection}>
+                <Text style={styles.connectedTitle}>Connected Accounts</Text>
+                {connectedAccounts.map((account) => (
+                  <View key={account.id} style={styles.accountCard}>
+                    <View>
+                      <Text style={styles.accountName}>{account.name}</Text>
+                      <Text style={styles.accountType}>{account.type}</Text>
+                    </View>
+                    <Text style={styles.accountBalance}>${account.balance.toFixed(2)}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            <View style={styles.bankButtonsContainer}>
+              <TouchableOpacity 
+                style={styles.plaidButton}
+                onPress={createPlaidLinkToken}
+                disabled={linkingBank}
+              >
+                <Text style={styles.plaidButtonText}>
+                  {linkingBank ? 'Connecting...' : '🏦 Connect with Plaid'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={styles.sampleButton}
+                onPress={addSampleAccount}
+              >
+                <Text style={styles.sampleButtonText}>Add Sample Account</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.benefitsBox}>
+              <Text style={styles.benefitsTitle}>What you get:</Text>
+              <Text style={styles.benefit}>✓ Automatic transaction sync</Text>
+              <Text style={styles.benefit}>✓ AI-powered categorization</Text>
+              <Text style={styles.benefit}>✓ Real-time balance updates</Text>
+              <Text style={styles.benefit}>✓ Smart spending insights</Text>
+            </View>
+
+            <View style={styles.securityBox}>
+              <Text style={styles.securityTitle}>Your security matters</Text>
+              <Text style={styles.securityText}>
+                We use Plaid, the industry standard for secure bank connections. Your login credentials are never shared with us.
+              </Text>
+            </View>
+          </ScrollView>
+        );
       default:
         return <Text style={styles.screenText}>Dashboard</Text>;
     }
@@ -482,6 +573,123 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: '600',
+  },
+  bankContainer: {
+    flex: 1,
+    padding: 16,
+    paddingTop: 20,
+  },
+  bankHeader: {
+    marginBottom: 24,
+  },
+  bankTitle: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 8,
+  },
+  bankSubtitle: {
+    fontSize: 14,
+    color: '#94a3b8',
+  },
+  connectedSection: {
+    marginBottom: 24,
+  },
+  connectedTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 12,
+  },
+  accountCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#1e293b',
+    padding: 16,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#10b981',
+  },
+  accountName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+    marginBottom: 4,
+  },
+  accountType: {
+    fontSize: 12,
+    color: '#94a3b8',
+  },
+  accountBalance: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#10b981',
+  },
+  bankButtonsContainer: {
+    marginBottom: 24,
+  },
+  plaidButton: {
+    backgroundColor: '#3b82f6',
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  plaidButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  sampleButton: {
+    backgroundColor: '#1e293b',
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  sampleButtonText: {
+    color: '#94a3b8',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  benefitsBox: {
+    backgroundColor: '#1e293b',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 16,
+  },
+  benefitsTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#94a3b8',
+    marginBottom: 8,
+  },
+  benefit: {
+    fontSize: 13,
+    color: '#cbd5e1',
+    marginBottom: 6,
+  },
+  securityBox: {
+    backgroundColor: '#1e293b',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 24,
+  },
+  securityTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#94a3b8',
+    marginBottom: 8,
+  },
+  securityText: {
+    fontSize: 13,
+    color: '#cbd5e1',
+    lineHeight: 18,
   },
   tabBar: {
     flexDirection: 'row',
