@@ -4,12 +4,13 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, FlatLi
 const API_URL = 'https://financial-ai-advisor-app-production.up.railway.app';
 
 export default function App() {
-  const [screen, setScreen] = useState('login'); // login, signup, dashboard
+  const [screen, setScreen] = useState('login');
   const [userId, setUserId] = useState(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [loading, setLoading] = useState(false);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
   const [error, setError] = useState('');
   const [backendStatus, setBackendStatus] = useState('Connecting...');
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -60,14 +61,28 @@ export default function App() {
 
       if (!response.ok) {
         setError(data.error || 'Login failed');
+        setLoading(false);
         return;
       }
 
-      setUserId(data.session.user.id);
-      setScreen('dashboard');
-      setEmail('');
+      const uid = data.session.user.id;
+      setUserId(uid);
+      setEmail(email);
       setPassword('');
-      loadDashboardData(data.session.user.id);
+      setDashboardLoading(true);
+      
+      try {
+        const summaryResponse = await fetch(`${API_URL}/api/ai/financial-summary/${uid}`);
+        if (summaryResponse.ok) {
+          const summaryData = await summaryResponse.json();
+          setDashboardData(summaryData);
+        }
+      } catch (err) {
+        console.error('Error loading summary:', err);
+      }
+      
+      setScreen('dashboard');
+      setDashboardLoading(false);
     } catch (error) {
       setError('Could not connect to backend');
     } finally {
@@ -99,31 +114,33 @@ export default function App() {
 
       if (!response.ok) {
         setError(data.error || 'Signup failed');
+        setLoading(false);
         return;
       }
 
-      setUserId(data.user.id);
-      setScreen('dashboard');
-      setEmail('');
+      const uid = data.user.id;
+      setUserId(uid);
+      setEmail(email);
       setPassword('');
       setFullName('');
-      loadDashboardData(data.user.id);
+      setDashboardLoading(true);
+      
+      try {
+        const summaryResponse = await fetch(`${API_URL}/api/ai/financial-summary/${uid}`);
+        if (summaryResponse.ok) {
+          const summaryData = await summaryResponse.json();
+          setDashboardData(summaryData);
+        }
+      } catch (err) {
+        console.error('Error loading summary:', err);
+      }
+      
+      setScreen('dashboard');
+      setDashboardLoading(false);
     } catch (error) {
       setError('Could not connect to backend');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const loadDashboardData = async (uid) => {
-    try {
-      const response = await fetch(`${API_URL}/api/ai/financial-summary/${uid}`);
-      if (response.ok) {
-        const data = await response.json();
-        setDashboardData(data);
-      }
-    } catch (error) {
-      console.error('Error loading dashboard:', error);
     }
   };
 
@@ -333,6 +350,16 @@ export default function App() {
     );
   }
 
+  // DASHBOARD LOADING
+  if (dashboardLoading) {
+    return (
+      <View style={[styles.container, styles.centerContent]}>
+        <ActivityIndicator size="large" color="#3b82f6" />
+        <Text style={styles.loadingText}>Loading your dashboard...</Text>
+      </View>
+    );
+  }
+
   // DASHBOARD SCREEN
   const renderScreen = () => {
     switch(activeTab) {
@@ -355,7 +382,7 @@ export default function App() {
 
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Top Categories</Text>
-              {dashboardData.topCategories.length > 0 ? (
+              {dashboardData.topCategories && dashboardData.topCategories.length > 0 ? (
                 dashboardData.topCategories.map((cat, idx) => (
                   <View key={idx} style={styles.categoryRow}>
                     <Text style={styles.categoryName}>{cat.name}</Text>
@@ -474,6 +501,15 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0f172a',
+  },
+  centerContent: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: '#94a3b8',
+    fontSize: 14,
+    marginTop: 16,
   },
   authContainer: {
     flex: 1,
