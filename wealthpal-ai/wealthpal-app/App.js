@@ -21,12 +21,7 @@ export default function App() {
   ]);
   const [chatInput, setChatInput] = useState('');
   const [loadingChat, setLoadingChat] = useState(false);
-  const [dashboardData, setDashboardData] = useState({
-    totalBalance: 0,
-    monthlySpending: 0,
-    topCategories: [],
-    debts: [],
-  });
+  const [dashboardData, setDashboardData] = useState(null);
 
   useEffect(() => {
     testBackend();
@@ -79,6 +74,7 @@ export default function App() {
         }
       } catch (err) {
         console.error('Error loading summary:', err);
+        setDashboardData({ monthly_income: 0, monthly_spending: 0, top_categories: [], debt: [] });
       }
       
       setScreen('dashboard');
@@ -133,6 +129,7 @@ export default function App() {
         }
       } catch (err) {
         console.error('Error loading summary:', err);
+        setDashboardData({ monthly_income: 0, monthly_spending: 0, top_categories: [], debt: [] });
       }
       
       setScreen('dashboard');
@@ -153,12 +150,7 @@ export default function App() {
     setError('');
     setTransactions([]);
     setChatMessages([{ id: '0', role: 'assistant', text: 'Hi! I\'m your financial assistant. Ask me anything about your finances!' }]);
-    setDashboardData({
-      totalBalance: 0,
-      monthlySpending: 0,
-      topCategories: [],
-      debts: [],
-    });
+    setDashboardData(null);
   };
 
   const loadTransactions = async () => {
@@ -375,24 +367,30 @@ export default function App() {
 
             <Text style={styles.greeting}>Your Finances</Text>
 
-            <View style={styles.card}>
-              <Text style={styles.cardLabel}>Monthly Spending</Text>
-              <Text style={styles.balanceAmount}>${dashboardData.monthlySpending.toFixed(2)}</Text>
-            </View>
+            {dashboardData ? (
+              <>
+                <View style={styles.card}>
+                  <Text style={styles.cardLabel}>Monthly Spending</Text>
+                  <Text style={styles.balanceAmount}>${(dashboardData.monthly_spending || 0).toFixed(2)}</Text>
+                </View>
 
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Top Categories</Text>
-              {dashboardData.topCategories && dashboardData.topCategories.length > 0 ? (
-                dashboardData.topCategories.map((cat, idx) => (
-                  <View key={idx} style={styles.categoryRow}>
-                    <Text style={styles.categoryName}>{cat.name}</Text>
-                    <Text style={styles.categoryAmount}>${cat.amount.toFixed(2)}</Text>
-                  </View>
-                ))
-              ) : (
-                <Text style={styles.emptyText}>No spending data yet</Text>
-              )}
-            </View>
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Top Categories</Text>
+                  {dashboardData.top_categories && dashboardData.top_categories.length > 0 ? (
+                    dashboardData.top_categories.map((cat, idx) => (
+                      <View key={idx} style={styles.categoryRow}>
+                        <Text style={styles.categoryName}>{cat.name}</Text>
+                        <Text style={styles.categoryAmount}>${(cat.amount || 0).toFixed(2)}</Text>
+                      </View>
+                    ))
+                  ) : (
+                    <Text style={styles.emptyText}>No spending data yet</Text>
+                  )}
+                </View>
+              </>
+            ) : (
+              <Text style={styles.emptyText}>Loading...</Text>
+            )}
           </ScrollView>
         );
       case 'transactions':
@@ -498,305 +496,62 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0f172a',
-  },
-  centerContent: {
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    color: '#94a3b8',
-    fontSize: 14,
-    marginTop: 16,
-  },
-  authContainer: {
-    flex: 1,
-    padding: 24,
-    paddingTop: 60,
-  },
-  authTitle: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  authSubtitle: {
-    fontSize: 16,
-    color: '#94a3b8',
-    marginBottom: 32,
-    textAlign: 'center',
-  },
-  errorBox: {
-    backgroundColor: '#7f1d1d',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-  },
-  errorText: {
-    color: '#fecaca',
-    fontSize: 14,
-  },
-  authInput: {
-    width: '100%',
-    backgroundColor: '#1e293b',
-    color: '#fff',
-    borderRadius: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    marginBottom: 12,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  authButton: {
-    width: '100%',
-    backgroundColor: '#3b82f6',
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  authButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  signupLink: {
-    alignItems: 'center',
-    paddingVertical: 12,
-  },
-  signupText: {
-    color: '#3b82f6',
-    fontSize: 14,
-  },
-  status: {
-    color: '#94a3b8',
-    fontSize: 12,
-    marginTop: 24,
-    textAlign: 'center',
-  },
-  content: {
-    flex: 1,
-  },
-  userInfo: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    backgroundColor: '#1e293b',
-    marginBottom: 16,
-  },
-  userEmail: {
-    color: '#94a3b8',
-    fontSize: 12,
-  },
-  logoutBtn: {
-    backgroundColor: '#ef4444',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 6,
-  },
-  logoutText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  dashboardContainer: {
-    flex: 1,
-    padding: 16,
-  },
-  greeting: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 16,
-  },
-  card: {
-    backgroundColor: '#1e293b',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderLeftWidth: 4,
-    borderLeftColor: '#3b82f6',
-  },
-  cardLabel: {
-    color: '#94a3b8',
-    fontSize: 13,
-    marginBottom: 8,
-  },
-  balanceAmount: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  section: {
-    marginBottom: 24,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 12,
-  },
-  categoryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    backgroundColor: '#1e293b',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  categoryName: {
-    color: '#fff',
-    fontSize: 14,
-  },
-  categoryAmount: {
-    color: '#3b82f6',
-    fontWeight: '600',
-  },
-  emptyText: {
-    color: '#94a3b8',
-    fontSize: 14,
-    textAlign: 'center',
-    paddingVertical: 20,
-  },
-  transactionsContainer: {
-    flex: 1,
-    padding: 16,
-  },
-  loadButton: {
-    backgroundColor: '#3b82f6',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  loadButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  transactionsList: {
-    marginTop: 8,
-  },
-  transactionItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#1e293b',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  txLeft: {
-    flex: 1,
-  },
-  merchant: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  date: {
-    color: '#94a3b8',
-    fontSize: 12,
-  },
-  txRight: {
-    alignItems: 'flex-end',
-  },
-  amount: {
-    color: '#ef4444',
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  category: {
-    color: '#3b82f6',
-    fontSize: 12,
-  },
-  chatContainer: {
-    flex: 1,
-    flexDirection: 'column',
-  },
-  messagesList: {
-    flex: 1,
-    padding: 16,
-  },
-  messageBubble: {
-    backgroundColor: '#1e293b',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 12,
-    maxWidth: '80%',
-  },
-  userBubble: {
-    backgroundColor: '#3b82f6',
-    alignSelf: 'flex-end',
-  },
-  messageText: {
-    color: '#e2e8f0',
-    fontSize: 14,
-    lineHeight: 18,
-  },
-  userText: {
-    color: '#fff',
-  },
-  inputContainer: {
-    flexDirection: 'row',
-    padding: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#1e293b',
-    backgroundColor: '#0f172a',
-  },
-  input: {
-    flex: 1,
-    backgroundColor: '#1e293b',
-    color: '#fff',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginRight: 8,
-    fontSize: 14,
-  },
-  sendButton: {
-    backgroundColor: '#3b82f6',
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    justifyContent: 'center',
-  },
-  sendButtonDisabled: {
-    backgroundColor: '#475569',
-  },
-  sendText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  tabBar: {
-    flexDirection: 'row',
-    backgroundColor: '#1e293b',
-    borderTopWidth: 1,
-    borderTopColor: '#334155',
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  activeTab: {
-    borderBottomWidth: 3,
-    borderBottomColor: '#3b82f6',
-  },
-  tabText: {
-    color: '#94a3b8',
-    fontSize: 12,
-    fontWeight: '600',
-  },
+  container: { flex: 1, backgroundColor: '#0f172a' },
+  centerContent: { justifyContent: 'center', alignItems: 'center' },
+  loadingText: { color: '#94a3b8', fontSize: 14, marginTop: 16 },
+  authContainer: { flex: 1, padding: 24, paddingTop: 60 },
+  authTitle: { fontSize: 32, fontWeight: 'bold', color: '#fff', marginBottom: 8, textAlign: 'center' },
+  authSubtitle: { fontSize: 16, color: '#94a3b8', marginBottom: 32, textAlign: 'center' },
+  errorBox: { backgroundColor: '#7f1d1d', borderRadius: 8, padding: 12, marginBottom: 16 },
+  errorText: { color: '#fecaca', fontSize: 14 },
+  authInput: { width: '100%', backgroundColor: '#1e293b', color: '#fff', borderRadius: 8, paddingHorizontal: 16, paddingVertical: 12, marginBottom: 12, fontSize: 16, borderWidth: 1, borderColor: '#334155' },
+  authButton: { width: '100%', backgroundColor: '#3b82f6', paddingVertical: 14, borderRadius: 8, alignItems: 'center', marginBottom: 12 },
+  buttonDisabled: { opacity: 0.6 },
+  authButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  signupLink: { alignItems: 'center', paddingVertical: 12 },
+  signupText: { color: '#3b82f6', fontSize: 14 },
+  status: { color: '#94a3b8', fontSize: 12, marginTop: 24, textAlign: 'center' },
+  content: { flex: 1 },
+  userInfo: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#1e293b', marginBottom: 16 },
+  userEmail: { color: '#94a3b8', fontSize: 12 },
+  logoutBtn: { backgroundColor: '#ef4444', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6 },
+  logoutText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  dashboardContainer: { flex: 1, padding: 16 },
+  greeting: { fontSize: 28, fontWeight: 'bold', color: '#fff', marginBottom: 16 },
+  card: { backgroundColor: '#1e293b', borderRadius: 12, padding: 16, marginBottom: 16, borderLeftWidth: 4, borderLeftColor: '#3b82f6' },
+  cardLabel: { color: '#94a3b8', fontSize: 13, marginBottom: 8 },
+  balanceAmount: { fontSize: 32, fontWeight: 'bold', color: '#fff' },
+  section: { marginBottom: 24 },
+  sectionTitle: { fontSize: 16, fontWeight: 'bold', color: '#fff', marginBottom: 12 },
+  categoryRow: { flexDirection: 'row', justifyContent: 'space-between', backgroundColor: '#1e293b', padding: 12, borderRadius: 8, marginBottom: 8 },
+  categoryName: { color: '#fff', fontSize: 14 },
+  categoryAmount: { color: '#3b82f6', fontWeight: '600' },
+  emptyText: { color: '#94a3b8', fontSize: 14, textAlign: 'center', paddingVertical: 20 },
+  transactionsContainer: { flex: 1, padding: 16 },
+  loadButton: { backgroundColor: '#3b82f6', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 8, alignItems: 'center', marginBottom: 16 },
+  loadButtonText: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  transactionsList: { marginTop: 8 },
+  transactionItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#1e293b', padding: 12, borderRadius: 8, marginBottom: 8 },
+  txLeft: { flex: 1 },
+  merchant: { color: '#fff', fontSize: 14, fontWeight: '600', marginBottom: 4 },
+  date: { color: '#94a3b8', fontSize: 12 },
+  txRight: { alignItems: 'flex-end' },
+  amount: { color: '#ef4444', fontSize: 14, fontWeight: '600', marginBottom: 4 },
+  category: { color: '#3b82f6', fontSize: 12 },
+  chatContainer: { flex: 1, flexDirection: 'column' },
+  messagesList: { flex: 1, padding: 16 },
+  messageBubble: { backgroundColor: '#1e293b', borderRadius: 12, padding: 12, marginBottom: 12, maxWidth: '80%' },
+  userBubble: { backgroundColor: '#3b82f6', alignSelf: 'flex-end' },
+  messageText: { color: '#e2e8f0', fontSize: 14, lineHeight: 18 },
+  userText: { color: '#fff' },
+  inputContainer: { flexDirection: 'row', padding: 12, borderTopWidth: 1, borderTopColor: '#1e293b', backgroundColor: '#0f172a' },
+  input: { flex: 1, backgroundColor: '#1e293b', color: '#fff', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, marginRight: 8, fontSize: 14 },
+  sendButton: { backgroundColor: '#3b82f6', paddingHorizontal: 16, borderRadius: 8, justifyContent: 'center' },
+  sendButtonDisabled: { backgroundColor: '#475569' },
+  sendText: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  tabBar: { flexDirection: 'row', backgroundColor: '#1e293b', borderTopWidth: 1, borderTopColor: '#334155' },
+  tab: { flex: 1, paddingVertical: 12, alignItems: 'center' },
+  activeTab: { borderBottomWidth: 3, borderBottomColor: '#3b82f6' },
+  tabText: { color: '#94a3b8', fontSize: 12, fontWeight: '600' },
+  screenText: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
 });
