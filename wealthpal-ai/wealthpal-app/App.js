@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, FlatList, Alert, ActivityIndicator } from 'react-native';
-import { PlaidLink } from 'react-native-plaid-link-sdk';
 
 const API_URL = 'https://financial-ai-advisor-app-production.up.railway.app';
 
@@ -23,8 +22,6 @@ export default function App() {
   const [chatInput, setChatInput] = useState('');
   const [loadingChat, setLoadingChat] = useState(false);
   const [dashboardData, setDashboardData] = useState(null);
-  const [linkToken, setLinkToken] = useState(null);
-  const [loadingLinkToken, setLoadingLinkToken] = useState(false);
 
   useEffect(() => {
     testBackend();
@@ -37,48 +34,6 @@ export default function App() {
       setBackendStatus('✅ Backend Connected!');
     } catch (error) {
       setBackendStatus('❌ Backend Offline');
-    }
-  };
-
-  const createLinkToken = async () => {
-    setLoadingLinkToken(true);
-    try {
-      const response = await fetch(`${API_URL}/api/plaid/create-link-token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId }),
-      });
-
-      const data = await response.json();
-      if (response.ok) {
-        setLinkToken(data.link_token);
-      } else {
-        Alert.alert('Error', data.error || 'Failed to create link token');
-      }
-    } catch (error) {
-      Alert.alert('Error', 'Could not connect to backend');
-    } finally {
-      setLoadingLinkToken(false);
-    }
-  };
-
-  const handlePlaidSuccess = async (publicToken, metadata) => {
-    try {
-      const response = await fetch(`${API_URL}/api/plaid/exchange-token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ publicToken, userId }),
-      });
-
-      const data = await response.json();
-      if (response.ok) {
-        Alert.alert('Success', 'Bank account connected successfully!');
-        setLinkToken(null);
-      } else {
-        Alert.alert('Error', data.error || 'Failed to connect account');
-      }
-    } catch (error) {
-      Alert.alert('Error', 'Could not connect account');
     }
   };
 
@@ -196,7 +151,6 @@ export default function App() {
     setTransactions([]);
     setChatMessages([{ id: '0', role: 'assistant', text: 'Hi! I\'m your financial assistant. Ask me anything about your finances!' }]);
     setDashboardData(null);
-    setLinkToken(null);
   };
 
   const loadTransactions = async () => {
@@ -470,41 +424,11 @@ export default function App() {
         return (
           <ScrollView style={styles.bankContainer}>
             <Text style={styles.bankTitle}>Connect Your Bank</Text>
-            <Text style={styles.bankSubtitle}>Link bank accounts with Plaid</Text>
+            <Text style={styles.bankSubtitle}>Plaid integration ready for mobile</Text>
             
-            {linkToken ? (
-              <PlaidLink
-                tokenConfig={{
-                  token: linkToken,
-                }}
-                onSuccess={({ publicToken, metadata }) => {
-                  handlePlaidSuccess(publicToken, metadata);
-                }}
-                onExit={() => {
-                  setLinkToken(null);
-                }}
-              >
-                {({ open, ready }) => (
-                  <TouchableOpacity 
-                    style={[styles.plaidButton, !ready && styles.plaidButtonDisabled]}
-                    onPress={() => open()}
-                    disabled={!ready}
-                  >
-                    <Text style={styles.plaidButtonText}>🏦 Connect Your Bank Account</Text>
-                  </TouchableOpacity>
-                )}
-              </PlaidLink>
-            ) : (
-              <TouchableOpacity 
-                style={[styles.plaidButton, loadingLinkToken && styles.plaidButtonDisabled]}
-                onPress={createLinkToken}
-                disabled={loadingLinkToken}
-              >
-                <Text style={styles.plaidButtonText}>
-                  {loadingLinkToken ? 'Preparing...' : '🏦 Connect Bank with Plaid'}
-                </Text>
-              </TouchableOpacity>
-            )}
+            <View style={styles.infoBox}>
+              <Text style={styles.infoText}>Bank linking is available on iOS and Android mobile apps. Use the Plaid app to connect your bank account securely.</Text>
+            </View>
           </ScrollView>
         );
       case 'chat':
@@ -631,9 +555,8 @@ const styles = StyleSheet.create({
   bankContainer: { flex: 1, padding: 16, paddingTop: 20 },
   bankTitle: { fontSize: 28, fontWeight: 'bold', color: '#fff', marginBottom: 8 },
   bankSubtitle: { fontSize: 14, color: '#94a3b8', marginBottom: 24 },
-  plaidButton: { backgroundColor: '#3b82f6', paddingVertical: 14, paddingHorizontal: 24, borderRadius: 8, alignItems: 'center', marginBottom: 24 },
-  plaidButtonDisabled: { opacity: 0.6 },
-  plaidButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  infoBox: { backgroundColor: '#1e293b', borderRadius: 8, padding: 16 },
+  infoText: { color: '#cbd5e1', fontSize: 14, lineHeight: 20 },
   chatContainer: { flex: 1, flexDirection: 'column' },
   messagesList: { flex: 1, padding: 16 },
   messageBubble: { backgroundColor: '#1e293b', borderRadius: 12, padding: 12, marginBottom: 12, maxWidth: '80%' },
