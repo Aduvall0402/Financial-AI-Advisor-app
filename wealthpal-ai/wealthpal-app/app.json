@@ -1,4 +1,3 @@
-cat > app.json << 'EOF'
 {
   "expo": {
     "name": "WealthPal AI",
@@ -37,4 +36,3 @@ cat > app.json << 'EOF'
     }
   }
 }
-EOF
