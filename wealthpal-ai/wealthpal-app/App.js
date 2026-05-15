@@ -4,7 +4,12 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, FlatLi
 const API_URL = 'https://financial-ai-advisor-app-production.up.railway.app';
 
 export default function App() {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [userId, setUserId] = useState(null);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
   const [backendStatus, setBackendStatus] = useState('Connecting...');
   const [transactions, setTransactions] = useState([]);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
@@ -16,16 +21,10 @@ export default function App() {
   const [connectedAccounts, setConnectedAccounts] = useState([]);
   const [linkingBank, setLinkingBank] = useState(false);
   const [dashboardData, setDashboardData] = useState({
-    totalBalance: 5234.56,
-    monthlySpending: 1842.33,
-    topCategories: [
-      { name: 'Groceries', amount: 520 },
-      { name: 'Gas', amount: 280 },
-      { name: 'Dining', amount: 215 },
-    ],
-    debts: [
-      { name: 'Car Loan', balance: 10500, interest: 5.2 },
-    ],
+    totalBalance: 0,
+    monthlySpending: 0,
+    topCategories: [],
+    debts: [],
   });
 
   useEffect(() => {
@@ -42,20 +41,100 @@ export default function App() {
     }
   };
 
+  const handleSignup = async () => {
+    if (!email || !password) {
+      Alert.alert('Error', 'Please enter email and password');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/api/auth/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setUserId(data.user.id);
+        setIsLoggedIn(true);
+        setEmail('');
+        setPassword('');
+        Alert.alert('Success', 'Account created! Welcome to WealthPal AI');
+      } else {
+        Alert.alert('Error', data.error || 'Signup failed');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Could not connect to backend');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogin = async () => {
+    if (!email || !password) {
+      Alert.alert('Error', 'Please enter email and password');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setUserId(data.session.user.id);
+        setIsLoggedIn(true);
+        setEmail('');
+        setPassword('');
+        Alert.alert('Success', 'Logged in successfully!');
+      } else {
+        Alert.alert('Error', data.error || 'Login failed');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Could not connect to backend');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    setIsLoggedIn(false);
+    setUserId(null);
+    setEmail('');
+    setPassword('');
+    setTransactions([]);
+    setChatMessages([{ id: '0', role: 'assistant', text: 'Hi! I\'m your financial assistant. Ask me anything about your finances!' }]);
+    setConnectedAccounts([]);
+    setDashboardData({
+      totalBalance: 0,
+      monthlySpending: 0,
+      topCategories: [],
+      debts: [],
+    });
+  };
+
   const createPlaidLinkToken = async () => {
     setLinkingBank(true);
     try {
       const response = await fetch(`${API_URL}/api/plaid/create-link-token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: 'demo-user' }),
+        body: JSON.stringify({ userId }),
       });
 
       if (response.ok) {
         const data = await response.json();
         Alert.alert(
           'Bank Linking',
-          'Link token created! In production, this would open Plaid Link.\n\nFor now, use sandbox credentials:\nUsername: user_good\nPassword: pass_good',
+          'Link token created! In production, this would open Plaid Link.\n\nFor testing, use sandbox credentials:\nUsername: user_good\nPassword: pass_good',
           [{ text: 'OK' }]
         );
       } else {
@@ -68,26 +147,32 @@ export default function App() {
     }
   };
 
-  const addSampleAccount = () => {
-    const sampleAccount = {
-      id: Date.now().toString(),
-      name: 'My Checking Account',
-      type: 'checking',
-      balance: 5234.56,
-    };
-    setConnectedAccounts([...connectedAccounts, sampleAccount]);
-    Alert.alert('Success', 'Sample account added!');
+  const loadDashboardData = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/ai/financial-summary/${userId}`);
+      if (response.ok) {
+        const data = await response.json();
+        setDashboardData(data);
+      }
+    } catch (error) {
+      console.error('Error loading dashboard:', error);
+    }
   };
+
+  useEffect(() => {
+    if (isLoggedIn) {
+      loadDashboardData();
+    }
+  }, [isLoggedIn]);
 
   const loadTransactions = async () => {
     setLoadingTransactions(true);
     try {
+      // For now, show sample transactions
       const sampleTransactions = [
         { id: '1', merchant: 'Walmart', amount: 45.50, category: 'Groceries', date: '2026-05-15' },
         { id: '2', merchant: 'Shell Gas', amount: 60.00, category: 'Gas', date: '2026-05-14' },
         { id: '3', merchant: 'Netflix', amount: 15.99, category: 'Subscriptions', date: '2026-05-13' },
-        { id: '4', merchant: 'Starbucks', amount: 5.75, category: 'Dining', date: '2026-05-12' },
-        { id: '5', merchant: 'Target', amount: 89.32, category: 'Shopping', date: '2026-05-11' },
       ];
       setTransactions(sampleTransactions);
     } catch (error) {
@@ -113,10 +198,7 @@ export default function App() {
       const response = await fetch(`${API_URL}/api/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: 'demo-user',
-          message: chatInput,
-        }),
+        body: JSON.stringify({ userId, message: chatInput }),
       });
 
       if (response.ok) {
@@ -131,16 +213,15 @@ export default function App() {
         const errorMessage = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          text: '❌ Error: Could not get response from AI',
+          text: '❌ Error: Could not get response',
         };
         setChatMessages(prev => [...prev, errorMessage]);
       }
     } catch (error) {
-      console.error('Error sending chat:', error);
       const errorMessage = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        text: '❌ Error: Could not reach backend',
+        text: '❌ Error: Backend unreachable',
       };
       setChatMessages(prev => [...prev, errorMessage]);
     } finally {
@@ -148,48 +229,91 @@ export default function App() {
     }
   };
 
+  // LOGIN SCREEN
+  if (!isLoggedIn) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.authContainer}>
+          <Text style={styles.authTitle}>WealthPal AI</Text>
+          <Text style={styles.authSubtitle}>Your AI Finance Assistant</Text>
+
+          <TextInput
+            style={styles.authInput}
+            placeholder="Email"
+            placeholderTextColor="#64748b"
+            value={email}
+            onChangeText={setEmail}
+            keyboardType="email-address"
+          />
+
+          <TextInput
+            style={styles.authInput}
+            placeholder="Password"
+            placeholderTextColor="#64748b"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+          />
+
+          <TouchableOpacity
+            style={styles.authButton}
+            onPress={handleLogin}
+            disabled={loading}
+          >
+            <Text style={styles.authButtonText}>
+              {loading ? 'Loading...' : 'Login'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.authButton, styles.signupButton]}
+            onPress={handleSignup}
+            disabled={loading}
+          >
+            <Text style={styles.authButtonText}>
+              {loading ? 'Loading...' : 'Sign Up'}
+            </Text>
+          </TouchableOpacity>
+
+          <Text style={styles.status}>{backendStatus}</Text>
+        </View>
+      </View>
+    );
+  }
+
+  // MAIN APP SCREEN
   const renderScreen = () => {
     switch(activeTab) {
       case 'dashboard':
         return (
           <ScrollView style={styles.dashboardContainer}>
-            <Text style={styles.greeting}>Your Finances</Text>
-            <Text style={styles.status}>{backendStatus}</Text>
-
-            <View style={styles.card}>
-              <Text style={styles.cardLabel}>Total Balance</Text>
-              <Text style={styles.balanceAmount}>${dashboardData.totalBalance.toFixed(2)}</Text>
+            <View style={styles.userInfo}>
+              <Text style={styles.userEmail}>{email}</Text>
+              <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
+                <Text style={styles.logoutText}>Logout</Text>
+              </TouchableOpacity>
             </View>
 
-            <View style={[styles.card, styles.spendingCard]}>
-              <Text style={styles.cardLabel}>This Month's Spending</Text>
-              <Text style={styles.spendingAmount}>${dashboardData.monthlySpending.toFixed(2)}</Text>
+            <Text style={styles.greeting}>Your Finances</Text>
+
+            <View style={styles.card}>
+              <Text style={styles.cardLabel}>Monthly Spending</Text>
+              <Text style={styles.balanceAmount}>${dashboardData.monthlySpending.toFixed(2)}</Text>
             </View>
 
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Spending by Category</Text>
-              {dashboardData.topCategories.map((cat, idx) => (
-                <View key={idx} style={styles.categoryRow}>
-                  <Text style={styles.categoryName}>{cat.name}</Text>
-                  <Text style={styles.categoryAmount}>${cat.amount.toFixed(2)}</Text>
-                </View>
-              ))}
-            </View>
-
-            {dashboardData.debts.length > 0 && (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Active Debts</Text>
-                {dashboardData.debts.map((debt, idx) => (
-                  <View key={idx} style={styles.debtRow}>
-                    <View>
-                      <Text style={styles.debtName}>{debt.name}</Text>
-                      <Text style={styles.debtRate}>{debt.interest}% interest</Text>
-                    </View>
-                    <Text style={styles.debtBalance}>${debt.balance.toFixed(2)}</Text>
+              <Text style={styles.sectionTitle}>Top Categories</Text>
+              {dashboardData.topCategories.length > 0 ? (
+                dashboardData.topCategories.map((cat, idx) => (
+                  <View key={idx} style={styles.categoryRow}>
+                    <Text style={styles.categoryName}>{cat.name}</Text>
+                    <Text style={styles.categoryAmount}>${cat.amount.toFixed(2)}</Text>
                   </View>
-                ))}
-              </View>
-            )}
+                ))
+              ) : (
+                <Text style={styles.emptyText}>No spending data yet</Text>
+              )}
+            </View>
           </ScrollView>
         );
       case 'transactions':
@@ -260,58 +384,23 @@ export default function App() {
       case 'bank':
         return (
           <ScrollView style={styles.bankContainer}>
-            <View style={styles.bankHeader}>
-              <Text style={styles.bankTitle}>Connect Your Bank</Text>
-              <Text style={styles.bankSubtitle}>Link your bank accounts securely</Text>
-            </View>
+            <Text style={styles.bankTitle}>Connect Your Bank</Text>
 
-            {connectedAccounts.length > 0 && (
-              <View style={styles.connectedSection}>
-                <Text style={styles.connectedTitle}>Connected Accounts</Text>
-                {connectedAccounts.map((account) => (
-                  <View key={account.id} style={styles.accountCard}>
-                    <View>
-                      <Text style={styles.accountName}>{account.name}</Text>
-                      <Text style={styles.accountType}>{account.type}</Text>
-                    </View>
-                    <Text style={styles.accountBalance}>${account.balance.toFixed(2)}</Text>
-                  </View>
-                ))}
-              </View>
-            )}
-
-            <View style={styles.bankButtonsContainer}>
-              <TouchableOpacity 
-                style={styles.plaidButton}
-                onPress={createPlaidLinkToken}
-                disabled={linkingBank}
-              >
-                <Text style={styles.plaidButtonText}>
-                  {linkingBank ? 'Connecting...' : '🏦 Connect with Plaid'}
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity 
-                style={styles.sampleButton}
-                onPress={addSampleAccount}
-              >
-                <Text style={styles.sampleButtonText}>Add Sample Account</Text>
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity 
+              style={styles.plaidButton}
+              onPress={createPlaidLinkToken}
+              disabled={linkingBank}
+            >
+              <Text style={styles.plaidButtonText}>
+                {linkingBank ? 'Connecting...' : '🏦 Connect with Plaid'}
+              </Text>
+            </TouchableOpacity>
 
             <View style={styles.benefitsBox}>
               <Text style={styles.benefitsTitle}>What you get:</Text>
               <Text style={styles.benefit}>✓ Automatic transaction sync</Text>
-              <Text style={styles.benefit}>✓ AI-powered categorization</Text>
               <Text style={styles.benefit}>✓ Real-time balance updates</Text>
               <Text style={styles.benefit}>✓ Smart spending insights</Text>
-            </View>
-
-            <View style={styles.securityBox}>
-              <Text style={styles.securityTitle}>Your security matters</Text>
-              <Text style={styles.securityText}>
-                We use Plaid, the industry standard for secure bank connections. Your login credentials are never shared with us.
-              </Text>
             </View>
           </ScrollView>
         );
@@ -364,35 +453,101 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0f172a',
   },
+  authContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  authTitle: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 8,
+  },
+  authSubtitle: {
+    fontSize: 16,
+    color: '#94a3b8',
+    marginBottom: 32,
+  },
+  authInput: {
+    width: '100%',
+    backgroundColor: '#1e293b',
+    color: '#fff',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginBottom: 12,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  authButton: {
+    width: '100%',
+    backgroundColor: '#3b82f6',
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  signupButton: {
+    backgroundColor: '#1e293b',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  authButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  status: {
+    color: '#94a3b8',
+    fontSize: 12,
+    marginTop: 24,
+  },
   content: {
     flex: 1,
+  },
+  userInfo: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#1e293b',
+    marginBottom: 16,
+  },
+  userEmail: {
+    color: '#94a3b8',
+    fontSize: 12,
+  },
+  logoutBtn: {
+    backgroundColor: '#ef4444',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  logoutText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
   },
   dashboardContainer: {
     flex: 1,
     padding: 16,
-    paddingTop: 20,
   },
   greeting: {
     fontSize: 28,
     fontWeight: 'bold',
     color: '#fff',
-    marginBottom: 8,
-  },
-  status: {
-    color: '#94a3b8',
-    fontSize: 14,
     marginBottom: 16,
   },
   card: {
     backgroundColor: '#1e293b',
     borderRadius: 12,
     padding: 16,
-    marginBottom: 12,
+    marginBottom: 16,
     borderLeftWidth: 4,
     borderLeftColor: '#3b82f6',
-  },
-  spendingCard: {
-    borderLeftColor: '#ef4444',
   },
   cardLabel: {
     color: '#94a3b8',
@@ -404,13 +559,8 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#fff',
   },
-  spendingAmount: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
   section: {
-    marginTop: 16,
+    marginBottom: 24,
   },
   sectionTitle: {
     fontSize: 16,
@@ -434,32 +584,11 @@ const styles = StyleSheet.create({
     color: '#3b82f6',
     fontWeight: '600',
   },
-  debtRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    backgroundColor: '#1e293b',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  debtName: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  debtRate: {
+  emptyText: {
     color: '#94a3b8',
-    fontSize: 12,
-  },
-  debtBalance: {
-    color: '#ef4444',
-    fontWeight: '600',
-  },
-  screenText: {
-    color: '#fff',
-    fontSize: 24,
-    fontWeight: 'bold',
+    fontSize: 14,
+    textAlign: 'center',
+    paddingVertical: 20,
   },
   transactionsContainer: {
     flex: 1,
@@ -577,57 +706,11 @@ const styles = StyleSheet.create({
   bankContainer: {
     flex: 1,
     padding: 16,
-    paddingTop: 20,
-  },
-  bankHeader: {
-    marginBottom: 24,
   },
   bankTitle: {
     fontSize: 28,
     fontWeight: 'bold',
     color: '#fff',
-    marginBottom: 8,
-  },
-  bankSubtitle: {
-    fontSize: 14,
-    color: '#94a3b8',
-  },
-  connectedSection: {
-    marginBottom: 24,
-  },
-  connectedTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 12,
-  },
-  accountCard: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#1e293b',
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 8,
-    borderLeftWidth: 4,
-    borderLeftColor: '#10b981',
-  },
-  accountName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
-    marginBottom: 4,
-  },
-  accountType: {
-    fontSize: 12,
-    color: '#94a3b8',
-  },
-  accountBalance: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#10b981',
-  },
-  bankButtonsContainer: {
     marginBottom: 24,
   },
   plaidButton: {
@@ -636,24 +719,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     borderRadius: 8,
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 24,
   },
   plaidButtonText: {
     color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  sampleButton: {
-    backgroundColor: '#1e293b',
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    borderRadius: 8,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  sampleButtonText: {
-    color: '#94a3b8',
     fontSize: 16,
     fontWeight: '600',
   },
@@ -661,7 +730,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#1e293b',
     borderRadius: 8,
     padding: 16,
-    marginBottom: 16,
   },
   benefitsTitle: {
     fontSize: 14,
@@ -674,22 +742,10 @@ const styles = StyleSheet.create({
     color: '#cbd5e1',
     marginBottom: 6,
   },
-  securityBox: {
-    backgroundColor: '#1e293b',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 24,
-  },
-  securityTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#94a3b8',
-    marginBottom: 8,
-  },
-  securityText: {
-    fontSize: 13,
-    color: '#cbd5e1',
-    lineHeight: 18,
+  screenText: {
+    color: '#fff',
+    fontSize: 24,
+    fontWeight: 'bold',
   },
   tabBar: {
     flexDirection: 'row',
