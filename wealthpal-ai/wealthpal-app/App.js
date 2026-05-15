@@ -217,7 +217,6 @@ export default function App() {
     }
   };
 
-  // LOGIN SCREEN
   if (screen === 'login') {
     return (
       <View style={styles.container}>
@@ -275,7 +274,6 @@ export default function App() {
     );
   }
 
-  // SIGNUP SCREEN
   if (screen === 'signup') {
     return (
       <View style={styles.container}>
@@ -342,7 +340,6 @@ export default function App() {
     );
   }
 
-  // DASHBOARD LOADING
   if (dashboardLoading) {
     return (
       <View style={[styles.container, styles.centerContent]}>
@@ -352,7 +349,6 @@ export default function App() {
     );
   }
 
-  // DASHBOARD SCREEN
   const renderScreen = () => {
     switch(activeTab) {
       case 'dashboard':
@@ -424,6 +420,22 @@ export default function App() {
             )}
           </ScrollView>
         );
+      case 'bank':
+        return (
+          <ScrollView style={styles.bankContainer}>
+            <Text style={styles.bankTitle}>Connect Your Bank</Text>
+            <Text style={styles.bankSubtitle}>Link bank accounts with Plaid</Text>
+            
+            <TouchableOpacity 
+              style={styles.plaidButton}
+              onPress={() => {
+                Alert.alert('Bank Linking', 'Plaid integration ready! Click to connect your bank account.');
+              }}
+            >
+              <Text style={styles.plaidButtonText}>🏦 Connect Bank with Plaid</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        );
       case 'chat':
         return (
           <View style={styles.chatContainer}>
@@ -485,6 +497,13 @@ export default function App() {
         </TouchableOpacity>
         
         <TouchableOpacity 
+          style={[styles.tab, activeTab === 'bank' && styles.activeTab]}
+          onPress={() => setActiveTab('bank')}
+        >
+          <Text style={styles.tabText}>Bank</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
           style={[styles.tab, activeTab === 'chat' && styles.activeTab]}
           onPress={() => setActiveTab('chat')}
         >
@@ -538,6 +557,11 @@ const styles = StyleSheet.create({
   txRight: { alignItems: 'flex-end' },
   amount: { color: '#ef4444', fontSize: 14, fontWeight: '600', marginBottom: 4 },
   category: { color: '#3b82f6', fontSize: 12 },
+  bankContainer: { flex: 1, padding: 16, paddingTop: 20 },
+  bankTitle: { fontSize: 28, fontWeight: 'bold', color: '#fff', marginBottom: 8 },
+  bankSubtitle: { fontSize: 14, color: '#94a3b8', marginBottom: 24 },
+  plaidButton: { backgroundColor: '#3b82f6', paddingVertical: 14, paddingHorizontal: 24, borderRadius: 8, alignItems: 'center', marginBottom: 24 },
+  plaidButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   chatContainer: { flex: 1, flexDirection: 'column' },
   messagesList: { flex: 1, padding: 16 },
   messageBubble: { backgroundColor: '#1e293b', borderRadius: 12, padding: 12, marginBottom: 12, maxWidth: '80%' },
