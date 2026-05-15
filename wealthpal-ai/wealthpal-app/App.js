@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 
 const API_URL = 'https://financial-ai-advisor-app-production.up.railway.app';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [message, setMessage] = useState('Connecting...');
+  const [backendStatus, setBackendStatus] = useState('Connecting...');
+  const [transactions, setTransactions] = useState([]);
+  const [loadingTransactions, setLoadingTransactions] = useState(false);
 
   useEffect(() => {
     testBackend();
@@ -15,9 +17,29 @@ export default function App() {
     try {
       const response = await fetch(`${API_URL}/health`);
       const data = await response.json();
-      setMessage('✅ Backend Connected!');
+      setBackendStatus('✅ Backend Connected!');
     } catch (error) {
-      setMessage('❌ Backend Offline');
+      setBackendStatus('❌ Backend Offline');
+    }
+  };
+
+  const loadTransactions = async () => {
+    setLoadingTransactions(true);
+    try {
+      // For now, we'll show sample data
+      // In production, you'd fetch from backend with user ID
+      const sampleTransactions = [
+        { id: '1', merchant: 'Walmart', amount: 45.50, category: 'Groceries', date: '2026-05-15' },
+        { id: '2', merchant: 'Shell Gas', amount: 60.00, category: 'Gas', date: '2026-05-14' },
+        { id: '3', merchant: 'Netflix', amount: 15.99, category: 'Subscriptions', date: '2026-05-13' },
+        { id: '4', merchant: 'Starbucks', amount: 5.75, category: 'Dining', date: '2026-05-12' },
+        { id: '5', merchant: 'Target', amount: 89.32, category: 'Shopping', date: '2026-05-11' },
+      ];
+      setTransactions(sampleTransactions);
+    } catch (error) {
+      console.error('Error loading transactions:', error);
+    } finally {
+      setLoadingTransactions(false);
     }
   };
 
@@ -27,15 +49,44 @@ export default function App() {
         return (
           <View style={styles.screenContent}>
             <Text style={styles.screenText}>Dashboard</Text>
-            <Text style={styles.statusText}>{message}</Text>
+            <Text style={styles.statusText}>{backendStatus}</Text>
           </View>
         );
       case 'transactions':
-        return <Text style={styles.screenText}>Transactions</Text>;
+        return (
+          <ScrollView style={styles.transactionsContainer}>
+            <TouchableOpacity 
+              style={styles.loadButton}
+              onPress={loadTransactions}
+              disabled={loadingTransactions}
+            >
+              <Text style={styles.loadButtonText}>
+                {loadingTransactions ? 'Loading...' : 'Load Transactions'}
+              </Text>
+            </TouchableOpacity>
+
+            {transactions.length > 0 && (
+              <View style={styles.transactionsList}>
+                {transactions.map((tx) => (
+                  <View key={tx.id} style={styles.transactionItem}>
+                    <View style={styles.txLeft}>
+                      <Text style={styles.merchant}>{tx.merchant}</Text>
+                      <Text style={styles.date}>{tx.date}</Text>
+                    </View>
+                    <View style={styles.txRight}>
+                      <Text style={styles.amount}>-${tx.amount.toFixed(2)}</Text>
+                      <Text style={styles.category}>{tx.category}</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+          </ScrollView>
+        );
       case 'chat':
-        return <Text style={styles.screenText}>Chat</Text>;
+        return <Text style={styles.screenText}>Chat Coming Soon</Text>;
       case 'bank':
-        return <Text style={styles.screenText}>Bank Link</Text>;
+        return <Text style={styles.screenText}>Bank Link Coming Soon</Text>;
       default:
         return <Text style={styles.screenText}>Dashboard</Text>;
     }
@@ -87,10 +138,10 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   screenContent: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
   },
   screenText: {
@@ -102,6 +153,61 @@ const styles = StyleSheet.create({
     color: '#94a3b8',
     fontSize: 14,
     marginTop: 12,
+  },
+  transactionsContainer: {
+    flex: 1,
+    padding: 16,
+  },
+  loadButton: {
+    backgroundColor: '#3b82f6',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  loadButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  transactionsList: {
+    marginTop: 8,
+  },
+  transactionItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#1e293b',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  txLeft: {
+    flex: 1,
+  },
+  merchant: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  date: {
+    color: '#94a3b8',
+    fontSize: 12,
+  },
+  txRight: {
+    alignItems: 'flex-end',
+  },
+  amount: {
+    color: '#ef4444',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  category: {
+    color: '#3b82f6',
+    fontSize: 12,
   },
   tabBar: {
     flexDirection: 'row',
