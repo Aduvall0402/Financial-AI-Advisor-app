@@ -1,38 +1,14 @@
 {
   "expo": {
-    "name": "WealthPal AI",
-    "slug": "wealthpal-ai",
+    "name": "wealthpal-ai-app",
+    "slug": "wealthpal-ai-app",
     "version": "1.0.0",
-    "orientation": "portrait",
-    "icon": "./assets/icon.png",
-    "userInterfaceStyle": "dark",
-    "splash": {
-      "image": "./assets/splash.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#0f172a"
-    },
-    "assetBundlePatterns": ["**/*"],
-    "ios": {
-      "bundleIdentifier": "com.wealthpal.ai"
-    },
-    "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#0f172a"
-      },
-      "package": "com.wealthpal.ai"
-    },
-    "web": {
-      "favicon": ""
-    },
-    "plugins": ["expo-router"],
-    "extra": {
-      "router": {
-        "origin": false
-      },
-      "eas": {
-        "projectId": "9a50c8f6-f805-44c0-8a47-bdac5df0e438"
-      }
-    }
+    "sdkVersion": "55.0.0",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "plugins": [],
+    "android": {},
+    "ios": {}
   }
 }

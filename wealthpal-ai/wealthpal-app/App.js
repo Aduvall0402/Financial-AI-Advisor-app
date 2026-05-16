@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, FlatList, Alert, ActivityIndicator } from 'react-native';
+import { SafeAreaView, View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, FlatList, Alert, ActivityIndicator } from 'react-native';
+import { WebView } from 'react-native-webview';
 
 const API_URL = 'https://financial-ai-advisor-app-production.up.railway.app';
 
@@ -22,6 +23,12 @@ export default function App() {
   const [chatInput, setChatInput] = useState('');
   const [loadingChat, setLoadingChat] = useState(false);
   const [dashboardData, setDashboardData] = useState(null);
+  const [linkToken, setLinkToken] = useState(null);
+  const [webviewVisible, setWebviewVisible] = useState(false);
+  const [plaidStatus, setPlaidStatus] = useState('');
+  const [plaidError, setPlaidError] = useState('');
+  const [plaidLoading, setPlaidLoading] = useState(false);
+  const [linkedAccount, setLinkedAccount] = useState(null);
 
   useEffect(() => {
     testBackend();
@@ -168,6 +175,73 @@ export default function App() {
       setLoadingTransactions(false);
     }
   };
+
+  const createPlaidLinkToken = async () => {
+    if (!userId) {
+      setError('Please log in before connecting a bank account.');
+      return;
+    }
+    setPlaidError('');
+    setPlaidStatus('Creating secure bank link...');
+    setPlaidLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/api/plaid/create-link-token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to create Plaid link token');
+      }
+      if (!data.link_token) {
+        throw new Error('Plaid did not return a valid link token');
+      }
+      setLinkToken(data.link_token);
+      setWebviewVisible(true);
+      setPlaidStatus('Opening bank connection...');
+    } catch (error) {
+      console.error('Plaid link token error:', error);
+      setPlaidError(error.message || 'Unable to connect to Plaid');
+      setPlaidStatus('');
+    } finally {
+      setPlaidLoading(false);
+    }
+  };
+
+  const handlePlaidMessage = async (event) => {
+    try {
+      const message = JSON.parse(event.nativeEvent.data);
+      if (message.publicToken) {
+        setPlaidStatus('Linking your bank account...');
+        setWebviewVisible(false);
+
+        const response = await fetch(`${API_URL}/api/plaid/exchange-token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ publicToken: message.publicToken, userId }),
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to exchange Plaid public token');
+        }
+
+        setLinkedAccount(data.itemId || 'Connected');
+        setPlaidStatus('Bank account linked successfully!');
+        setPlaidError('');
+      } else if (message.exit) {
+        setWebviewVisible(false);
+        setPlaidStatus(message.error ? `Plaid exited: ${message.error}` : 'Plaid flow closed.');
+      }
+    } catch (error) {
+      console.error('Plaid message error:', error);
+      setPlaidError(error.message || 'Plaid integration failed');
+      setWebviewVisible(false);
+    }
+  };
+
+  const getPlaidHtml = (token) => `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{margin:0;background:#0f172a;color:#fff;}</style></head><body><script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script><script>var handler = Plaid.create({token:'${token}', onSuccess:function(public_token, metadata){window.ReactNativeWebView.postMessage(JSON.stringify({publicToken:public_token,metadata:metadata}));}, onExit:function(err, metadata){window.ReactNativeWebView.postMessage(JSON.stringify({exit:true,error:err?.display_message||err?.error_message||null,metadata:metadata}));}});handler.open();</script></body></html>`;
 
   const sendChatMessage = async () => {
     if (!chatInput.trim()) return;
@@ -422,14 +496,63 @@ export default function App() {
         );
       case 'bank':
         return (
-          <ScrollView style={styles.bankContainer}>
+          <View style={styles.bankContainer}>
             <Text style={styles.bankTitle}>Connect Your Bank</Text>
-            <Text style={styles.bankSubtitle}>Plaid integration ready for mobile</Text>
-            
-            <View style={styles.infoBox}>
-              <Text style={styles.infoText}>Bank linking is available on iOS and Android mobile apps. Use the Plaid app to connect your bank account securely.</Text>
-            </View>
-          </ScrollView>
+            <Text style={styles.bankSubtitle}>Use Plaid to securely connect your account.</Text>
+
+            {linkedAccount ? (
+              <View style={styles.infoBox}>
+                <Text style={styles.infoText}>Bank connection established.</Text>
+                <Text style={styles.infoText}>Account ID: {linkedAccount}</Text>
+              </View>
+            ) : (
+              <View style={styles.infoBox}>
+                <Text style={styles.infoText}>Link your bank account to sync transactions and power financial insights.</Text>
+              </View>
+            )}
+
+            {plaidStatus ? <Text style={styles.plaidStatusText}>{plaidStatus}</Text> : null}
+            {plaidError ? <Text style={styles.plaidErrorText}>{plaidError}</Text> : null}
+
+            {!webviewVisible ? (
+              <TouchableOpacity
+                style={[styles.linkButton, plaidLoading && styles.buttonDisabled]}
+                onPress={createPlaidLinkToken}
+                disabled={plaidLoading}
+              >
+                {plaidLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.linkButtonText}>{linkedAccount ? 'Reconnect Bank' : 'Connect Bank'}</Text>
+                )}
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.webviewWrapper}>
+                <WebView
+                  originWhitelist={['*']}
+                  source={{ html: getPlaidHtml(linkToken) }}
+                  onMessage={handlePlaidMessage}
+                  onError={(event) => setPlaidError(`WebView error: ${event.nativeEvent.description}`)}
+                  onLoadStart={() => setPlaidStatus('Loading bank connection...')}
+                  onLoadEnd={() => setPlaidStatus('Bank connection loaded')}
+                  onShouldStartLoadWithRequest={() => true}
+                  startInLoadingState
+                  javaScriptEnabled
+                  domStorageEnabled
+                  mixedContentMode="always"
+                  allowFileAccess
+                  allowUniversalAccessFromFileURLs
+                  style={styles.webview}
+                />
+                <TouchableOpacity
+                  style={styles.closeWebviewButton}
+                  onPress={() => setWebviewVisible(false)}
+                >
+                  <Text style={styles.closeWebviewText}>Close Plaid</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
         );
       case 'chat':
         return (
@@ -471,41 +594,37 @@ export default function App() {
   };
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.appLayout}>
       <View style={styles.content}>
         {renderScreen()}
       </View>
-      
-      <View style={styles.tabBar}>
-        <TouchableOpacity 
-          style={[styles.tab, activeTab === 'dashboard' && styles.activeTab]}
+      <View style={styles.bottomBar}>
+        <TouchableOpacity
+          style={[styles.bottomTab, activeTab === 'dashboard' && styles.bottomTabActive]}
           onPress={() => setActiveTab('dashboard')}
         >
-          <Text style={styles.tabText}>Dashboard</Text>
+          <Text style={styles.bottomTabText}>Dashboard</Text>
         </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={[styles.tab, activeTab === 'transactions' && styles.activeTab]}
+        <TouchableOpacity
+          style={[styles.bottomTab, activeTab === 'transactions' && styles.bottomTabActive]}
           onPress={() => setActiveTab('transactions')}
         >
-          <Text style={styles.tabText}>Transactions</Text>
+          <Text style={styles.bottomTabText}>Transactions</Text>
         </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={[styles.tab, activeTab === 'bank' && styles.activeTab]}
+        <TouchableOpacity
+          style={[styles.bottomTab, activeTab === 'bank' && styles.bottomTabActive]}
           onPress={() => setActiveTab('bank')}
         >
-          <Text style={styles.tabText}>Bank</Text>
+          <Text style={styles.bottomTabText}>Bank</Text>
         </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={[styles.tab, activeTab === 'chat' && styles.activeTab]}
+        <TouchableOpacity
+          style={[styles.bottomTab, activeTab === 'chat' && styles.bottomTabActive]}
           onPress={() => setActiveTab('chat')}
         >
-          <Text style={styles.tabText}>Chat</Text>
+          <Text style={styles.bottomTabText}>Chat</Text>
         </TouchableOpacity>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -525,8 +644,13 @@ const styles = StyleSheet.create({
   signupLink: { alignItems: 'center', paddingVertical: 12 },
   signupText: { color: '#3b82f6', fontSize: 14 },
   status: { color: '#94a3b8', fontSize: 12, marginTop: 24, textAlign: 'center' },
-  content: { flex: 1 },
-  userInfo: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#1e293b', marginBottom: 16 },
+  content: { flex: 1, minWidth: 0, backgroundColor: '#0f172a', paddingBottom: 140 },
+  appLayout: { flex: 1, backgroundColor: '#0f172a' },
+  bottomBar: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 88, flexDirection: 'row', justifyContent: 'space-between', backgroundColor: '#111827', paddingVertical: 12, paddingHorizontal: 10, borderTopWidth: 1, borderTopColor: '#1f2937', elevation: 12, zIndex: 10, paddingBottom: 26 },
+  bottomTab: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 10, marginHorizontal: 4, borderRadius: 10, backgroundColor: '#111827' },
+  bottomTabActive: { backgroundColor: '#1f2937' },
+  bottomTabText: { color: '#cbd5e1', fontSize: 12, fontWeight: '600' },
+  userInfo: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#1e293b', marginBottom: 16, borderRadius: 14 },
   userEmail: { color: '#94a3b8', fontSize: 12 },
   logoutBtn: { backgroundColor: '#ef4444', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6 },
   logoutText: { color: '#fff', fontSize: 12, fontWeight: '600' },
@@ -568,6 +692,19 @@ const styles = StyleSheet.create({
   sendButton: { backgroundColor: '#3b82f6', paddingHorizontal: 16, borderRadius: 8, justifyContent: 'center' },
   sendButtonDisabled: { backgroundColor: '#475569' },
   sendText: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  linkButton: { backgroundColor: '#3b82f6', paddingVertical: 14, paddingHorizontal: 16, borderRadius: 10, alignItems: 'center', marginTop: 16 },
+  linkButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  plaidStatusText: { color: '#22c55e', fontSize: 14, marginTop: 12, textAlign: 'center' },
+  plaidErrorText: { color: '#fca5a5', fontSize: 14, marginTop: 12, textAlign: 'center' },
+  webviewWrapper: { flex: 1, borderRadius: 16, overflow: 'hidden', marginTop: 16, backgroundColor: '#000' },
+  webview: { flex: 1, minHeight: 400 },
+  closeWebviewButton: { backgroundColor: '#111827', paddingVertical: 12, alignItems: 'center', borderRadius: 10, marginTop: 12 },
+  closeWebviewText: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  bankContainer: { flex: 1, padding: 16, paddingTop: 20 },
+  bankTitle: { fontSize: 28, fontWeight: 'bold', color: '#fff', marginBottom: 8 },
+  bankSubtitle: { fontSize: 14, color: '#94a3b8', marginBottom: 24 },
+  infoBox: { backgroundColor: '#1e293b', borderRadius: 8, padding: 16 },
+  infoText: { color: '#cbd5e1', fontSize: 14, lineHeight: 20 },
   tabBar: { flexDirection: 'row', backgroundColor: '#1e293b', borderTopWidth: 1, borderTopColor: '#334155' },
   tab: { flex: 1, paddingVertical: 12, alignItems: 'center' },
   activeTab: { borderBottomWidth: 3, borderBottomColor: '#3b82f6' },

@@ -7,7 +7,7 @@
  * @format
  */
 
-import {useState, useEffect} from 'react';
+import {useState, useEffect, useCallback} from 'react';
 import {Platform} from 'react-native';
 import DEFAULT_CONFIGURATION from './internal/defaultConfiguration';
 import NativeInterface from './internal/nativeInterface';
@@ -23,10 +23,14 @@ const createState = (): State => {
   return new State(_configuration);
 };
 
+// Track ongoing requests
+let isRequestInProgress = false;
+let requestQueue: ((state: Types.NetInfoState) => void)[] = [];
+
 /**
  * Configures the library with the given configuration. Note that calling this will stop all
  * previously added listeners from being called again. It is best to call this right when your
- * application is started to avoid issues.
+ * application is started to avoid issues. The configuration sets up a global singleton instance.
  *
  * @param configuration The new configuration to set.
  */
@@ -50,6 +54,7 @@ export function configure(
 
 /**
  * Returns a `Promise` that resolves to a `NetInfoState` object.
+ * This function operates on the global singleton instance configured using `configure()`
  *
  * @param [requestedInterface] interface from which to obtain the information
  *
@@ -65,7 +70,7 @@ export function fetch(
 }
 
 /**
- * Force-refreshes the internal state of the NetInfo library.
+ * Force-refreshes the internal state of the global singleton managed by this library.
  *
  * @returns A Promise which contains the updated connection state.
  */
@@ -73,11 +78,27 @@ export function refresh(): Promise<Types.NetInfoState> {
   if (!_state) {
     _state = createState();
   }
-  return _state._fetchCurrentState();
+
+ // If a request is already in progress, return a promise that will resolve when the current request finishes
+  if (isRequestInProgress) {
+    return new Promise((resolve) => {
+      requestQueue.push(resolve);
+    });
+  }
+
+  isRequestInProgress = true;
+
+  return _state._fetchCurrentState().then((result) => {
+    requestQueue.forEach((resolve) => resolve(result));
+    requestQueue = [];
+    return result;
+  }).finally(() => {
+    isRequestInProgress = false;
+  });
 }
 
 /**
- * Subscribe to connection information. The callback is called with a parameter of type
+ * Subscribe to the global singleton's connection information. The callback is called with a parameter of type
  * [`NetInfoState`](README.md#netinfostate) whenever the connection state changes. Your listener
  * will be called with the latest information soon after you subscribe and then with any
  * subsequent changes afterwards. You should not assume that the listener is called in the same
@@ -101,7 +122,9 @@ export function addEventListener(
 }
 
 /**
- * A React Hook which updates when the connection state changes.
+ * A React Hook into this library's singleton which updates when the connection state changes.
+ *
+ * @param {Partial<Types.NetInfoConfiguration>} configuration - Configure the isolated network checker managed by this hook
  *
  * @returns The connection state.
  */
@@ -120,10 +143,61 @@ export function useNetInfo(
   });
 
   useEffect((): (() => void) => {
-    return addEventListener(setNetInfo);
+    const unsubscribe = addEventListener(setNetInfo);
+    return () => unsubscribe();
   }, []);
 
   return netInfo;
+}
+
+/**
+ * A React Hook which manages an isolated instance of the network info manager.
+ * This is not a hook into a singleton shared state. NetInfo.configure, NetInfo.addEventListener,
+ * NetInfo.fetch, NetInfo.refresh are performed on a global singleton and have no affect on this hook.
+ * @param {boolean} isPaused - Pause the internal network checks.
+ * @param {Partial<Types.NetInfoConfiguration>} configuration - Configure the isolated network checker managed by this hook
+ *
+ * @returns the netInfo state and a refresh function
+ */
+export function useNetInfoInstance(
+  isPaused = false,
+  configuration?: Partial<Types.NetInfoConfiguration>,
+) {
+  const [networkInfoManager, setNetworkInfoManager] = useState<State>();
+  const [netInfo, setNetInfo] = useState<Types.NetInfoState>({
+    type: Types.NetInfoStateType.unknown,
+    isConnected: null,
+    isInternetReachable: null,
+    details: null,
+  });
+
+  useEffect(() => {
+    if (isPaused) {
+      return;
+    }
+    const config = {
+      ...DEFAULT_CONFIGURATION,
+      ...configuration,
+    };
+    const state = new State(config);
+    setNetworkInfoManager(state);
+    state.add(setNetInfo);
+    return state.tearDown;
+  }, [isPaused, configuration]);
+
+  const refresh = useCallback(() => {
+    if (networkInfoManager && !isRequestInProgress) {
+      isRequestInProgress = true;
+      networkInfoManager._fetchCurrentState().finally(() => {
+        isRequestInProgress = false;
+      });
+    }
+  }, [networkInfoManager]);
+
+  return {
+    netInfo,
+    refresh,
+  };
 }
 
 export * from './internal/types';
@@ -134,4 +208,5 @@ export default {
   refresh,
   addEventListener,
   useNetInfo,
+  useNetInfoInstance,
 };
