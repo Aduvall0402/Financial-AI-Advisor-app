@@ -233,14 +233,20 @@ app.get("/api/ai/financial-summary/:userId", async (req, res) => {
 });
 app.post("/api/ai/chat", async (req, res) => {
     try {
+        console.log("[/api/ai/chat] Request received:", req.body);
         const { userId, message } = req.body;
         if (!userId || !message) {
+            console.warn("[/api/ai/chat] Missing userId or message");
             return res.status(400).json({ error: "User ID and message required" });
         }
-        const { data: summaryData } = await supabase_1.default
+        console.log(`[/api/ai/chat] Fetching transactions for userId: ${userId}`);
+        const { data: summaryData, error: txError } = await supabase_1.default
             .from("transactions")
             .select("*")
             .eq("user_id", userId);
+        if (txError) {
+            console.error("[/api/ai/chat] Transaction fetch error:", txError);
+        }
         const monthly_spending = summaryData?.reduce((sum, t) => sum + t.amount, 0) || 0;
         const categoryMap = {};
         summaryData?.forEach((t) => {
@@ -250,10 +256,14 @@ app.post("/api/ai/chat", async (req, res) => {
             .map(([name, amount]) => ({ name, amount }))
             .sort((a, b) => b.amount - a.amount)
             .slice(0, 5);
-        const { data: debts } = await supabase_1.default
+        console.log(`[/api/ai/chat] Fetching debts for userId: ${userId}`);
+        const { data: debts, error: debtError } = await supabase_1.default
             .from("debts")
             .select("*")
             .eq("user_id", userId);
+        if (debtError) {
+            console.error("[/api/ai/chat] Debt fetch error:", debtError);
+        }
         const debt = (debts || []).map((d) => ({
             name: d.debt_name,
             balance: d.current_balance,
@@ -265,7 +275,10 @@ app.post("/api/ai/chat", async (req, res) => {
             top_categories,
             debt,
         };
+        console.log(`[/api/ai/chat] Calling OpenAI service with message: "${message.substring(0, 50)}..."`);
         const response = await openaiService.chatWithAssistant(message, summary);
+        console.log(`[/api/ai/chat] OpenAI response received: "${response.substring(0, 50)}..."`);
+        console.log("[/api/ai/chat] Saving chat messages to database");
         await supabase_1.default.from("chat_messages").insert([
             { user_id: userId, role: "user", content: message },
             { user_id: userId, role: "assistant", content: response },
@@ -273,8 +286,18 @@ app.post("/api/ai/chat", async (req, res) => {
         res.json({ response });
     }
     catch (error) {
-        console.error("Error in chat:", error);
-        res.status(500).json({ error: "Failed to process chat" });
+        const errorName = error?.name || "Unknown";
+        const errorMessage = error?.message || JSON.stringify(error) || "Failed to process chat";
+        const errorType = error?.code || "UNKNOWN";
+        const detailedError = `[${errorName}] ${errorMessage} (Code: ${errorType})`;
+        console.error("[/api/ai/chat] Error in chat:", detailedError);
+        console.error("[/api/ai/chat] Full error:", error);
+        res.status(500).json({
+            error: detailedError,
+            reason: errorMessage,
+            type: errorName,
+            timestamp: new Date().toISOString()
+        });
     }
 });
 // ============================================

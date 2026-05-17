@@ -257,14 +257,21 @@ export default function App() {
     setLoadingChat(true);
 
     try {
+      console.log(`[Chat] Sending message to: ${API_URL}/api/ai/chat`);
+      console.log(`[Chat] Payload:`, { userId, message });
+      
       const response = await fetch(`${API_URL}/api/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, message }),
       });
 
+      console.log(`[Chat] Response status: ${response.status}`);
+      console.log(`[Chat] Response headers:`, Object.fromEntries(response.headers));
+
       if (response.ok) {
         const data = await response.json();
+        console.log(`[Chat] Success response:`, data);
         const assistantMessage = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
@@ -272,18 +279,35 @@ export default function App() {
         };
         setChatMessages(prev => [...prev, assistantMessage]);
       } else {
+        let errorText = 'Unknown error';
+        let fullErrorData = null;
+        
+        try {
+          fullErrorData = await response.json();
+          errorText = fullErrorData?.error || fullErrorData?.message || JSON.stringify(fullErrorData);
+        } catch (parseErr) {
+          console.warn('[Chat] Could not parse error JSON, trying text:', parseErr);
+          errorText = await response.text().catch(() => 'Empty response body');
+        }
+        
+        const debugInfo = `Status: ${response.status} | ${errorText}`;
+        console.error(`[Chat] Error response:`, debugInfo);
+        console.error(`[Chat] Full error data:`, fullErrorData);
+        
         const errorMessage = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          text: '❌ Error: Could not get response',
+          text: `❌ Error [${response.status}]: ${errorText}`,
         };
         setChatMessages(prev => [...prev, errorMessage]);
       }
     } catch (error) {
+      console.error('[Chat] Network/parsing error:', error);
+      console.error('[Chat] Error stack:', error.stack);
       const errorMessage = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        text: '❌ Error: Backend unreachable',
+        text: `❌ Error: ${error.message || 'Backend unreachable'}`,
       };
       setChatMessages(prev => [...prev, errorMessage]);
     } finally {

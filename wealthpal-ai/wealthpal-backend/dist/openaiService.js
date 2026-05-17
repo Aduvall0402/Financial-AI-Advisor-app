@@ -4,8 +4,17 @@ exports.categorizeTransactions = categorizeTransactions;
 exports.generateFinancialInsight = generateFinancialInsight;
 exports.chatWithAssistant = chatWithAssistant;
 const openai_1 = require("openai");
+const rawOpenaiKey = process.env.OPENAI_API_KEY || process.env.OPENAI_KEY || "";
+const openaiKey = rawOpenaiKey.replace(/\s+/g, "");
+if (!openaiKey) {
+    throw new Error('OPENAI_API_KEY is required. Set it in your environment variables.');
+}
+if (rawOpenaiKey !== openaiKey) {
+    console.log("OpenAI key whitespace sanitized from environment variable.");
+}
+console.log(`OpenAI key loaded: ${openaiKey.slice(0, 10)}...${openaiKey.slice(-4)}`);
 const openai = new openai_1.OpenAI({
-    apiKey: "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",
+    apiKey: openaiKey,
 });
 // Categorize transactions using AI
 async function categorizeTransactions(transactions) {
@@ -118,8 +127,17 @@ Be conversational, helpful, and provide specific advice based on their situation
         return response.choices[0].message.content || "";
     }
     catch (error) {
-        console.error("Error in chat:", error);
-        throw error;
+        const err = error;
+        const parts = [err?.message || 'Unknown OpenAI error'];
+        if (err?.response?.status) {
+            parts.push(`status=${err.response.status}`);
+        }
+        if (err?.response?.data) {
+            parts.push(JSON.stringify(err.response.data));
+        }
+        const message = parts.join(' | ');
+        console.error("Error in chat:", message);
+        throw new Error(message);
     }
 }
 //# sourceMappingURL=openaiService.js.map
