@@ -1,0 +1,8 @@
+{
+  "name": "wealthpal-ai-root",
+  "private": true,
+  "scripts": {
+    "build": "cd wealthpal-ai/wealthpal-backend && npm install && npm run build",
+    "start": "cd wealthpal-ai/wealthpal-backend && npm start"
+  }
+}
