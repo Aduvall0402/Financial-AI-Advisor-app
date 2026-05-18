@@ -3,16 +3,16 @@
 internal class StateMachineProcedureContext {
   private let processStateEventCallback: (_ event: UpdatesStateEvent) -> Void
   private let getCurrentStateCallback: () -> UpdatesStateValue
-  private let resetStateAfterRestartCallback: () -> Void
+  private let resetStateCallback: () -> Void
 
   required init(
     processStateEventCallback: @escaping (_ event: UpdatesStateEvent) -> Void,
     getCurrentStateCallback: @escaping () -> UpdatesStateValue,
-    resetStateAfterRestartCallback: @escaping () -> Void
+    resetStateCallback: @escaping () -> Void
   ) {
     self.processStateEventCallback = processStateEventCallback
     self.getCurrentStateCallback = getCurrentStateCallback
-    self.resetStateAfterRestartCallback = resetStateAfterRestartCallback
+    self.resetStateCallback = resetStateCallback
   }
 
   /**
@@ -33,8 +33,8 @@ internal class StateMachineProcedureContext {
   /**
    Reset the machine to its starting state. Should only be called after the app restarts (reloadAsync()).
    */
-  func resetStateAfterRestart() {
-    self.resetStateAfterRestartCallback()
+  func resetState() {
+    self.resetStateCallback()
   }
 }
 
@@ -44,14 +44,14 @@ final class ProcedureContext: StateMachineProcedureContext {
   required init(
     processStateEventCallback: @escaping (UpdatesStateEvent) -> Void,
     getCurrentStateCallback: @escaping () -> UpdatesStateValue,
-    resetStateAfterRestartCallback: @escaping () -> Void,
+    resetStateCallback: @escaping () -> Void,
     onCompleteCallback: @escaping () -> Void
   ) {
     self.onCompleteCallback = onCompleteCallback
     super.init(
       processStateEventCallback: processStateEventCallback,
       getCurrentStateCallback: getCurrentStateCallback,
-      resetStateAfterRestartCallback: resetStateAfterRestartCallback
+      resetStateCallback: resetStateCallback
     )
   }
 
@@ -59,9 +59,9 @@ final class ProcedureContext: StateMachineProcedureContext {
   required init(
     processStateEventCallback: @escaping (_ event: UpdatesStateEvent) -> Void,
     getCurrentStateCallback: @escaping () -> UpdatesStateValue,
-    resetStateAfterRestartCallback: @escaping () -> Void
+    resetStateCallback: @escaping () -> Void
   ) {
-    fatalError("init(processStateEventCallback:getCurrentStateCallback:resetStateAfterRestartCallback:) has not been implemented")
+    fatalError("init(processStateEventCallback:getCurrentStateCallback:resetStateCallback:) has not been implemented")
   }
 
   /**

@@ -28,9 +28,9 @@ private final class MethodInvocationHolder {
         assert(!isCompleted, "Cannot get state after procedure completion")
         return stateMachineProcedureContext.getCurrentState()
       },
-      resetStateAfterRestartCallback: {
+      resetStateCallback: {
         assert(!isCompleted, "Cannot reset state after procedure completion")
-        stateMachineProcedureContext.resetStateAfterRestart()
+        stateMachineProcedureContext.resetState()
       },
       onCompleteCallback: {
         isCompleted = true

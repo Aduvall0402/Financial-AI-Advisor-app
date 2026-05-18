@@ -3,7 +3,7 @@
     "name": "wealthpal-ai-app",
     "slug": "wealthpal-ai-app",
     "version": "1.0.0",
-    "sdkVersion": "55.0.0",
+    "sdkVersion": "51.0.0",
     "assetBundlePatterns": [
       "**/*"
     ],
@@ -12,9 +12,12 @@
       "package": "com.aduvall0402.wealthpalaiapp",
       "runtimeVersion": {
         "policy": "appVersion"
-      }
+      },
+      "jsEngine": "jsc"
     },
-    "ios": {},
+    "ios": {
+      "jsEngine": "jsc"
+    },
     "extra": {
       "eas": {
         "projectId": "45ffdb30-17f0-49b9-8284-1edf883ffe7c"
@@ -22,6 +25,9 @@
     },
     "updates": {
       "url": "https://u.expo.dev/45ffdb30-17f0-49b9-8284-1edf883ffe7c"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
     }
   }
 }

@@ -23,13 +23,13 @@ final class RecreateReactContextProcedure: StateMachineProcedure {
   }
 
   func run(procedureContext: ProcedureContext) {
-    procedureContext.processStateEvent(.restart)
+    procedureContext.processStateEvent(UpdatesStateEventRestart())
 
     DispatchQueue.main.async {
       RCTTriggerReloadCommandListeners(self.triggerReloadCommandListenersReason)
       self.successBlock()
       // Reset the state machine
-      procedureContext.resetStateAfterRestart()
+      procedureContext.resetState()
       procedureContext.onComplete()
     }
   }

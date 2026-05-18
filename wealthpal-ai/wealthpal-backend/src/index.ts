@@ -41,6 +41,7 @@ app.post("/api/auth/signup", async (req: Request, res: Response) => {
     }
 
     if (user) {
+      console.log("Signup successful. User ID:", user.id);
       await auth.createUserProfile(user.id, email);
     }
 
@@ -66,6 +67,9 @@ app.post("/api/auth/login", async (req: Request, res: Response) => {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
+    console.log("Login successful. Session:", session);
+    console.log("User ID:", session?.user?.id);
+    
     res.json({ session, message: "Login successful" });
   } catch (error) {
     console.error("Error logging in:", error);
