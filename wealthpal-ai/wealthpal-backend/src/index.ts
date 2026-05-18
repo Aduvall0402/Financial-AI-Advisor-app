@@ -1,6 +1,9 @@
 import dotenv from "dotenv";
 dotenv.config();
 
+console.log("PLAID_ENV:", process.env.PLAID_ENV);
+console.log("PLAID_CLIENT_ID:", process.env.PLAID_CLIENT_ID);
+
 import express, { Express, Request, Response } from "express";
 import cors from "cors";
 import supabase from "./supabase";
