@@ -2,7 +2,7 @@ import { Configuration, PlaidApi, PlaidEnvironments } from "plaid";
 
 const configuration = new Configuration({
   basePath:
-    process.env.PLAID_ENV === "production"
+    process.env.PLAID_ENV === "sandbox"
       ? PlaidEnvironments.Production
       : PlaidEnvironments.Sandbox,
   baseOptions: {
