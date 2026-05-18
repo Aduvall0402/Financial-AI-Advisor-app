@@ -4,5 +4,9 @@
   "scripts": {
     "build": "cd wealthpal-ai/wealthpal-backend && npm install && npm run build",
     "start": "cd wealthpal-ai/wealthpal-backend && npm start"
+  },
+  "dependencies": {
+    "expo": "^55.0.24",
+    "expo-updates": "^55.0.22"
   }
 }
