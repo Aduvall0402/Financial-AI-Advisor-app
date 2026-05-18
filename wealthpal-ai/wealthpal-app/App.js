@@ -66,7 +66,7 @@ export default function App() {
       setLoading(false);
       return;
     }
-    const uid = data.session.id;
+    const uid = data.session.user.id;
     console.log("Setting userId to:", uid);
     setUserId(uid);
       setPassword('');
