@@ -159,67 +159,84 @@ export default function App() {
   };
 
   const openPlaidLink = async () => {
-    if (!userId) {
-      setPlaidError('Please log in first');
-      return;
+  if (!userId) {
+    setPlaidError('Please log in first');
+    return;
+  }
+  setPlaidLoading(true);
+  setPlaidError('');
+  setPlaidStatus('Getting ready...');
+  
+  try {
+    const response = await fetch(`${API_URL}/api/plaid/create-link-token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId }),
+    });
+    const data = await response.json();
+    if (!data.link_token) {
+      throw new Error('Failed to create link token');
     }
-    setPlaidLoading(true);
-    setPlaidError('');
-    setPlaidStatus('Getting ready...');
-    try {
-      const response = await fetch(`${API_URL}/api/plaid/create-link-token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId }),
-      });
-      const data = await response.json();
-      if (!data.link_token) {
-        throw new Error('Failed to create link token');
-      }
-      console.log('Token:', data.link_token);
-      setPlaidStatus('Opening Plaid...');
-      
-      const tokenConfig = { token: data.link_token, noLoadingState: false };
-      create(tokenConfig);
-      
-      open({
-        onSuccess: async (success) => {
-          console.log('Success:', success);
-          setPlaidStatus('Exchanging token...');
-          try {
-            const exchangeResponse = await fetch(`${API_URL}/api/plaid/exchange-token`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: (console.log("Exchange body:", { publicToken: success.publicToken, userId }), JSON.stringify({ publicToken: success.publicToken, userId })),
-            });
-            const exchangeData = await exchangeResponse.json();
-            if (exchangeData.plaid_account_id || exchangeData.itemId) {
-              setLinkedAccount(exchangeData.plaid_account_id || exchangeData.itemId);
-              setPlaidStatus('✅ Bank connected!');
-              setPlaidError('');
-            }
-          } catch (err) {
-            setPlaidError('Exchange error: ' + err.message);
+    console.log('Token:', data.link_token);
+    console.log('UserId:', userId);
+    setPlaidStatus('Opening Plaid...');
+    
+    const tokenConfig = { token: data.link_token, noLoadingState: false };
+    create(tokenConfig);
+    
+    open({
+      onSuccess: async (success) => {
+        console.log('Plaid onSuccess called');
+        setPlaidStatus('Exchanging token...');
+        try {
+          console.log('Exchanging with userId:', userId);
+          const exchangeResponse = await fetch(`${API_URL}/api/plaid/exchange-token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ publicToken: success.publicToken, userId }),
+          });
+          
+          console.log('Exchange response status:', exchangeResponse.status);
+          const exchangeData = await exchangeResponse.json();
+          console.log('Exchange response:', exchangeData);
+          
+          if (!exchangeResponse.ok) {
+            throw new Error(exchangeData.error || 'Token exchange failed');
           }
-        },
-        onExit: (exit) => {
-          console.log('Exit:', exit);
-          if (exit?.error) {
-            setPlaidError('Error: ' + (exit.error.display_message || exit.error.error_message || 'Unknown'));
+          
+          if (exchangeData.plaid_account_id || exchangeData.itemId) {
+            setLinkedAccount(exchangeData.plaid_account_id || exchangeData.itemId);
+            setPlaidStatus('✅ Bank connected!');
+            setPlaidError('');
           } else {
-            setPlaidError('Cancelled');
+            throw new Error('No account ID returned');
           }
+        } catch (err) {
+          console.error('Exchange error:', err);
+          setPlaidError('Exchange error: ' + err.message);
           setPlaidStatus('');
-        },
-      });
-    } catch (error) {
-      console.error('Plaid error:', error);
-      setPlaidError(error.message);
-      setPlaidStatus('');
-    } finally {
-      setPlaidLoading(false);
-    }
-  };
+        } finally {
+          setPlaidLoading(false);
+        }
+      },
+      onExit: (exit) => {
+        console.log('Plaid onExit called:', exit);
+        if (exit?.error) {
+          setPlaidError('Error: ' + (exit.error.display_message || exit.error.error_message || 'Unknown'));
+        } else {
+          setPlaidError('Cancelled');
+        }
+        setPlaidStatus('');
+        setPlaidLoading(false);
+      },
+    });
+  } catch (error) {
+    console.error('Plaid error:', error);
+    setPlaidError(error.message);
+    setPlaidStatus('');
+    setPlaidLoading(false);
+  }
+};
 
   const sendChatMessage = async () => {
     if (!chatInput.trim()) return;
