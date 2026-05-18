@@ -43,26 +43,32 @@ export default function App() {
   };
 
   const handleLogin = async () => {
-    if (!email || !password) {
-      setError('Please enter email and password');
+  if (!email || !password) {
+    setError('Please enter email and password');
+    return;
+  }
+  setLoading(true);
+  setError('');
+  try {
+    const response = await fetch(`${API_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await response.json();
+    console.log("Login response:", data);
+    console.log("Session:", data.session);
+    console.log("User:", data.session?.user);
+    console.log("User ID:", data.session?.user?.id);
+    
+    if (!response.ok) {
+      setError(data.error || 'Login failed');
+      setLoading(false);
       return;
     }
-    setLoading(true);
-    setError('');
-    try {
-      const response = await fetch(`${API_URL}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        setError(data.error || 'Login failed');
-        setLoading(false);
-        return;
-      }
-      const uid = data.session.user.id;
-      setUserId(uid);
+    const uid = data.session.id;
+    console.log("Setting userId to:", uid);
+    setUserId(uid);
       setPassword('');
       setDashboardLoading(true);
       try {
