@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { SafeAreaView, View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, FlatList, ActivityIndicator } from 'react-native';
 import { create, open } from 'react-native-plaid-link-sdk';
 
@@ -7,7 +7,6 @@ const API_URL = 'https://financial-ai-advisor-app-production.up.railway.app';
 export default function App() {
   const [screen, setScreen] = useState('login');
   const [userId, setUserId] = useState(null);
-  const userIdRef = useRef(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
@@ -28,17 +27,6 @@ export default function App() {
   const [plaidError, setPlaidError] = useState('');
   const [plaidLoading, setPlaidLoading] = useState(false);
   const [linkedAccount, setLinkedAccount] = useState(null);
-  const [debugMessages, setDebugMessages] = useState([]);
-
-  // Keep userIdRef in sync with userId state
-  useEffect(() => {
-    userIdRef.current = userId;
-  }, [userId]);
-
-  const addDebugMessage = (msg) => {
-    console.log(msg);
-    setDebugMessages(prev => [...prev, msg]);
-  };
 
   useEffect(() => {
     testBackend();
@@ -61,7 +49,6 @@ export default function App() {
     }
     setLoading(true);
     setError('');
-    setDebugMessages([]);
     try {
       const response = await fetch(`${API_URL}/api/auth/login`, {
         method: 'POST',
@@ -69,18 +56,13 @@ export default function App() {
         body: JSON.stringify({ email, password }),
       });
       const data = await response.json();
-      addDebugMessage("✅ Got login response");
-      addDebugMessage(`✅ User ID: ${data.session?.user?.id}`);
-      
       if (!response.ok) {
         setError(data.error || 'Login failed');
         setLoading(false);
         return;
       }
       const uid = data.session.user.id;
-      addDebugMessage(`✅ Setting userId to: ${uid}`);
       setUserId(uid);
-      userIdRef.current = uid; // Set ref immediately
       setPassword('');
       setDashboardLoading(true);
       try {
@@ -126,7 +108,6 @@ export default function App() {
       }
       const uid = data.user.id;
       setUserId(uid);
-      userIdRef.current = uid;
       setPassword('');
       setFullName('');
       setDashboardLoading(true);
@@ -151,7 +132,6 @@ export default function App() {
   const handleLogout = () => {
     setScreen('login');
     setUserId(null);
-    userIdRef.current = null;
     setEmail('');
     setPassword('');
     setFullName('');
@@ -160,7 +140,6 @@ export default function App() {
     setChatMessages([{ id: '0', role: 'assistant', text: 'Hi! I\'m your financial assistant. Ask me anything about your finances!' }]);
     setDashboardData(null);
     setLinkedAccount(null);
-    setDebugMessages([]);
   };
 
   const loadTransactions = async () => {
@@ -180,23 +159,19 @@ export default function App() {
   };
 
   const openPlaidLink = async () => {
-    // Use ref to get most current userId (survives native module callbacks)
-    const currentUserId = userIdRef.current || userId;
-    
-    if (!currentUserId) {
+    if (!userId) {
       setPlaidError('Please log in first');
       return;
     }
     setPlaidLoading(true);
     setPlaidError('');
     setPlaidStatus('Getting ready...');
-    addDebugMessage(`🔵 Plaid started with userId: ${currentUserId}`);
     
     try {
       const response = await fetch(`${API_URL}/api/plaid/create-link-token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: currentUserId }),
+        body: JSON.stringify({ userId }),
       });
       const data = await response.json();
       if (!data.link_token) {
@@ -210,21 +185,14 @@ export default function App() {
       
       open({
         onSuccess: async (success) => {
-          // CRITICAL: Read from ref, not closure - ref always has latest value
-          const userIdAtCallback = userIdRef.current;
           console.log('Plaid onSuccess called with:', success);
-          console.log('userId from ref:', userIdAtCallback);
           setPlaidStatus('Exchanging token...');
-          addDebugMessage(`🔵 Exchange with userId: ${userIdAtCallback}`);
-          
           try {
+            console.log('Starting token exchange with userId:', userId);
             const exchangeResponse = await fetch(`${API_URL}/api/plaid/exchange-token`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ 
-                publicToken: success.publicToken, 
-                userId: userIdAtCallback 
-              }),
+              body: JSON.stringify({ publicToken: success.publicToken, userId }),
             });
             
             console.log('Exchange response status:', exchangeResponse.status);
@@ -285,7 +253,7 @@ export default function App() {
       const response = await fetch(`${API_URL}/api/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: userIdRef.current, message }),
+        body: JSON.stringify({ userId, message }),
       });
       if (response.ok) {
         const data = await response.json();
@@ -322,13 +290,6 @@ export default function App() {
         <ScrollView style={styles.authContainer}>
           <Text style={styles.authTitle}>WealthPal AI</Text>
           <Text style={styles.authSubtitle}>Your AI Finance Assistant</Text>
-          {debugMessages.length > 0 && (
-            <View style={styles.debugBox}>
-              {debugMessages.map((msg, idx) => (
-                <Text key={idx} style={styles.debugText}>{msg}</Text>
-              ))}
-            </View>
-          )}
           {error ? <View style={styles.errorBox}><Text style={styles.errorText}>{error}</Text></View> : null}
           <TextInput
             style={styles.authInput}
@@ -436,10 +397,7 @@ export default function App() {
         return (
           <ScrollView style={styles.dashboardContainer}>
             <View style={styles.userInfo}>
-              <View>
-                <Text style={styles.userEmail}>{email}</Text>
-                <Text style={{ color: '#94a3b8', fontSize: 11 }}>ID: {userId || 'Not set'}</Text>
-              </View>
+              <Text style={styles.userEmail}>{email}</Text>
               <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
                 <Text style={styles.logoutText}>Logout</Text>
               </TouchableOpacity>
@@ -502,14 +460,6 @@ export default function App() {
         return (
           <ScrollView style={styles.bankContainer}>
             <Text style={styles.bankTitle}>Connect Your Bank</Text>
-            <Text style={{ color: '#94a3b8', fontSize: 11, marginBottom: 8 }}>Current userId: {userId || 'Not set'}</Text>
-            {debugMessages.length > 0 && (
-              <View style={styles.debugBox}>
-                {debugMessages.map((msg, idx) => (
-                  <Text key={idx} style={styles.debugText}>{msg}</Text>
-                ))}
-              </View>
-            )}
             {linkedAccount ? (
               <View style={styles.infoBox}>
                 <Text style={styles.infoText}>✅ Connected: {linkedAccount}</Text>
@@ -607,8 +557,6 @@ const styles = StyleSheet.create({
   authContainer: { flex: 1, padding: 24, paddingTop: 60 },
   authTitle: { fontSize: 32, fontWeight: 'bold', color: '#fff', marginBottom: 8, textAlign: 'center' },
   authSubtitle: { fontSize: 16, color: '#94a3b8', marginBottom: 32, textAlign: 'center' },
-  debugBox: { backgroundColor: '#1e293b', borderRadius: 8, padding: 12, marginBottom: 16, borderLeftWidth: 3, borderLeftColor: '#22c55e' },
-  debugText: { color: '#22c55e', fontSize: 11, marginBottom: 4 },
   errorBox: { backgroundColor: '#7f1d1d', borderRadius: 8, padding: 12, marginBottom: 16 },
   errorText: { color: '#fecaca', fontSize: 14 },
   authInput: { width: '100%', backgroundColor: '#1e293b', color: '#fff', borderRadius: 8, paddingHorizontal: 16, paddingVertical: 12, marginBottom: 12, fontSize: 16, borderWidth: 1, borderColor: '#334155' },
