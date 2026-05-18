@@ -91,9 +91,10 @@ app.post("/api/plaid/create-link-token", async (req: Request, res: Response) => 
 
     const linkToken = await plaidService.createLinkToken(userId);
     res.json({ link_token: linkToken });
-  } catch (error) {
-    console.error("Error creating link token:", error);
-    res.status(500).json({ error: "Failed to create link token" });
+  } catch (error: any) {
+    const plaidError = error?.response?.data || error?.message || error;
+    console.error("Error creating link token:", JSON.stringify(plaidError));
+    res.status(500).json({ error: "Failed to create link token", detail: plaidError });
   }
 });
 
