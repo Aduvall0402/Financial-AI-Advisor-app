@@ -3,8 +3,8 @@ import { Configuration, PlaidApi, PlaidEnvironments } from "plaid";
 const configuration = new Configuration({
   basePath:
     process.env.PLAID_ENV === "sandbox"
-      ? PlaidEnvironments.Production
-      : PlaidEnvironments.Sandbox,
+      ? PlaidEnvironments.Sandbox   
+      : PlaidEnvironments.Production,
   baseOptions: {
     headers: {
       "PLAID-CLIENT-ID": process.env.PLAID_CLIENT_ID,
