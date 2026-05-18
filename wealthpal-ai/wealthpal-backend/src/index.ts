@@ -133,6 +133,32 @@ app.post("/api/plaid/exchange-token", async (req: Request, res: Response) => {
   }
 });
 
+// Get user's connected accounts with details from Plaid
+app.get("/api/plaid/accounts/:userId", async (req: Request, res: Response) => {
+  try {
+    const { userId } = req.params;
+
+    // Get stored access token from database
+    const { data, error } = await supabase
+      .from("accounts")
+      .select("plaid_access_token, plaid_account_id")
+      .eq("user_id", userId)
+      .single();
+
+    if (error || !data?.plaid_access_token) {
+      return res.status(404).json({ error: "No connected account found" });
+    }
+
+    // Fetch accounts from Plaid using stored access token
+    const accounts = await plaidService.getAccounts(data.plaid_access_token);
+
+    res.json({ accounts, itemId: data.plaid_account_id });
+  } catch (error: any) {
+    console.error("Error fetching accounts:", error);
+    res.status(500).json({ error: error?.message || "Failed to fetch accounts" });
+  }
+});
+
 app.post("/api/transactions/sync", async (req: Request, res: Response) => {
   try {
     const { userId, accessToken, startDate, endDate } = req.body;
