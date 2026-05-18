@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { SafeAreaView, View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, FlatList, ActivityIndicator } from 'react-native';
 import { create, open } from 'react-native-plaid-link-sdk';
 
@@ -7,6 +7,7 @@ const API_URL = 'https://financial-ai-advisor-app-production.up.railway.app';
 export default function App() {
   const [screen, setScreen] = useState('login');
   const [userId, setUserId] = useState(null);
+  const userIdRef = useRef(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
@@ -28,6 +29,11 @@ export default function App() {
   const [plaidLoading, setPlaidLoading] = useState(false);
   const [linkedAccount, setLinkedAccount] = useState(null);
   const [debugMessages, setDebugMessages] = useState([]);
+
+  // Keep userIdRef in sync with userId state
+  useEffect(() => {
+    userIdRef.current = userId;
+  }, [userId]);
 
   const addDebugMessage = (msg) => {
     console.log(msg);
@@ -64,8 +70,6 @@ export default function App() {
       });
       const data = await response.json();
       addDebugMessage("✅ Got login response");
-      addDebugMessage(`✅ Session exists: ${!!data.session}`);
-      addDebugMessage(`✅ User exists: ${!!data.session?.user}`);
       addDebugMessage(`✅ User ID: ${data.session?.user?.id}`);
       
       if (!response.ok) {
@@ -76,6 +80,7 @@ export default function App() {
       const uid = data.session.user.id;
       addDebugMessage(`✅ Setting userId to: ${uid}`);
       setUserId(uid);
+      userIdRef.current = uid; // Set ref immediately
       setPassword('');
       setDashboardLoading(true);
       try {
@@ -121,6 +126,7 @@ export default function App() {
       }
       const uid = data.user.id;
       setUserId(uid);
+      userIdRef.current = uid;
       setPassword('');
       setFullName('');
       setDashboardLoading(true);
@@ -145,6 +151,7 @@ export default function App() {
   const handleLogout = () => {
     setScreen('login');
     setUserId(null);
+    userIdRef.current = null;
     setEmail('');
     setPassword('');
     setFullName('');
@@ -173,19 +180,23 @@ export default function App() {
   };
 
   const openPlaidLink = async () => {
-    if (!userId) {
+    // Use ref to get most current userId (survives native module callbacks)
+    const currentUserId = userIdRef.current || userId;
+    
+    if (!currentUserId) {
       setPlaidError('Please log in first');
       return;
     }
     setPlaidLoading(true);
     setPlaidError('');
     setPlaidStatus('Getting ready...');
+    addDebugMessage(`🔵 Plaid started with userId: ${currentUserId}`);
     
     try {
       const response = await fetch(`${API_URL}/api/plaid/create-link-token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId }),
+        body: JSON.stringify({ userId: currentUserId }),
       });
       const data = await response.json();
       if (!data.link_token) {
@@ -199,14 +210,21 @@ export default function App() {
       
       open({
         onSuccess: async (success) => {
+          // CRITICAL: Read from ref, not closure - ref always has latest value
+          const userIdAtCallback = userIdRef.current;
           console.log('Plaid onSuccess called with:', success);
+          console.log('userId from ref:', userIdAtCallback);
           setPlaidStatus('Exchanging token...');
+          addDebugMessage(`🔵 Exchange with userId: ${userIdAtCallback}`);
+          
           try {
-            console.log('Starting token exchange with userId:', userId);
             const exchangeResponse = await fetch(`${API_URL}/api/plaid/exchange-token`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ publicToken: success.publicToken, userId }),
+              body: JSON.stringify({ 
+                publicToken: success.publicToken, 
+                userId: userIdAtCallback 
+              }),
             });
             
             console.log('Exchange response status:', exchangeResponse.status);
@@ -267,7 +285,7 @@ export default function App() {
       const response = await fetch(`${API_URL}/api/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, message }),
+        body: JSON.stringify({ userId: userIdRef.current, message }),
       });
       if (response.ok) {
         const data = await response.json();
@@ -484,6 +502,14 @@ export default function App() {
         return (
           <ScrollView style={styles.bankContainer}>
             <Text style={styles.bankTitle}>Connect Your Bank</Text>
+            <Text style={{ color: '#94a3b8', fontSize: 11, marginBottom: 8 }}>Current userId: {userId || 'Not set'}</Text>
+            {debugMessages.length > 0 && (
+              <View style={styles.debugBox}>
+                {debugMessages.map((msg, idx) => (
+                  <Text key={idx} style={styles.debugText}>{msg}</Text>
+                ))}
+              </View>
+            )}
             {linkedAccount ? (
               <View style={styles.infoBox}>
                 <Text style={styles.infoText}>✅ Connected: {linkedAccount}</Text>

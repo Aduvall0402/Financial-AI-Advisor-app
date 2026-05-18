@@ -16,7 +16,11 @@
       "jsEngine": "jsc"
     },
     "ios": {
-      "jsEngine": "jsc"
+      "jsEngine": "jsc",
+      "bundleIdentifier": "com.aduvall0402.wealthpalaiapp",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "extra": {
       "eas": {
