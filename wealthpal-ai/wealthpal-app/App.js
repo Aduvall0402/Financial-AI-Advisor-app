@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { SafeAreaView, View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, FlatList, ActivityIndicator } from 'react-native';
 import { create, open } from 'react-native-plaid-link-sdk';
 
@@ -7,6 +7,7 @@ const API_URL = 'https://financial-ai-advisor-app-production.up.railway.app';
 export default function App() {
   const [screen, setScreen] = useState('login');
   const [userId, setUserId] = useState(null);
+  const userIdRef = useRef(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
@@ -27,6 +28,15 @@ export default function App() {
   const [plaidError, setPlaidError] = useState('');
   const [plaidLoading, setPlaidLoading] = useState(false);
   const [linkedAccount, setLinkedAccount] = useState(null);
+  const [debugMessages, setDebugMessages] = useState([]);
+  const [accounts, setAccounts] = useState([]);
+  const [selectedAccount, setSelectedAccount] = useState(null);
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
+
+  const addDebugMessage = (msg) => {
+    console.log(msg);
+    setDebugMessages(prev => [...prev, msg]);
+  };
 
   useEffect(() => {
     testBackend();
@@ -49,6 +59,7 @@ export default function App() {
     }
     setLoading(true);
     setError('');
+    setDebugMessages([]);
     try {
       const response = await fetch(`${API_URL}/api/auth/login`, {
         method: 'POST',
@@ -56,13 +67,20 @@ export default function App() {
         body: JSON.stringify({ email, password }),
       });
       const data = await response.json();
+      addDebugMessage("✅ Got login response");
+      addDebugMessage(`✅ Session exists: ${!!data.session}`);
+      addDebugMessage(`✅ User exists: ${!!data.session?.user}`);
+      addDebugMessage(`✅ User ID: ${data.session?.user?.id}`);
+      
       if (!response.ok) {
         setError(data.error || 'Login failed');
         setLoading(false);
         return;
       }
       const uid = data.session.user.id;
+      addDebugMessage(`✅ Setting userId to: ${uid}`);
       setUserId(uid);
+      userIdRef.current = uid;
       setPassword('');
       setDashboardLoading(true);
       try {
@@ -76,6 +94,7 @@ export default function App() {
       }
       setScreen('dashboard');
       setDashboardLoading(false);
+      await fetchAccounts();
     } catch (error) {
       setError('Could not connect to backend');
     } finally {
@@ -108,6 +127,7 @@ export default function App() {
       }
       const uid = data.user.id;
       setUserId(uid);
+      userIdRef.current = uid;
       setPassword('');
       setFullName('');
       setDashboardLoading(true);
@@ -122,6 +142,7 @@ export default function App() {
       }
       setScreen('dashboard');
       setDashboardLoading(false);
+      await fetchAccounts();
     } catch (error) {
       setError('Could not connect to backend');
     } finally {
@@ -140,6 +161,7 @@ export default function App() {
     setChatMessages([{ id: '0', role: 'assistant', text: 'Hi! I\'m your financial assistant. Ask me anything about your finances!' }]);
     setDashboardData(null);
     setLinkedAccount(null);
+    setDebugMessages([]);
   };
 
   const loadTransactions = async () => {
@@ -155,6 +177,23 @@ export default function App() {
       console.error('Error loading transactions:', error);
     } finally {
       setLoadingTransactions(false);
+    }
+  };
+
+  const fetchAccounts = async () => {
+    if (!userIdRef.current) return;
+    setLoadingAccounts(true);
+    try {
+      const response = await fetch(`${API_URL}/api/plaid/accounts/${userIdRef.current}`);
+      const data = await response.json();
+      if (data.accounts && data.accounts.length > 0) {
+        setAccounts(data.accounts);
+        setSelectedAccount(data.accounts[0]);
+      }
+    } catch (error) {
+      console.error('Error fetching accounts:', error);
+    } finally {
+      setLoadingAccounts(false);
     }
   };
 
@@ -208,6 +247,7 @@ export default function App() {
               setLinkedAccount(exchangeData.plaid_account_id || exchangeData.itemId);
               setPlaidStatus('✅ Bank connected!');
               setPlaidError('');
+              await fetchAccounts();
             } else {
               throw new Error('No account ID in response: ' + JSON.stringify(exchangeData));
             }
@@ -290,6 +330,13 @@ export default function App() {
         <ScrollView style={styles.authContainer}>
           <Text style={styles.authTitle}>WealthPal AI</Text>
           <Text style={styles.authSubtitle}>Your AI Finance Assistant</Text>
+          {debugMessages.length > 0 && (
+            <View style={styles.debugBox}>
+              {debugMessages.map((msg, idx) => (
+                <Text key={idx} style={styles.debugText}>{msg}</Text>
+              ))}
+            </View>
+          )}
           {error ? <View style={styles.errorBox}><Text style={styles.errorText}>{error}</Text></View> : null}
           <TextInput
             style={styles.authInput}
@@ -397,18 +444,66 @@ export default function App() {
         return (
           <ScrollView style={styles.dashboardContainer}>
             <View style={styles.userInfo}>
-              <Text style={styles.userEmail}>{email}</Text>
+              <View>
+                <Text style={styles.userEmail}>{email}</Text>
+                <Text style={{ color: '#94a3b8', fontSize: 11 }}>ID: {userId || 'Not set'}</Text>
+              </View>
               <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
                 <Text style={styles.logoutText}>Logout</Text>
               </TouchableOpacity>
             </View>
-            <Text style={styles.greeting}>Your Finances</Text>
-            {dashboardData ? (
+
+            {/* Account Selector Dropdown */}
+            {accounts.length > 0 && (
+              <View style={styles.accountSelector}>
+                <Text style={styles.accountLabel}>Select Account:</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.accountList}>
+                  {accounts.map((account) => (
+                    <TouchableOpacity
+                      key={account.account_id}
+                      style={[
+                        styles.accountButton,
+                        selectedAccount?.account_id === account.account_id && styles.accountButtonActive
+                      ]}
+                      onPress={() => setSelectedAccount(account)}
+                    >
+                      <Text style={styles.accountButtonText}>{account.name}</Text>
+                      <Text style={styles.accountButtonSubtext}>{account.subtype}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
+
+            <Text style={styles.greeting}>
+              {selectedAccount ? `${selectedAccount.name}` : 'Your Finances'}
+            </Text>
+
+            {selectedAccount && (
               <>
                 <View style={styles.card}>
-                  <Text style={styles.cardLabel}>Monthly Spending</Text>
-                  <Text style={styles.balanceAmount}>${(dashboardData.monthly_spending || 0).toFixed(2)}</Text>
+                  <Text style={styles.cardLabel}>Account Balance</Text>
+                  <Text style={styles.balanceAmount}>
+                    ${(selectedAccount.balances?.current || 0).toFixed(2)}
+                  </Text>
+                  <Text style={styles.cardSubtext}>{selectedAccount.subtype}</Text>
                 </View>
+                <View style={styles.card}>
+                  <Text style={styles.cardLabel}>Account Type</Text>
+                  <Text style={styles.balanceAmount}>{selectedAccount.type}</Text>
+                  <Text style={styles.cardSubtext}>Official: {selectedAccount.official_name}</Text>
+                </View>
+              </>
+            )}
+
+            {dashboardData ? (
+              <>
+                {!selectedAccount && (
+                  <View style={styles.card}>
+                    <Text style={styles.cardLabel}>Monthly Spending</Text>
+                    <Text style={styles.balanceAmount}>${(dashboardData.monthly_spending || 0).toFixed(2)}</Text>
+                  </View>
+                )}
                 <View style={styles.section}>
                   <Text style={styles.sectionTitle}>Top Categories</Text>
                   {dashboardData.top_categories && dashboardData.top_categories.length > 0 ? (
@@ -557,6 +652,8 @@ const styles = StyleSheet.create({
   authContainer: { flex: 1, padding: 24, paddingTop: 60 },
   authTitle: { fontSize: 32, fontWeight: 'bold', color: '#fff', marginBottom: 8, textAlign: 'center' },
   authSubtitle: { fontSize: 16, color: '#94a3b8', marginBottom: 32, textAlign: 'center' },
+  debugBox: { backgroundColor: '#1e293b', borderRadius: 8, padding: 12, marginBottom: 16, borderLeftWidth: 3, borderLeftColor: '#22c55e' },
+  debugText: { color: '#22c55e', fontSize: 11, marginBottom: 4 },
   errorBox: { backgroundColor: '#7f1d1d', borderRadius: 8, padding: 12, marginBottom: 16 },
   errorText: { color: '#fecaca', fontSize: 14 },
   authInput: { width: '100%', backgroundColor: '#1e293b', color: '#fff', borderRadius: 8, paddingHorizontal: 16, paddingVertical: 12, marginBottom: 12, fontSize: 16, borderWidth: 1, borderColor: '#334155' },
@@ -619,4 +716,12 @@ const styles = StyleSheet.create({
   sendButtonDisabled: { backgroundColor: '#475569' },
   sendText: { color: '#fff', fontSize: 14, fontWeight: '600' },
   screenText: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
+  accountSelector: { backgroundColor: '#1e293b', borderRadius: 12, padding: 16, marginBottom: 16 },
+  accountLabel: { color: '#94a3b8', fontSize: 12, marginBottom: 12, fontWeight: '600' },
+  accountList: { marginHorizontal: -16, paddingHorizontal: 16 },
+  accountButton: { backgroundColor: '#0f172a', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginRight: 10, borderWidth: 1, borderColor: '#334155', minWidth: 120 },
+  accountButtonActive: { borderColor: '#3b82f6', backgroundColor: '#1e3a8a' },
+  accountButtonText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  accountButtonSubtext: { color: '#94a3b8', fontSize: 10, marginTop: 2 },
+  cardSubtext: { color: '#94a3b8', fontSize: 11, marginTop: 4 },
 });
