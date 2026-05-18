@@ -241,7 +241,7 @@ export default function App() {
     }
   };
 
-  const getPlaidHtml = (token) => `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{margin:0;background:#0f172a;color:#fff;}</style></head><body><script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script><script>var handler = Plaid.create({token:'${token}', onSuccess:function(public_token, metadata){window.ReactNativeWebView.postMessage(JSON.stringify({publicToken:public_token,metadata:metadata}));}, onExit:function(err, metadata){window.ReactNativeWebView.postMessage(JSON.stringify({exit:true,error:err?.display_message||err?.error_message||null,metadata:metadata}));}});handler.open();</script></body></html>`;
+  const getPlaidHtml = (token) => `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{margin:0;background:#0f172a;color:#fff;}</style></head><body><script src="https://cdn.plaid.com/link/v3/stable/link-initialize.js"></script><script>var handler = Plaid.create({token:'${token}', onSuccess:function(public_token, metadata){window.ReactNativeWebView.postMessage(JSON.stringify({publicToken:public_token,metadata:metadata}));}, onExit:function(err, metadata){window.ReactNativeWebView.postMessage(JSON.stringify({exit:true,error:err?.display_message||err?.error_message||null,metadata:metadata}));}});handler.open();</script></body></html>`;
 
   const sendChatMessage = async () => {
     if (!chatInput.trim()) return;
