@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 
-const API_URL = 'https://financial-ai-advisor-app-production.up.railway.app';
+const API_URL = 'financial-ai-advisor-app-production.up.railway.app';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
