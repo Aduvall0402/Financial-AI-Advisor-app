@@ -27,6 +27,12 @@ export default function App() {
   const [plaidError, setPlaidError] = useState('');
   const [plaidLoading, setPlaidLoading] = useState(false);
   const [linkedAccount, setLinkedAccount] = useState(null);
+  const [debugMessages, setDebugMessages] = useState([]);
+
+  const addDebugMessage = (msg) => {
+    console.log(msg);
+    setDebugMessages(prev => [...prev, msg]);
+  };
 
   useEffect(() => {
     testBackend();
@@ -49,6 +55,7 @@ export default function App() {
     }
     setLoading(true);
     setError('');
+    setDebugMessages([]);
     try {
       const response = await fetch(`${API_URL}/api/auth/login`, {
         method: 'POST',
@@ -56,12 +63,18 @@ export default function App() {
         body: JSON.stringify({ email, password }),
       });
       const data = await response.json();
+      addDebugMessage("✅ Got login response");
+      addDebugMessage(`✅ Session exists: ${!!data.session}`);
+      addDebugMessage(`✅ User exists: ${!!data.session?.user}`);
+      addDebugMessage(`✅ User ID: ${data.session?.user?.id}`);
+      
       if (!response.ok) {
         setError(data.error || 'Login failed');
         setLoading(false);
         return;
       }
       const uid = data.session.user.id;
+      addDebugMessage(`✅ Setting userId to: ${uid}`);
       setUserId(uid);
       setPassword('');
       setDashboardLoading(true);
@@ -140,6 +153,7 @@ export default function App() {
     setChatMessages([{ id: '0', role: 'assistant', text: 'Hi! I\'m your financial assistant. Ask me anything about your finances!' }]);
     setDashboardData(null);
     setLinkedAccount(null);
+    setDebugMessages([]);
   };
 
   const loadTransactions = async () => {
@@ -290,6 +304,13 @@ export default function App() {
         <ScrollView style={styles.authContainer}>
           <Text style={styles.authTitle}>WealthPal AI</Text>
           <Text style={styles.authSubtitle}>Your AI Finance Assistant</Text>
+          {debugMessages.length > 0 && (
+            <View style={styles.debugBox}>
+              {debugMessages.map((msg, idx) => (
+                <Text key={idx} style={styles.debugText}>{msg}</Text>
+              ))}
+            </View>
+          )}
           {error ? <View style={styles.errorBox}><Text style={styles.errorText}>{error}</Text></View> : null}
           <TextInput
             style={styles.authInput}
@@ -397,7 +418,10 @@ export default function App() {
         return (
           <ScrollView style={styles.dashboardContainer}>
             <View style={styles.userInfo}>
-              <Text style={styles.userEmail}>{email}</Text>
+              <View>
+                <Text style={styles.userEmail}>{email}</Text>
+                <Text style={{ color: '#94a3b8', fontSize: 11 }}>ID: {userId || 'Not set'}</Text>
+              </View>
               <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
                 <Text style={styles.logoutText}>Logout</Text>
               </TouchableOpacity>
@@ -557,6 +581,8 @@ const styles = StyleSheet.create({
   authContainer: { flex: 1, padding: 24, paddingTop: 60 },
   authTitle: { fontSize: 32, fontWeight: 'bold', color: '#fff', marginBottom: 8, textAlign: 'center' },
   authSubtitle: { fontSize: 16, color: '#94a3b8', marginBottom: 32, textAlign: 'center' },
+  debugBox: { backgroundColor: '#1e293b', borderRadius: 8, padding: 12, marginBottom: 16, borderLeftWidth: 3, borderLeftColor: '#22c55e' },
+  debugText: { color: '#22c55e', fontSize: 11, marginBottom: 4 },
   errorBox: { backgroundColor: '#7f1d1d', borderRadius: 8, padding: 12, marginBottom: 16 },
   errorText: { color: '#fecaca', fontSize: 14 },
   authInput: { width: '100%', backgroundColor: '#1e293b', color: '#fff', borderRadius: 8, paddingHorizontal: 16, paddingVertical: 12, marginBottom: 12, fontSize: 16, borderWidth: 1, borderColor: '#334155' },
