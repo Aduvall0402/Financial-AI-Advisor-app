@@ -116,6 +116,7 @@ app.post("/api/plaid/create-link-token", async (req, res) => {
 app.post("/api/plaid/exchange-token", async (req, res) => {
     try {
         const { publicToken, userId } = req.body;
+        console.log("Exchange request:", { publicToken, userId });
         if (!publicToken || !userId) {
             return res.status(400).json({ error: "Public token and user ID required" });
         }
@@ -135,7 +136,7 @@ app.post("/api/plaid/exchange-token", async (req, res) => {
         ]);
         if (error)
             throw error;
-        res.json({ accessToken, itemId, message: "Account connected" });
+        res.json({ plaid_account_id: itemId, accessToken, itemId, message: "Account connected" });
     }
     catch (error) {
         console.error("Error exchanging token:", error);

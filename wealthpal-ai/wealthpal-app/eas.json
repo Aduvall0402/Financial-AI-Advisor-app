@@ -11,12 +11,7 @@
       "distribution": "internal"
     },
     "production": {
-      "android": {
-        "workflow": "managed"
-      },
-      "ios": {
-        "workflow": "managed"
-      }
+      "distribution": "store"
     }
   }
 }
