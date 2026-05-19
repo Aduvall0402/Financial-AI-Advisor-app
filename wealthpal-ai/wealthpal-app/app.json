@@ -1,15 +1,25 @@
 {
   "expo": {
-    "name": "wealthpal-ai-app",
+    "name": "WealthPal AI",
     "slug": "wealthpal-ai-app",
     "version": "1.0.0",
     "sdkVersion": "51.0.0",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#060c17"
+    },
     "assetBundlePatterns": [
       "**/*"
     ],
     "plugins": [],
     "android": {
       "package": "com.aduvall0402.wealthpalaiapp",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#060c17"
+      },
       "runtimeVersion": {
         "policy": "appVersion"
       },

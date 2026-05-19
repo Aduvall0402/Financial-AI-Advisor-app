@@ -164,12 +164,14 @@ app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) =
       return res.status(404).json({ error: "No connected account found" });
     }
     const endDate = new Date().toISOString().split("T")[0];
-    const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+    const startDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
     const transactions = await plaidService.getTransactions(
       accountData[0].plaid_access_token,
       startDate,
       endDate
     );
+    // Clear existing transactions for this user before inserting fresh data
+    await supabase.from("transactions").delete().eq("user_id", userId);
     let synced = 0;
     for (const tx of transactions) {
       const { error } = await supabase
@@ -185,7 +187,7 @@ app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) =
         }]);
       if (!error) synced++;
     }
-    res.json({ synced });
+    res.json({ synced, total: transactions.length });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "Failed to sync transactions" });
   }

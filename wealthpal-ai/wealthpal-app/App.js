@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   SafeAreaView, View, Text, TouchableOpacity, StyleSheet,
   ScrollView, TextInput, FlatList, ActivityIndicator,
@@ -6,17 +6,16 @@ import {
 } from 'react-native';
 import { create, open } from 'react-native-plaid-link-sdk';
 import { LineChart } from 'react-native-chart-kit';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width: SW } = Dimensions.get('window');
 const API_URL = 'https://financial-ai-advisor-app-production.up.railway.app';
 
-const C = {
+const BASE = {
   bg: '#060c17',
   surface: '#0c1526',
   surface2: '#111f35',
   border: '#1a2e4a',
-  accent: '#7c3aed',
-  blue: '#3b82f6',
   green: '#10b981',
   red: '#ef4444',
   amber: '#f59e0b',
@@ -25,18 +24,13 @@ const C = {
   textMuted: '#354e70',
 };
 
-const CHART_CFG = {
-  backgroundColor: '#0c1526',
-  backgroundGradientFrom: '#0c1526',
-  backgroundGradientTo: '#0c1526',
-  decimalPlaces: 0,
-  color: (o = 1) => `rgba(124,58,237,${o})`,
-  labelColor: () => C.textSub,
-  propsForDots: { r: '4', strokeWidth: '2', stroke: C.accent },
-  propsForBackgroundLines: { stroke: C.border },
-};
+const ACCENT_OPTIONS = ['#7c3aed','#3b82f6','#10b981','#ef4444','#f59e0b','#ec4899','#06b6d4','#f97316'];
+const SECONDARY_OPTIONS = ['#3b82f6','#7c3aed','#10b981','#f59e0b','#ec4899','#06b6d4'];
 
-const CAT_COLORS = [C.accent, C.blue, C.green, C.amber, C.red];
+function hexToRgb(hex) {
+  const n = parseInt(hex.replace('#', ''), 16);
+  return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
+}
 
 const CAT_LETTERS = {
   Groceries: 'G', 'Food and Drink': 'F', Food: 'F', Restaurants: 'R',
@@ -54,7 +48,7 @@ const CAT_BG = {
 };
 
 // Icon component — colored rounded square with a letter/symbol
-function Icon({ char, color = C.accent, size = 36, radius }) {
+function Icon({ char, color = '#7c3aed', size = 36, radius }) {
   const r = radius !== undefined ? radius : size * 0.28;
   return (
     <View style={{ width: size, height: size, borderRadius: r, backgroundColor: color, justifyContent: 'center', alignItems: 'center' }}>
@@ -127,6 +121,22 @@ export default function App() {
   const drawerX = useRef(new Animated.Value(320)).current;
   const overlayO = useRef(new Animated.Value(0)).current;
 
+  // Theme
+  const [themeAccent, setThemeAccent] = useState('#7c3aed');
+  const [themeSecondary, setThemeSecondary] = useState('#3b82f6');
+
+  const C = useMemo(() => ({ ...BASE, accent: themeAccent, blue: themeSecondary }), [themeAccent, themeSecondary]);
+  const CAT_COLORS = useMemo(() => [C.accent, C.blue, C.green, C.amber, C.red], [C]);
+  const CHART_CFG = useMemo(() => ({
+    backgroundColor: C.surface, backgroundGradientFrom: C.surface, backgroundGradientTo: C.surface,
+    decimalPlaces: 0,
+    color: (o = 1) => `rgba(${hexToRgb(C.accent)},${o})`,
+    labelColor: () => C.textSub,
+    propsForDots: { r: '4', strokeWidth: '2', stroke: C.accent },
+    propsForBackgroundLines: { stroke: C.border },
+  }), [C]);
+  const s = useMemo(() => makeStyles(C), [C]);
+
   // Settings
   const [notifs, setNotifs] = useState(true);
   const [biometrics, setBiometrics] = useState(false);
@@ -137,6 +147,23 @@ export default function App() {
   const [editLast, setEditLast] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileError, setProfileError] = useState('');
+
+  // ── Theme ────────────────────────────────────────────
+  useEffect(() => {
+    AsyncStorage.multiGet(['themeAccent', 'themeSecondary']).then(pairs => {
+      if (pairs[0][1]) setThemeAccent(pairs[0][1]);
+      if (pairs[1][1]) setThemeSecondary(pairs[1][1]);
+    });
+  }, []);
+
+  const changeAccent = (color) => {
+    setThemeAccent(color);
+    AsyncStorage.setItem('themeAccent', color);
+  };
+  const changeSecondary = (color) => {
+    setThemeSecondary(color);
+    AsyncStorage.setItem('themeSecondary', color);
+  };
 
   // ── Splash ──────────────────────────────────────────
   useEffect(() => {
@@ -866,6 +893,39 @@ export default function App() {
             </TouchableOpacity>
           </View>
 
+          {/* Customize */}
+          <View style={s.drawerGroup}>
+            <Text style={s.drawerGroupLabel}>Customize</Text>
+            <Text style={[s.drawerRowSub, { marginBottom: 10, marginTop: 4 }]}>Primary Color</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 16 }}>
+              {ACCENT_OPTIONS.map(color => (
+                <TouchableOpacity
+                  key={color}
+                  onPress={() => changeAccent(color)}
+                  style={{
+                    width: 34, height: 34, borderRadius: 17, backgroundColor: color,
+                    borderWidth: themeAccent === color ? 3 : 2,
+                    borderColor: themeAccent === color ? '#fff' : 'transparent',
+                  }}
+                />
+              ))}
+            </View>
+            <Text style={[s.drawerRowSub, { marginBottom: 10 }]}>Secondary Color</Text>
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 4 }}>
+              {SECONDARY_OPTIONS.map(color => (
+                <TouchableOpacity
+                  key={color}
+                  onPress={() => changeSecondary(color)}
+                  style={{
+                    width: 34, height: 34, borderRadius: 17, backgroundColor: color,
+                    borderWidth: themeSecondary === color ? 3 : 2,
+                    borderColor: themeSecondary === color ? '#fff' : 'transparent',
+                  }}
+                />
+              ))}
+            </View>
+          </View>
+
           {/* Support */}
           <View style={s.drawerGroup}>
             <Text style={s.drawerGroupLabel}>Support</Text>
@@ -982,7 +1042,7 @@ export default function App() {
 // ════════════════════════════════════════════════════
 // STYLES
 // ════════════════════════════════════════════════════
-const s = StyleSheet.create({
+const makeStyles = (C) => StyleSheet.create({
   appWrap: { flex: 1, backgroundColor: C.bg },
   bg: { flex: 1, backgroundColor: C.bg },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
