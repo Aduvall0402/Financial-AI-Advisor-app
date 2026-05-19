@@ -1,9 +1,6 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-console.log("PLAID_ENV:", process.env.PLAID_ENV);
-console.log("PLAID_CLIENT_ID:", process.env.PLAID_CLIENT_ID);
-
 import express, { Express, Request, Response } from "express";
 import cors from "cors";
 import supabase from "./supabase";
@@ -28,54 +25,37 @@ app.get("/health", (req: Request, res: Response) => {
 // AUTH ROUTES
 // ============================================
 
-// Signup
 app.post("/api/auth/signup", async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
-
     if (!email || !password) {
       return res.status(400).json({ error: "Email and password required" });
     }
-
     const { user, error } = await auth.signupUser(email, password);
-
     if (error) {
-      return res.status(400).json({ error: (error as any).message || 'Error' });
+      return res.status(400).json({ error: (error as any).message || "Signup failed" });
     }
-
     if (user) {
-      console.log("Signup successful. User ID:", user.id);
       await auth.createUserProfile(user.id, email);
     }
-
     res.json({ user, message: "Signup successful" });
   } catch (error) {
-    console.error("Error signing up:", error);
     res.status(500).json({ error: "Signup failed" });
   }
 });
 
-// Login
 app.post("/api/auth/login", async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
-
     if (!email || !password) {
       return res.status(400).json({ error: "Email and password required" });
     }
-
     const { session, error } = await auth.loginUser(email, password);
-
     if (error) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
-
-    console.log("Login successful. Session:", session);
-    console.log("User ID:", session?.user?.id);
-    
     res.json({ session, message: "Login successful" });
   } catch (error) {
-    console.error("Error logging in:", error);
     res.status(500).json({ error: "Login failed" });
   }
 });
@@ -87,11 +67,9 @@ app.post("/api/auth/login", async (req: Request, res: Response) => {
 app.post("/api/plaid/create-link-token", async (req: Request, res: Response) => {
   try {
     const { userId } = req.body;
-
     if (!userId) {
       return res.status(400).json({ error: "User ID required" });
     }
-
     const linkToken = await plaidService.createLinkToken(userId);
     res.json({ link_token: linkToken });
   } catch (error: any) {
@@ -104,118 +82,130 @@ app.post("/api/plaid/create-link-token", async (req: Request, res: Response) => 
 app.post("/api/plaid/exchange-token", async (req: Request, res: Response) => {
   try {
     const { publicToken, userId } = req.body;
-    console.log("Exchange request:", { publicToken, userId });
-
     if (!publicToken || !userId) {
       return res.status(400).json({ error: "Public token and user ID required" });
     }
-
     const { accessToken, itemId } = await plaidService.exchangePublicToken(publicToken);
-
-    // Store in database
     const { error } = await supabase
       .from("accounts")
-      .insert([
-        {
-          user_id: userId,
-          plaid_account_id: itemId,
-          plaid_access_token: accessToken,
-          account_name: "Connected Account",
-          account_type: "checking",
-          current_balance: 0,
-        },
-      ]);
-
+      .insert([{
+        user_id: userId,
+        plaid_account_id: itemId,
+        plaid_access_token: accessToken,
+        account_name: "Connected Account",
+        account_type: "checking",
+        current_balance: 0,
+      }]);
     if (error) throw error;
-
-    res.json({ plaid_account_id: itemId, accessToken, itemId, message: "Account connected" });
+    res.json({ plaid_account_id: itemId, itemId, message: "Account connected" });
   } catch (error: any) {
-    console.error("Error exchanging token:", error);
-    // Return the actual error message from Plaid if available
     const errorMessage = error?.response?.data?.error_message || error?.message || "Failed to exchange token";
-    res.status(500).json({ error: errorMessage, details: error?.response?.data });
+    res.status(500).json({ error: errorMessage });
   }
 });
 
-// Get user's connected accounts with details from Plaid
 app.get("/api/plaid/accounts/:userId", async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
-
-    // Get stored access token from database
     const { data, error } = await supabase
       .from("accounts")
       .select("plaid_access_token, plaid_account_id")
       .eq("user_id", userId)
       .single();
-
     if (error || !data?.plaid_access_token) {
       return res.status(404).json({ error: "No connected account found" });
     }
-
-    // Fetch accounts from Plaid using stored access token
     const accounts = await plaidService.getAccounts(data.plaid_access_token);
-
     res.json({ accounts, itemId: data.plaid_account_id });
   } catch (error: any) {
-    console.error("Error fetching accounts:", error);
     res.status(500).json({ error: error?.message || "Failed to fetch accounts" });
   }
 });
 
-app.post("/api/transactions/sync", async (req: Request, res: Response) => {
+// ============================================
+// TRANSACTION ROUTES
+// ============================================
+
+app.get("/api/transactions/:userId", async (req: Request, res: Response) => {
   try {
-    const { userId, accessToken, startDate, endDate } = req.body;
+    const { userId } = req.params;
+    const { data, error } = await supabase
+      .from("transactions")
+      .select("*")
+      .eq("user_id", userId)
+      .order("transaction_date", { ascending: false })
+      .limit(100);
+    if (error) throw error;
+    res.json({ transactions: data || [] });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "Failed to fetch transactions" });
+  }
+});
 
-    if (!userId || !accessToken || !startDate || !endDate) {
-      return res.status(400).json({ error: "Missing required fields" });
+app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) => {
+  try {
+    const { userId } = req.params;
+    const { data: accountData, error: accountError } = await supabase
+      .from("accounts")
+      .select("plaid_access_token")
+      .eq("user_id", userId)
+      .single();
+    if (accountError || !accountData?.plaid_access_token) {
+      return res.status(404).json({ error: "No connected account found" });
     }
-
+    const endDate = new Date().toISOString().split("T")[0];
+    const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
     const transactions = await plaidService.getTransactions(
-      accessToken,
+      accountData.plaid_access_token,
       startDate,
       endDate
     );
-
-    const transactionsToCategories = transactions.map((t) => ({
-      merchant: t.merchant_name || "Unknown",
-      amount: t.amount,
-      description: t.name,
-    }));
-
-    const categories = await openaiService.categorizeTransactions(
-      transactionsToCategories
-    );
-
-    const savedTransactions = [];
-    for (const transaction of transactions) {
-      const merchant = transaction.merchant_name || "Unknown";
-      const category = categories[merchant] || "Other";
-
-      const { data, error } = await supabase
+    let synced = 0;
+    for (const tx of transactions) {
+      const { error } = await supabase
         .from("transactions")
-        .insert([
-          {
-            user_id: userId,
-            plaid_transaction_id: transaction.transaction_id,
-            merchant_name: merchant,
-            amount: Math.abs(transaction.amount),
-            category: category,
-            transaction_date: transaction.date,
-            posted_date: transaction.date,
-            description: transaction.name,
-          },
-        ])
-        .select();
-
-      if (!error && data) {
-        savedTransactions.push(data[0]);
-      }
+        .insert([{
+          user_id: userId,
+          plaid_transaction_id: tx.transaction_id,
+          merchant_name: tx.merchant_name || tx.name || "Unknown",
+          amount: Math.abs(tx.amount),
+          category: (tx.category as any)?.[0] || "Other",
+          transaction_date: tx.date,
+          description: tx.name,
+        }]);
+      if (!error) synced++;
     }
+    res.json({ synced });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "Failed to sync transactions" });
+  }
+});
 
-    res.json({ synced: savedTransactions.length, transactions: savedTransactions });
+// Legacy sync endpoint (kept for compatibility)
+app.post("/api/transactions/sync", async (req: Request, res: Response) => {
+  try {
+    const { userId, accessToken, startDate, endDate } = req.body;
+    if (!userId || !accessToken || !startDate || !endDate) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+    const transactions = await plaidService.getTransactions(accessToken, startDate, endDate);
+    let synced = 0;
+    for (const tx of transactions) {
+      const { error } = await supabase
+        .from("transactions")
+        .insert([{
+          user_id: userId,
+          plaid_transaction_id: tx.transaction_id,
+          merchant_name: tx.merchant_name || "Unknown",
+          amount: Math.abs(tx.amount),
+          category: (tx.category as any)?.[0] || "Other",
+          transaction_date: tx.date,
+          description: tx.name,
+        }]);
+      if (!error) synced++;
+    }
+    res.json({ synced });
   } catch (error) {
-    console.error("Error syncing transactions:", error);
     res.status(500).json({ error: "Failed to sync transactions" });
   }
 });
@@ -227,139 +217,99 @@ app.post("/api/transactions/sync", async (req: Request, res: Response) => {
 app.get("/api/ai/financial-summary/:userId", async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
-
     const { data: transactions, error: txError } = await supabase
       .from("transactions")
       .select("*")
       .eq("user_id", userId)
-      .gte(
-        "transaction_date",
-        new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
-      );
-
+      .gte("transaction_date", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
     if (txError) throw txError;
-
-    const monthly_spending =
-      transactions?.reduce((sum, t) => sum + t.amount, 0) || 0;
-
+    const monthly_spending = transactions?.reduce((sum, t) => sum + t.amount, 0) || 0;
     const categoryMap: { [key: string]: number } = {};
     transactions?.forEach((t) => {
       categoryMap[t.category] = (categoryMap[t.category] || 0) + t.amount;
     });
-
     const top_categories = Object.entries(categoryMap)
       .map(([name, amount]) => ({ name, amount }))
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 5);
-
-    const { data: debts, error: debtsError } = await supabase
-      .from("debts")
-      .select("*")
-      .eq("user_id", userId);
-
-    if (debtsError) throw debtsError;
-
-    const debt = (debts || []).map((d) => ({
-      name: d.debt_name,
-      balance: d.current_balance,
-      interest: d.interest_rate,
-    }));
-
-    const summary = {
-      monthly_income: 0,
-      monthly_spending,
-      top_categories,
-      debt,
-    };
-
-    res.json(summary);
+    const { data: debts } = await supabase.from("debts").select("*").eq("user_id", userId);
+    const debt = (debts || []).map((d) => ({ name: d.debt_name, balance: d.current_balance, interest: d.interest_rate }));
+    res.json({ monthly_income: 0, monthly_spending, top_categories, debt });
   } catch (error) {
-    console.error("Error generating summary:", error);
     res.status(500).json({ error: "Failed to generate summary" });
   }
 });
 
 app.post("/api/ai/chat", async (req: Request, res: Response) => {
   try {
-    console.log("[/api/ai/chat] Request received:", req.body);
     const { userId, message } = req.body;
-
     if (!userId || !message) {
-      console.warn("[/api/ai/chat] Missing userId or message");
       return res.status(400).json({ error: "User ID and message required" });
     }
 
-    console.log(`[/api/ai/chat] Fetching transactions for userId: ${userId}`);
-    const { data: summaryData, error: txError } = await supabase
+    // Fetch all transactions for spending summary
+    const { data: txData } = await supabase
       .from("transactions")
       .select("*")
-      .eq("user_id", userId);
+      .eq("user_id", userId)
+      .gte("transaction_date", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
 
-    if (txError) {
-      console.error("[/api/ai/chat] Transaction fetch error:", txError);
-    }
-
-    const monthly_spending = summaryData?.reduce((sum, t) => sum + t.amount, 0) || 0;
-
+    const monthly_spending = txData?.reduce((sum, t) => sum + t.amount, 0) || 0;
     const categoryMap: { [key: string]: number } = {};
-    summaryData?.forEach((t) => {
-      categoryMap[t.category] = (categoryMap[t.category] || 0) + t.amount;
-    });
-
+    txData?.forEach((t) => { categoryMap[t.category] = (categoryMap[t.category] || 0) + t.amount; });
     const top_categories = Object.entries(categoryMap)
       .map(([name, amount]) => ({ name, amount }))
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 5);
 
-    console.log(`[/api/ai/chat] Fetching debts for userId: ${userId}`);
-    const { data: debts, error: debtError } = await supabase
-      .from("debts")
-      .select("*")
-      .eq("user_id", userId);
+    // Fetch recent transactions for AI context (last 20)
+    const { data: recentTx } = await supabase
+      .from("transactions")
+      .select("merchant_name, amount, category, transaction_date")
+      .eq("user_id", userId)
+      .order("transaction_date", { ascending: false })
+      .limit(20);
 
-    if (debtError) {
-      console.error("[/api/ai/chat] Debt fetch error:", debtError);
-    }
-
-    const debt = (debts || []).map((d) => ({
-      name: d.debt_name,
-      balance: d.current_balance,
-      interest: d.interest_rate,
+    const recent_transactions = (recentTx || []).map(t => ({
+      merchant: t.merchant_name || "Unknown",
+      amount: parseFloat(t.amount),
+      category: t.category || "Other",
+      date: t.transaction_date,
     }));
 
-    const summary = {
-      monthly_income: 0,
-      monthly_spending,
-      top_categories,
-      debt,
-    };
+    // Fetch account balances from Plaid
+    let accounts: Array<{ name: string; type: string; subtype: string; balance: number }> = [];
+    try {
+      const { data: accountData } = await supabase
+        .from("accounts")
+        .select("plaid_access_token")
+        .eq("user_id", userId)
+        .single();
+      if (accountData?.plaid_access_token) {
+        const plaidAccounts = await plaidService.getAccounts(accountData.plaid_access_token);
+        accounts = plaidAccounts.map(a => ({
+          name: a.name,
+          type: a.type as string,
+          subtype: a.subtype as string,
+          balance: a.balances.current || 0,
+        }));
+      }
+    } catch { /* no linked account, continue without */ }
 
-    console.log(`[/api/ai/chat] Calling OpenAI service with message: "${message.substring(0, 50)}..."`);
-    const response = await openaiService.chatWithAssistant(message, summary as any);
-    console.log(`[/api/ai/chat] OpenAI response received: "${response.substring(0, 50)}..."`);
+    // Fetch debts
+    const { data: debts } = await supabase.from("debts").select("*").eq("user_id", userId);
+    const debt = (debts || []).map((d) => ({ name: d.debt_name, balance: d.current_balance, interest: d.interest_rate }));
 
-    console.log("[/api/ai/chat] Saving chat messages to database");
+    const summary = { monthly_income: 0, monthly_spending, top_categories, debt, accounts, recent_transactions };
+    const response = await openaiService.chatWithAssistant(message, summary);
+
     await supabase.from("chat_messages").insert([
       { user_id: userId, role: "user", content: message },
       { user_id: userId, role: "assistant", content: response },
     ]);
-
     res.json({ response });
-  } catch (error) {
-    const errorName = (error as any)?.name || "Unknown";
-    const errorMessage = (error as any)?.message || JSON.stringify(error) || "Failed to process chat";
-    const errorType = (error as any)?.code || "UNKNOWN";
-    
-    const detailedError = `[${errorName}] ${errorMessage} (Code: ${errorType})`;
-    console.error("[/api/ai/chat] Error in chat:", detailedError);
-    console.error("[/api/ai/chat] Full error:", error);
-    
-    res.status(500).json({ 
-      error: detailedError,
-      reason: errorMessage,
-      type: errorName,
-      timestamp: new Date().toISOString()
-    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "Failed to process chat" });
   }
 });
 

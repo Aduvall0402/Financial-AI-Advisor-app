@@ -115,26 +115,38 @@ export async function chatWithAssistant(
     monthly_spending: number;
     top_categories: Array<{ name: string; amount: number }>;
     debt: Array<{ name: string; balance: number; interest: number }>;
+    accounts?: Array<{ name: string; type: string; subtype: string; balance: number }>;
+    recent_transactions?: Array<{ merchant: string; amount: number; category: string; date: string }>;
   }
 ) {
-  const systemPrompt = `You are WealthPal AI, a friendly and knowledgeable financial assistant. You help users understand their spending, make better financial decisions, and achieve their financial goals.
+  const accountsSection = financialSummary.accounts?.length
+    ? financialSummary.accounts.map(a => `  - ${a.name} (${a.subtype}): $${a.balance.toFixed(2)}`).join("\n")
+    : "  - No linked accounts";
 
-User's Current Financial Situation:
-- Monthly Income: $${financialSummary.monthly_income}
-- Monthly Spending: $${financialSummary.monthly_spending}
-- Savings Rate: ${(((financialSummary.monthly_income - financialSummary.monthly_spending) / financialSummary.monthly_income) * 100).toFixed(1)}%
-- Top Spending Categories: ${financialSummary.top_categories
-    .map((c) => `${c.name} ($${c.amount})`)
-    .join(", ")}
-- Debts: ${
-    financialSummary.debt.length > 0
-      ? financialSummary.debt
-          .map((d) => `${d.name} ($${d.balance} @ ${d.interest}%)`)
-          .join(", ")
-      : "None"
-  }
+  const recentTxSection = financialSummary.recent_transactions?.length
+    ? financialSummary.recent_transactions.map(t => `  - ${t.date}: ${t.merchant} — $${t.amount.toFixed(2)} (${t.category})`).join("\n")
+    : "  - No recent transactions";
 
-Be conversational, helpful, and provide specific advice based on their situation. Ask clarifying questions when needed.`;
+  const systemPrompt = `You are WealthPal AI, a friendly and knowledgeable personal finance assistant. You have full visibility into this user's real financial data — use it to give specific, personalized advice.
+
+USER'S FINANCIAL SNAPSHOT:
+Monthly Spending (last 30 days): $${financialSummary.monthly_spending.toFixed(2)}
+Top Spending Categories:
+${financialSummary.top_categories.map(c => `  - ${c.name}: $${c.amount.toFixed(2)}`).join("\n") || "  - None yet"}
+Debts: ${financialSummary.debt.length > 0 ? financialSummary.debt.map(d => `${d.name} ($${d.balance} @ ${d.interest}%)`).join(", ") : "None"}
+
+LINKED BANK ACCOUNTS:
+${accountsSection}
+
+RECENT TRANSACTIONS (last 20):
+${recentTxSection}
+
+INSTRUCTIONS:
+- Reference their actual numbers and transactions when relevant
+- Be conversational, concise, and encouraging
+- Give actionable advice specific to their situation
+- If asked about a specific transaction or merchant, look it up in their data above
+- Ask clarifying questions when needed`;
 
   try {
     const response = await openai.chat.completions.create({
