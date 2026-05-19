@@ -11,11 +11,22 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const { width: SW } = Dimensions.get('window');
 const API_URL = 'https://financial-ai-advisor-app-production.up.railway.app';
 
+function deriveSurfaces(bg) {
+  // Parse hex and brighten for surface layers
+  const n = parseInt(bg.replace('#', ''), 16);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  const lift1 = (v) => Math.min(255, v + 20);
+  const lift2 = (v) => Math.min(255, v + 35);
+  const lift3 = (v) => Math.min(255, v + 55);
+  const toHex = (r, g, b) => '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+  return {
+    surface: toHex(lift1(r), lift1(g), lift1(b)),
+    surface2: toHex(lift2(r), lift2(g), lift2(b)),
+    border: toHex(lift3(r), lift3(g), lift3(b)),
+  };
+}
+
 const BASE = {
-  bg: '#060c17',
-  surface: '#0c1526',
-  surface2: '#111f35',
-  border: '#1a2e4a',
   green: '#10b981',
   red: '#ef4444',
   amber: '#f59e0b',
@@ -24,8 +35,18 @@ const BASE = {
   textMuted: '#354e70',
 };
 
+// Primary = background dark color, Secondary = accent/highlight color
+const BG_OPTIONS = [
+  { hex: '#060c17', label: 'Midnight' },
+  { hex: '#0a0a0a', label: 'Obsidian' },
+  { hex: '#0d1117', label: 'GitHub Dark' },
+  { hex: '#0f1923', label: 'Navy' },
+  { hex: '#111827', label: 'Slate' },
+  { hex: '#1a0a2e', label: 'Deep Purple' },
+  { hex: '#0c1a0c', label: 'Forest' },
+  { hex: '#1a0c0c', label: 'Crimson Dark' },
+];
 const ACCENT_OPTIONS = ['#7c3aed','#3b82f6','#10b981','#ef4444','#f59e0b','#ec4899','#06b6d4','#f97316'];
-const SECONDARY_OPTIONS = ['#3b82f6','#7c3aed','#10b981','#f59e0b','#ec4899','#06b6d4'];
 
 function hexToRgb(hex) {
   const n = parseInt(hex.replace('#', ''), 16);
@@ -121,11 +142,14 @@ export default function App() {
   const drawerX = useRef(new Animated.Value(320)).current;
   const overlayO = useRef(new Animated.Value(0)).current;
 
-  // Theme
+  // Theme — Primary=background, Secondary=accent
+  const [themeBg, setThemeBg] = useState('#060c17');
   const [themeAccent, setThemeAccent] = useState('#7c3aed');
-  const [themeSecondary, setThemeSecondary] = useState('#3b82f6');
 
-  const C = useMemo(() => ({ ...BASE, accent: themeAccent, blue: themeSecondary }), [themeAccent, themeSecondary]);
+  const C = useMemo(() => {
+    const surfaces = deriveSurfaces(themeBg);
+    return { ...BASE, ...surfaces, bg: themeBg, accent: themeAccent, blue: '#3b82f6' };
+  }, [themeBg, themeAccent]);
   const CAT_COLORS = useMemo(() => [C.accent, C.blue, C.green, C.amber, C.red], [C]);
   const CHART_CFG = useMemo(() => ({
     backgroundColor: C.surface, backgroundGradientFrom: C.surface, backgroundGradientTo: C.surface,
@@ -143,6 +167,9 @@ export default function App() {
 
   // Edit profile
   const [editProfileVisible, setEditProfileVisible] = useState(false);
+
+  // Customize theme
+  const [customizeVisible, setCustomizeVisible] = useState(false);
   const [editFirst, setEditFirst] = useState('');
   const [editLast, setEditLast] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
@@ -150,20 +177,14 @@ export default function App() {
 
   // ── Theme ────────────────────────────────────────────
   useEffect(() => {
-    AsyncStorage.multiGet(['themeAccent', 'themeSecondary']).then(pairs => {
-      if (pairs[0][1]) setThemeAccent(pairs[0][1]);
-      if (pairs[1][1]) setThemeSecondary(pairs[1][1]);
+    AsyncStorage.multiGet(['themeBg', 'themeAccent']).then(pairs => {
+      if (pairs[0][1]) setThemeBg(pairs[0][1]);
+      if (pairs[1][1]) setThemeAccent(pairs[1][1]);
     });
   }, []);
 
-  const changeAccent = (color) => {
-    setThemeAccent(color);
-    AsyncStorage.setItem('themeAccent', color);
-  };
-  const changeSecondary = (color) => {
-    setThemeSecondary(color);
-    AsyncStorage.setItem('themeSecondary', color);
-  };
+  const changeBg = (color) => { setThemeBg(color); AsyncStorage.setItem('themeBg', color); };
+  const changeAccent = (color) => { setThemeAccent(color); AsyncStorage.setItem('themeAccent', color); };
 
   // ── Splash ──────────────────────────────────────────
   useEffect(() => {
@@ -896,34 +917,21 @@ export default function App() {
           {/* Customize */}
           <View style={s.drawerGroup}>
             <Text style={s.drawerGroupLabel}>Customize</Text>
-            <Text style={[s.drawerRowSub, { marginBottom: 10, marginTop: 4 }]}>Primary Color</Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 16 }}>
-              {ACCENT_OPTIONS.map(color => (
-                <TouchableOpacity
-                  key={color}
-                  onPress={() => changeAccent(color)}
-                  style={{
-                    width: 34, height: 34, borderRadius: 17, backgroundColor: color,
-                    borderWidth: themeAccent === color ? 3 : 2,
-                    borderColor: themeAccent === color ? '#fff' : 'transparent',
-                  }}
-                />
-              ))}
-            </View>
-            <Text style={[s.drawerRowSub, { marginBottom: 10 }]}>Secondary Color</Text>
-            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 4 }}>
-              {SECONDARY_OPTIONS.map(color => (
-                <TouchableOpacity
-                  key={color}
-                  onPress={() => changeSecondary(color)}
-                  style={{
-                    width: 34, height: 34, borderRadius: 17, backgroundColor: color,
-                    borderWidth: themeSecondary === color ? 3 : 2,
-                    borderColor: themeSecondary === color ? '#fff' : 'transparent',
-                  }}
-                />
-              ))}
-            </View>
+            <TouchableOpacity
+              style={s.drawerRow}
+              onPress={() => { closeDrawer(); setTimeout(() => setCustomizeVisible(true), 300); }}
+            >
+              <Icon char="◐" color={C.accent} size={32} />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={s.drawerRowText}>Theme & Colors</Text>
+                <Text style={s.drawerRowSub}>Background, accent color</Text>
+              </View>
+              <View style={{ flexDirection: 'row', gap: 4, marginRight: 8 }}>
+                <View style={{ width: 14, height: 14, borderRadius: 7, backgroundColor: themeBg, borderWidth: 1, borderColor: C.border }} />
+                <View style={{ width: 14, height: 14, borderRadius: 7, backgroundColor: themeAccent }} />
+              </View>
+              <Text style={s.chevron}>›</Text>
+            </TouchableOpacity>
           </View>
 
           {/* Support */}
@@ -1001,6 +1009,54 @@ export default function App() {
       </View>
 
       {drawerOpen && renderDrawer()}
+
+      {/* Customize Modal */}
+      <Modal visible={customizeVisible} animationType="slide" transparent onRequestClose={() => setCustomizeVisible(false)}>
+        <View style={s.modalOverlay}>
+          <View style={s.modalCard}>
+            <Text style={s.modalTitle}>Theme & Colors</Text>
+
+            <Text style={[s.label, { marginBottom: 12 }]}>Primary (Background)</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 24 }}>
+              {BG_OPTIONS.map(({ hex, label }) => (
+                <TouchableOpacity
+                  key={hex}
+                  onPress={() => changeBg(hex)}
+                  style={{ alignItems: 'center', gap: 6 }}
+                >
+                  <View style={{
+                    width: 44, height: 44, borderRadius: 22, backgroundColor: hex,
+                    borderWidth: themeBg === hex ? 3 : 1.5,
+                    borderColor: themeBg === hex ? C.accent : C.border,
+                  }} />
+                  <Text style={{ color: C.textMuted, fontSize: 10 }}>{label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={[s.label, { marginBottom: 12 }]}>Secondary (Accent)</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 28 }}>
+              {ACCENT_OPTIONS.map(color => (
+                <View
+                  key={color}
+                  style={{
+                    width: 44, height: 44, borderRadius: 22, backgroundColor: color,
+                    borderWidth: themeAccent === color ? 3 : 1.5,
+                    borderColor: themeAccent === color ? '#fff' : 'transparent',
+                    overflow: 'hidden',
+                  }}
+                >
+                  <TouchableOpacity style={{ flex: 1 }} onPress={() => changeAccent(color)} />
+                </View>
+              ))}
+            </View>
+
+            <TouchableOpacity style={s.btn} onPress={() => setCustomizeVisible(false)}>
+              <Text style={s.btnText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* Edit Profile Modal */}
       <Modal visible={editProfileVisible} animationType="slide" transparent onRequestClose={() => setEditProfileVisible(false)}>

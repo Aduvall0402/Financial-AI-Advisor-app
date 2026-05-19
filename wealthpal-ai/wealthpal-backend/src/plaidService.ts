@@ -50,22 +50,30 @@ export async function exchangePublicToken(publicToken: string) {
   }
 }
 
-// Get transactions from account
-export async function getTransactions(
-  accessToken: string,
-  startDate: string,
-  endDate: string
-) {
+// Get transactions using transactionsSync (handles initial load reliably)
+export async function getTransactions(accessToken: string) {
   try {
-    const response = await plaidClient.transactionsGet({
-      access_token: accessToken,
-      start_date: startDate,
-      end_date: endDate,
-    });
+    let cursor: string | undefined = undefined;
+    let added: any[] = [];
+    let hasMore = true;
 
-    return response.data.transactions;
-  } catch (error) {
-    console.error("Error fetching transactions:", error);
+    while (hasMore) {
+      const response = await plaidClient.transactionsSync({
+        access_token: accessToken,
+        ...(cursor ? { cursor } : {}),
+        options: { include_personal_finance_category: false },
+      } as any);
+
+      added = added.concat(response.data.added);
+      cursor = response.data.next_cursor || undefined;
+      hasMore = response.data.has_more;
+    }
+
+    console.log(`transactionsSync returned ${added.length} transactions`);
+    return added;
+  } catch (error: any) {
+    const detail = error?.response?.data || error?.message || error;
+    console.error("Error fetching transactions:", JSON.stringify(detail));
     throw error;
   }
 }

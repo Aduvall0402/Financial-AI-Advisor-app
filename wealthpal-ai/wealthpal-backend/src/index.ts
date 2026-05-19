@@ -163,13 +163,7 @@ app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) =
     if (accountError || !accountData?.length || !accountData[0]?.plaid_access_token) {
       return res.status(404).json({ error: "No connected account found" });
     }
-    const endDate = new Date().toISOString().split("T")[0];
-    const startDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-    const transactions = await plaidService.getTransactions(
-      accountData[0].plaid_access_token,
-      startDate,
-      endDate
-    );
+    const transactions = await plaidService.getTransactions(accountData[0].plaid_access_token);
     // Clear existing transactions for this user before inserting fresh data
     await supabase.from("transactions").delete().eq("user_id", userId);
     let synced = 0;
@@ -200,7 +194,7 @@ app.post("/api/transactions/sync", async (req: Request, res: Response) => {
     if (!userId || !accessToken || !startDate || !endDate) {
       return res.status(400).json({ error: "Missing required fields" });
     }
-    const transactions = await plaidService.getTransactions(accessToken, startDate, endDate);
+    const transactions = await plaidService.getTransactions(accessToken);
     let synced = 0;
     for (const tx of transactions) {
       const { error } = await supabase
@@ -339,8 +333,7 @@ app.put("/api/auth/profile/:userId", async (req: Request, res: Response) => {
     }
     const { error } = await supabase
       .from("users")
-      .update({ full_name: fullName })
-      .eq("id", userId);
+      .upsert([{ id: userId, full_name: fullName }], { onConflict: 'id' });
     if (error) throw error;
     res.json({ message: "Profile updated" });
   } catch (error: any) {
