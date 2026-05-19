@@ -92,6 +92,8 @@ app.post("/api/plaid/exchange-token", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Public token and user ID required" });
     }
     const { accessToken, itemId } = await plaidService.exchangePublicToken(publicToken);
+    // Remove any existing account rows for this user before inserting new one
+    await supabase.from("accounts").delete().eq("user_id", userId);
     const { error } = await supabase
       .from("accounts")
       .insert([{
@@ -117,12 +119,13 @@ app.get("/api/plaid/accounts/:userId", async (req: Request, res: Response) => {
       .from("accounts")
       .select("plaid_access_token, plaid_account_id")
       .eq("user_id", userId)
-      .single();
-    if (error || !data?.plaid_access_token) {
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (error || !data?.length || !data[0]?.plaid_access_token) {
       return res.status(404).json({ error: "No connected account found" });
     }
-    const accounts = await plaidService.getAccounts(data.plaid_access_token);
-    res.json({ accounts, itemId: data.plaid_account_id });
+    const accounts = await plaidService.getAccounts(data[0].plaid_access_token);
+    res.json({ accounts, itemId: data[0].plaid_account_id });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "Failed to fetch accounts" });
   }
@@ -155,14 +158,15 @@ app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) =
       .from("accounts")
       .select("plaid_access_token")
       .eq("user_id", userId)
-      .single();
-    if (accountError || !accountData?.plaid_access_token) {
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (accountError || !accountData?.length || !accountData[0]?.plaid_access_token) {
       return res.status(404).json({ error: "No connected account found" });
     }
     const endDate = new Date().toISOString().split("T")[0];
     const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
     const transactions = await plaidService.getTransactions(
-      accountData.plaid_access_token,
+      accountData[0].plaid_access_token,
       startDate,
       endDate
     );
@@ -290,9 +294,10 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
         .from("accounts")
         .select("plaid_access_token")
         .eq("user_id", userId)
-        .single();
-      if (accountData?.plaid_access_token) {
-        const plaidAccounts = await plaidService.getAccounts(accountData.plaid_access_token);
+        .order("created_at", { ascending: false })
+        .limit(1);
+      if (accountData?.length && accountData[0]?.plaid_access_token) {
+        const plaidAccounts = await plaidService.getAccounts(accountData[0].plaid_access_token);
         accounts = plaidAccounts.map(a => ({
           name: a.name,
           type: a.type as string,
@@ -316,6 +321,28 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
     res.json({ response });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "Failed to process chat" });
+  }
+});
+
+// ============================================
+// PROFILE ROUTES
+// ============================================
+
+app.put("/api/auth/profile/:userId", async (req: Request, res: Response) => {
+  try {
+    const { userId } = req.params;
+    const { fullName } = req.body;
+    if (!userId || !fullName) {
+      return res.status(400).json({ error: "User ID and name required" });
+    }
+    const { error } = await supabase
+      .from("users")
+      .update({ full_name: fullName })
+      .eq("id", userId);
+    if (error) throw error;
+    res.json({ message: "Profile updated" });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "Failed to update profile" });
   }
 });
 

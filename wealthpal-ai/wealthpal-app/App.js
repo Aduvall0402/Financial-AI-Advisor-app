@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   SafeAreaView, View, Text, TouchableOpacity, StyleSheet,
   ScrollView, TextInput, FlatList, ActivityIndicator,
-  Animated, Dimensions, Switch, StatusBar,
+  Animated, Dimensions, Switch, StatusBar, Modal,
 } from 'react-native';
 import { create, open } from 'react-native-plaid-link-sdk';
 import { LineChart } from 'react-native-chart-kit';
@@ -130,6 +130,13 @@ export default function App() {
   // Settings
   const [notifs, setNotifs] = useState(true);
   const [biometrics, setBiometrics] = useState(false);
+
+  // Edit profile
+  const [editProfileVisible, setEditProfileVisible] = useState(false);
+  const [editFirst, setEditFirst] = useState('');
+  const [editLast, setEditLast] = useState('');
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileError, setProfileError] = useState('');
 
   // ── Splash ──────────────────────────────────────────
   useEffect(() => {
@@ -279,6 +286,30 @@ export default function App() {
     await fetchTransactions();
   };
 
+  const openEditProfile = () => {
+    const parts = displayName ? displayName.split(' ') : [];
+    setEditFirst(parts[0] || '');
+    setEditLast(parts.slice(1).join(' ') || '');
+    setProfileError('');
+    setEditProfileVisible(true);
+  };
+
+  const saveProfile = async () => {
+    if (!editFirst.trim()) { setProfileError('First name is required'); return; }
+    setSavingProfile(true); setProfileError('');
+    const fullName = `${editFirst.trim()} ${editLast.trim()}`.trim();
+    try {
+      const res = await fetch(`${API_URL}/api/auth/profile/${userIdRef.current}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fullName }),
+      });
+      if (!res.ok) throw new Error('Failed to save');
+      setDisplayName(editFirst.trim());
+      setEditProfileVisible(false);
+    } catch { setProfileError('Could not save. Try again.'); }
+    finally { setSavingProfile(false); }
+  };
+
   // ── Plaid ───────────────────────────────────────────
   const openPlaidLink = async () => {
     if (!userId) { setPlaidError('Please log in first'); return; }
@@ -361,7 +392,7 @@ export default function App() {
   if (showSplash) {
     return (
       <View style={s.splashBg}>
-        <StatusBar barStyle="light-content" />
+        <StatusBar barStyle="light-content" backgroundColor={C.bg} />
         <Animated.View style={{ opacity: splashOpacity, transform: [{ scale: splashScale }], alignItems: 'center' }}>
           <View style={s.splashIcon}><Text style={s.splashIconText}>W</Text></View>
           <Text style={s.splashTitle}>WealthPal AI</Text>
@@ -378,7 +409,7 @@ export default function App() {
   if (screen === 'login') {
     return (
       <View style={s.bg}>
-        <StatusBar barStyle="light-content" />
+        <StatusBar barStyle="light-content" backgroundColor={C.bg} />
         <ScrollView contentContainerStyle={s.authScroll}>
           <View style={s.authTop}>
             <View style={s.splashIcon}><Text style={s.splashIconText}>W</Text></View>
@@ -404,7 +435,7 @@ export default function App() {
   if (screen === 'signup') {
     return (
       <View style={s.bg}>
-        <StatusBar barStyle="light-content" />
+        <StatusBar barStyle="light-content" backgroundColor={C.bg} />
         <ScrollView contentContainerStyle={s.authScroll}>
           <View style={s.authTop}>
             <Text style={s.authTitle}>Create Account</Text>
@@ -799,6 +830,17 @@ export default function App() {
           {/* Settings */}
           <View style={s.drawerGroup}>
             <Text style={s.drawerGroupLabel}>Settings</Text>
+            <TouchableOpacity
+              style={s.drawerRow}
+              onPress={() => { closeDrawer(); setTimeout(openEditProfile, 300); }}
+            >
+              <Icon char="✎" color={C.accent} size={32} />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={s.drawerRowText}>Edit Profile</Text>
+                <Text style={s.drawerRowSub}>Change your name and account info</Text>
+              </View>
+              <Text style={s.chevron}>›</Text>
+            </TouchableOpacity>
             <View style={s.drawerRow}>
               <Icon char="N" color={C.amber} size={32} />
               <Text style={[s.drawerRowText, { flex: 1, marginLeft: 12 }]}>Notifications</Text>
@@ -862,7 +904,7 @@ export default function App() {
   // ════════════════════════════════════════════════════
   return (
     <SafeAreaView style={s.appWrap}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle="light-content" backgroundColor={C.bg} />
 
       <View style={s.header}>
         <View>
@@ -885,25 +927,54 @@ export default function App() {
 
       <View style={s.bottomNav}>
         {[
-          { id: 'dashboard', label: 'Home', char: 'H', color: C.accent },
-          { id: 'insights', label: 'Insights', char: '%', color: C.blue },
-          { id: 'transactions', label: 'Transactions', char: '$', color: C.green },
-          { id: 'chat', label: 'AI Chat', char: 'AI', color: C.amber },
+          { id: 'dashboard', label: 'Home', icon: '⌂' },
+          { id: 'insights', label: 'Insights', icon: '◈' },
+          { id: 'transactions', label: 'Transactions', icon: '≡' },
+          { id: 'chat', label: 'AI Chat', icon: '✦' },
         ].map(tab => (
           <TouchableOpacity key={tab.id} style={s.navTab} onPress={() => setActiveTab(tab.id)}>
-            <Icon
-              char={tab.char}
-              color={activeTab === tab.id ? tab.color : C.textMuted}
-              size={30}
-              radius={8}
-            />
-            <Text style={[s.navLabel, activeTab === tab.id && { color: tab.color }]}>{tab.label}</Text>
-            {activeTab === tab.id && <View style={[s.navDot, { backgroundColor: tab.color }]} />}
+            <Text style={[s.navIcon, activeTab === tab.id && s.navIconOn]}>{tab.icon}</Text>
+            <Text style={[s.navLabel, activeTab === tab.id && s.navLabelOn]}>{tab.label}</Text>
+            {activeTab === tab.id && <View style={s.navDot} />}
           </TouchableOpacity>
         ))}
       </View>
 
       {drawerOpen && renderDrawer()}
+
+      {/* Edit Profile Modal */}
+      <Modal visible={editProfileVisible} animationType="slide" transparent onRequestClose={() => setEditProfileVisible(false)}>
+        <View style={s.modalOverlay}>
+          <View style={s.modalCard}>
+            <Text style={s.modalTitle}>Edit Profile</Text>
+            {!!profileError && <View style={s.errBox}><Text style={s.errText}>{profileError}</Text></View>}
+            <Text style={s.label}>First Name</Text>
+            <TextInput
+              style={s.input}
+              placeholder="First name"
+              placeholderTextColor={C.textMuted}
+              value={editFirst}
+              onChangeText={setEditFirst}
+              editable={!savingProfile}
+            />
+            <Text style={s.label}>Last Name</Text>
+            <TextInput
+              style={s.input}
+              placeholder="Last name"
+              placeholderTextColor={C.textMuted}
+              value={editLast}
+              onChangeText={setEditLast}
+              editable={!savingProfile}
+            />
+            <TouchableOpacity style={[s.btn, savingProfile && s.btnOff]} onPress={saveProfile} disabled={savingProfile}>
+              {savingProfile ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Save Changes</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity style={s.linkRow} onPress={() => setEditProfileVisible(false)}>
+              <Text style={s.linkText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1013,9 +1084,16 @@ const s = StyleSheet.create({
   sendBtnText: { color: '#fff', fontSize: 22, fontWeight: 'bold', lineHeight: 26 },
 
   bottomNav: { flexDirection: 'row', backgroundColor: C.surface, borderTopWidth: 1, borderTopColor: C.border, paddingBottom: 28, paddingTop: 10 },
-  navTab: { flex: 1, alignItems: 'center', paddingVertical: 4, gap: 4 },
+  navTab: { flex: 1, alignItems: 'center', paddingVertical: 4 },
+  navIcon: { fontSize: 20, color: C.textMuted, marginBottom: 3 },
+  navIconOn: { color: C.accent },
   navLabel: { fontSize: 10, color: C.textMuted, fontWeight: '500' },
-  navDot: { width: 4, height: 4, borderRadius: 2, marginTop: 2 },
+  navLabelOn: { color: C.accent, fontWeight: '700' },
+  navDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: C.accent, marginTop: 3 },
+
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
+  modalCard: { backgroundColor: C.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 28, paddingBottom: 40, borderTopWidth: 1, borderColor: C.border },
+  modalTitle: { fontSize: 20, fontWeight: '700', color: C.text, marginBottom: 24 },
 
   overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.65)', zIndex: 20 },
   drawer: { position: 'absolute', top: 0, right: 0, bottom: 0, width: 300, backgroundColor: C.surface, zIndex: 21, borderLeftWidth: 1, borderLeftColor: C.border },
