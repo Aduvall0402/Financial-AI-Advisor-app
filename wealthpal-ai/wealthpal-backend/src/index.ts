@@ -163,7 +163,10 @@ app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) =
     if (accountError || !accountData?.length || !accountData[0]?.plaid_access_token) {
       return res.status(404).json({ error: "No connected account found" });
     }
-    const transactions = await plaidService.getTransactions(accountData[0].plaid_access_token);
+    const accessToken = accountData[0].plaid_access_token;
+    // Ask Plaid to pull latest data for this item before syncing
+    await plaidService.refreshTransactions(accessToken);
+    const transactions = await plaidService.getTransactions(accessToken);
     // Clear existing transactions for this user before inserting fresh data
     await supabase.from("transactions").delete().eq("user_id", userId);
     let synced = 0;
@@ -175,15 +178,18 @@ app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) =
           plaid_transaction_id: tx.transaction_id,
           merchant_name: tx.merchant_name || tx.name || "Unknown",
           amount: Math.abs(tx.amount),
-          category: (tx.category as any)?.[0] || "Other",
+          category: (tx.personal_finance_category?.primary || (tx.category as any)?.[0] || "Other"),
           transaction_date: tx.date,
           description: tx.name,
         }]);
       if (!error) synced++;
     }
+    console.log(`Synced ${synced}/${transactions.length} transactions for user ${userId}`);
     res.json({ synced, total: transactions.length });
   } catch (error: any) {
-    res.status(500).json({ error: error?.message || "Failed to sync transactions" });
+    const msg = error?.message || "Failed to sync transactions";
+    console.error("Sync error:", msg);
+    res.status(500).json({ error: msg });
   }
 });
 
@@ -327,14 +333,24 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
 app.put("/api/auth/profile/:userId", async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
-    const { fullName } = req.body;
+    const { fullName, email } = req.body;
     if (!userId || !fullName) {
       return res.status(400).json({ error: "User ID and name required" });
     }
-    const { error } = await supabase
+    // First try UPDATE (row already exists)
+    const { data: updated, error: updateError } = await supabase
       .from("users")
-      .upsert([{ id: userId, full_name: fullName }], { onConflict: 'id' });
-    if (error) throw error;
+      .update({ full_name: fullName })
+      .eq("id", userId)
+      .select();
+    if (updateError) throw updateError;
+    // If no rows were updated (row doesn't exist yet), insert it
+    if (!updated || updated.length === 0) {
+      const { error: insertError } = await supabase
+        .from("users")
+        .insert([{ id: userId, email: email || "", full_name: fullName }]);
+      if (insertError) throw insertError;
+    }
     res.json({ message: "Profile updated" });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "Failed to update profile" });

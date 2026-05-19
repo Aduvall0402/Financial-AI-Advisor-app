@@ -123,6 +123,7 @@ export default function App() {
   const [transactions, setTransactions] = useState([]);
   const [loadingTx, setLoadingTx] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState('');
 
   // Plaid
   const [linkedAccount, setLinkedAccount] = useState(null);
@@ -321,11 +322,18 @@ export default function App() {
 
   const syncTransactions = async () => {
     if (!userIdRef.current) return;
-    setSyncing(true);
+    setSyncing(true); setSyncError('');
     try {
-      await fetch(`${API_URL}/api/transactions/sync/${userIdRef.current}`, { method: 'POST' });
-      await fetchTransactions();
-    } catch {}
+      const res = await fetch(`${API_URL}/api/transactions/sync/${userIdRef.current}`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        setSyncError(data.error || 'Sync failed');
+      } else {
+        if (data.total === 0) setSyncError('Plaid returned 0 transactions. Try reconnecting your bank.');
+        else setSyncError('');
+        await fetchTransactions();
+      }
+    } catch (e) { setSyncError('Network error — could not reach server'); }
     finally { setSyncing(false); }
   };
 
@@ -349,7 +357,7 @@ export default function App() {
     try {
       const res = await fetch(`${API_URL}/api/auth/profile/${userIdRef.current}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fullName }),
+        body: JSON.stringify({ fullName, email }),
       });
       if (!res.ok) throw new Error('Failed to save');
       setDisplayName(editFirst.trim());
@@ -746,6 +754,11 @@ export default function App() {
           )}
         </TouchableOpacity>
       </View>
+      {!!syncError && (
+        <View style={[s.errBox, { margin: 16, marginTop: 4 }]}>
+          <Text style={s.errText}>Sync error: {syncError}</Text>
+        </View>
+      )}
       {loadingTx ? (
         <View style={s.center}>
           <ActivityIndicator color={C.accent} />

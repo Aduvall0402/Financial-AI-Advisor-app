@@ -16,8 +16,9 @@
     "plugins": [],
     "android": {
       "package": "com.aduvall0402.wealthpalaiapp",
+      "icon": "./assets/icon.png",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#060c17"
       },
       "runtimeVersion": {
