@@ -36,26 +36,48 @@ const CHART_CFG = {
   propsForBackgroundLines: { stroke: C.border },
 };
 
-function getCategoryEmoji(cat) {
-  const m = {
-    Groceries: '🛒', Food: '🍔', Restaurants: '🍽️', 'Food and Drink': '🍔',
-    Gas: '⛽', Transportation: '🚗', Travel: '✈️', Shopping: '🛍️',
-    Entertainment: '🎬', Subscriptions: '📱', Utilities: '💡',
-    Health: '🏥', Healthcare: '🏥', Other: '💳',
-  };
-  return m[cat] || '💳';
+const CAT_COLORS = [C.accent, C.blue, C.green, C.amber, C.red];
+
+const CAT_LETTERS = {
+  Groceries: 'G', 'Food and Drink': 'F', Food: 'F', Restaurants: 'R',
+  Gas: 'G', Transportation: 'T', Travel: 'T', Shopping: 'S',
+  Entertainment: 'E', Subscriptions: 'S', Utilities: 'U',
+  Health: 'H', Healthcare: 'H', Other: 'O',
+};
+
+const CAT_BG = {
+  Groceries: '#059669', 'Food and Drink': '#d97706', Food: '#d97706',
+  Restaurants: '#d97706', Gas: '#2563eb', Transportation: '#2563eb',
+  Travel: '#7c3aed', Shopping: '#db2777', Entertainment: '#dc2626',
+  Subscriptions: '#0891b2', Utilities: '#65a30d', Health: '#059669',
+  Healthcare: '#059669', Other: '#475569',
+};
+
+// Icon component — colored rounded square with a letter/symbol
+function Icon({ char, color = C.accent, size = 36, radius }) {
+  const r = radius !== undefined ? radius : size * 0.28;
+  return (
+    <View style={{ width: size, height: size, borderRadius: r, backgroundColor: color, justifyContent: 'center', alignItems: 'center' }}>
+      <Text style={{ color: '#fff', fontSize: size * 0.44, fontWeight: '700', lineHeight: size * 0.52 }}>{char}</Text>
+    </View>
+  );
 }
 
-function fmtDate(d) {
-  if (!d) return '';
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+// Category icon for transaction rows
+function CatIcon({ category }) {
+  const letter = CAT_LETTERS[category] || (category?.[0]?.toUpperCase() || '?');
+  const bg = CAT_BG[category] || '#475569';
+  return <Icon char={letter} color={bg} size={42} radius={12} />;
 }
 
 function fmtMoney(n) {
   return Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-const CAT_COLORS = [C.accent, C.blue, C.green, C.amber, C.red];
+function fmtDate(d) {
+  if (!d) return '';
+  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
 
 export default function App() {
   // Splash
@@ -67,7 +89,8 @@ export default function App() {
   const [screen, setScreen] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [fullName, setFullName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [userId, setUserId] = useState(null);
   const userIdRef = useRef(null);
@@ -81,6 +104,7 @@ export default function App() {
   const [accounts, setAccounts] = useState([]);
   const [selectedAccount, setSelectedAccount] = useState(null);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
+  const [accountsError, setAccountsError] = useState(false);
   const [transactions, setTransactions] = useState([]);
   const [loadingTx, setLoadingTx] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -114,7 +138,8 @@ export default function App() {
       Animated.spring(splashScale, { toValue: 1, tension: 60, friction: 8, useNativeDriver: true }),
     ]).start();
     const t = setTimeout(() => {
-      Animated.timing(splashOpacity, { toValue: 0, duration: 400, useNativeDriver: true }).start(() => setShowSplash(false));
+      Animated.timing(splashOpacity, { toValue: 0, duration: 400, useNativeDriver: true })
+        .start(() => setShowSplash(false));
     }, 2200);
     return () => clearTimeout(t);
   }, []);
@@ -136,8 +161,6 @@ export default function App() {
   };
 
   // ── Auth ────────────────────────────────────────────
-  const getName = (name, em) => (name ? name.split(' ')[0] : (em ? em.split('@')[0] : 'there'));
-
   const handleLogin = async () => {
     if (!email || !password) { setError('Please enter email and password'); return; }
     setLoading(true); setError('');
@@ -149,9 +172,10 @@ export default function App() {
       const data = await res.json();
       if (!res.ok) { setError(data.error || 'Login failed'); return; }
       const uid = data.session.user.id;
-      const name = data.session.user.user_metadata?.full_name || '';
+      // Get name from login response (users table) or user_metadata
+      const name = data.full_name || data.session.user.user_metadata?.full_name || '';
       setUserId(uid); userIdRef.current = uid;
-      setDisplayName(getName(name, email));
+      setDisplayName(name ? name.split(' ')[0] : email.split('@')[0]);
       setPassword('');
       setDashboardLoading(true);
       try {
@@ -160,27 +184,30 @@ export default function App() {
       } catch { setDashboardData({ monthly_spending: 0, top_categories: [] }); }
       setScreen('dashboard');
       setDashboardLoading(false);
-      fetchAccounts();
+      fetchAccounts(uid);
       fetchTransactions(uid);
     } catch { setError('Could not connect to server'); }
     finally { setLoading(false); }
   };
 
   const handleSignup = async () => {
-    if (!email || !password || !fullName) { setError('Please fill in all fields'); return; }
+    if (!email || !password || !firstName || !lastName) {
+      setError('Please fill in all fields'); return;
+    }
     if (password.length < 6) { setError('Password must be at least 6 characters'); return; }
     setLoading(true); setError('');
+    const fullName = `${firstName.trim()} ${lastName.trim()}`;
     try {
       const res = await fetch(`${API_URL}/api/auth/signup`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, fullName }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error || 'Signup failed'); return; }
       const uid = data.user.id;
       setUserId(uid); userIdRef.current = uid;
-      setDisplayName(getName(fullName, email));
-      setPassword(''); setFullName('');
+      setDisplayName(firstName.trim());
+      setPassword(''); setFirstName(''); setLastName('');
       setDashboardLoading(true);
       try {
         const s = await fetch(`${API_URL}/api/ai/financial-summary/${uid}`);
@@ -196,26 +223,32 @@ export default function App() {
     closeDrawer();
     setTimeout(() => {
       setScreen('login'); setUserId(null); userIdRef.current = null;
-      setEmail(''); setPassword(''); setFullName(''); setDisplayName(''); setError('');
-      setTransactions([]); setAccounts([]); setSelectedAccount(null); setLinkedAccount(null);
-      setDashboardData(null);
+      setEmail(''); setPassword(''); setFirstName(''); setLastName('');
+      setDisplayName(''); setError('');
+      setTransactions([]); setAccounts([]); setSelectedAccount(null);
+      setLinkedAccount(null); setAccountsError(false); setDashboardData(null);
       setChatMessages([{ id: '0', role: 'assistant', text: "Hi! I'm your WealthPal AI assistant. Ask me anything about your finances!" }]);
     }, 300);
   };
 
   // ── Data ────────────────────────────────────────────
-  const fetchAccounts = async () => {
-    if (!userIdRef.current) return;
-    setLoadingAccounts(true);
+  const fetchAccounts = async (uid) => {
+    const id = uid || userIdRef.current;
+    if (!id) return;
+    setLoadingAccounts(true); setAccountsError(false);
     try {
-      const res = await fetch(`${API_URL}/api/plaid/accounts/${userIdRef.current}`);
+      const res = await fetch(`${API_URL}/api/plaid/accounts/${id}`);
+      if (!res.ok) { setAccountsError(true); return; }
       const data = await res.json();
       if (data.accounts?.length > 0) {
         setAccounts(data.accounts);
         setSelectedAccount(data.accounts[0]);
         setLinkedAccount(data.itemId);
+        setAccountsError(false);
+      } else {
+        setAccountsError(true);
       }
-    } catch {}
+    } catch { setAccountsError(true); }
     finally { setLoadingAccounts(false); }
   };
 
@@ -241,6 +274,11 @@ export default function App() {
     finally { setSyncing(false); }
   };
 
+  const refreshAll = async () => {
+    await fetchAccounts();
+    await fetchTransactions();
+  };
+
   // ── Plaid ───────────────────────────────────────────
   const openPlaidLink = async () => {
     if (!userId) { setPlaidError('Please log in first'); return; }
@@ -264,6 +302,9 @@ export default function App() {
             if (!er.ok) throw new Error(ed.error || 'Exchange failed');
             setLinkedAccount(ed.plaid_account_id || ed.itemId);
             setPlaidStatus('Bank connected successfully!');
+            setPlaidError('');
+            // Small delay to let DB write settle, then fetch
+            await new Promise(r => setTimeout(r, 800));
             await fetchAccounts();
             await syncTransactions();
           } catch (err) { setPlaidError(err.message); }
@@ -271,8 +312,7 @@ export default function App() {
         },
         onExit: (exit) => {
           if (exit?.error) setPlaidError(exit.error.display_message || 'Connection failed');
-          setPlaidStatus('');
-          setPlaidLoading(false);
+          setPlaidStatus(''); setPlaidLoading(false);
         },
       });
     } catch (err) { setPlaidError(err.message); setPlaidLoading(false); }
@@ -371,8 +411,17 @@ export default function App() {
             <Text style={s.authSub}>Join WealthPal AI today</Text>
           </View>
           {!!error && <View style={s.errBox}><Text style={s.errText}>{error}</Text></View>}
-          <Text style={s.label}>Full Name</Text>
-          <TextInput style={s.input} placeholder="John Doe" placeholderTextColor={C.textMuted} value={fullName} onChangeText={setFullName} editable={!loading} />
+          <View style={s.nameRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.label}>First Name</Text>
+              <TextInput style={s.input} placeholder="John" placeholderTextColor={C.textMuted} value={firstName} onChangeText={setFirstName} editable={!loading} />
+            </View>
+            <View style={{ width: 12 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={s.label}>Last Name</Text>
+              <TextInput style={s.input} placeholder="Doe" placeholderTextColor={C.textMuted} value={lastName} onChangeText={setLastName} editable={!loading} />
+            </View>
+          </View>
           <Text style={s.label}>Email</Text>
           <TextInput style={s.input} placeholder="you@example.com" placeholderTextColor={C.textMuted} value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" editable={!loading} />
           <Text style={s.label}>Password</Text>
@@ -413,7 +462,9 @@ export default function App() {
             ${fmtMoney(selectedAccount?.balances?.current || 0)}
           </Text>
           <Text style={s.balanceSub}>
-            {selectedAccount ? `${selectedAccount.subtype} · ${selectedAccount.type}` : 'Connect a bank to get started'}
+            {selectedAccount
+              ? `${selectedAccount.subtype} · ${selectedAccount.type}`
+              : 'Connect a bank to get started'}
           </Text>
         </View>
 
@@ -421,7 +472,7 @@ export default function App() {
         {accounts.length > 1 && (
           <View style={s.section}>
             <Text style={s.sectionTitle}>Accounts</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -4 }}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               {accounts.map(acc => (
                 <TouchableOpacity
                   key={acc.account_id}
@@ -431,12 +482,26 @@ export default function App() {
                   <Text style={[s.chipTitle, selectedAccount?.account_id === acc.account_id && s.chipTitleActive]}>
                     {acc.name}
                   </Text>
-                  <Text style={[s.chipSub, selectedAccount?.account_id === acc.account_id && { color: 'rgba(255,255,255,0.7)' }]}>
+                  <Text style={[s.chipSub, selectedAccount?.account_id === acc.account_id && { color: 'rgba(255,255,255,0.65)' }]}>
                     ${fmtMoney(acc.balances?.current || 0)}
                   </Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>
+          </View>
+        )}
+
+        {/* Bank reconnect prompt */}
+        {accountsError && (
+          <View style={s.reconnectCard}>
+            <Text style={s.reconnectTitle}>Bank connection needs refresh</Text>
+            <Text style={s.reconnectText}>Your bank connection has expired or needs to be re-linked.</Text>
+            <TouchableOpacity
+              style={[s.btn, { marginBottom: 0 }]}
+              onPress={() => { openDrawer(); }}
+            >
+              <Text style={s.btnText}>Reconnect Bank</Text>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -452,6 +517,18 @@ export default function App() {
           </View>
         </View>
 
+        {/* Refresh button */}
+        {(loadingAccounts || loadingTx) ? (
+          <View style={{ alignItems: 'center', marginBottom: 16 }}>
+            <ActivityIndicator color={C.accent} />
+            <Text style={[s.subText, { marginTop: 8 }]}>Refreshing data...</Text>
+          </View>
+        ) : (
+          <TouchableOpacity style={s.refreshBtn} onPress={refreshAll}>
+            <Text style={s.refreshText}>↺  Refresh Data</Text>
+          </TouchableOpacity>
+        )}
+
         {/* Top spending */}
         {catData && catData.length > 0 && (
           <View style={s.section}>
@@ -459,7 +536,7 @@ export default function App() {
             {catData.map(([cat, amt], i) => (
               <View key={cat} style={s.catRow}>
                 <View style={s.catInfo}>
-                  <Text style={s.catName}>{getCategoryEmoji(cat)} {cat}</Text>
+                  <Text style={s.catName}>{cat}</Text>
                   <Text style={s.catAmt}>${fmtMoney(amt)}</Text>
                 </View>
                 <View style={s.barBg}>
@@ -471,17 +548,17 @@ export default function App() {
         )}
 
         {/* Connect bank prompt */}
-        {!linkedAccount && (
+        {!linkedAccount && !accountsError && (
           <View style={s.connectCard}>
-            <Text style={s.connectTitle}>🏦 Connect Your Bank</Text>
-            <Text style={s.connectText}>Link your bank account to unlock spending insights, transaction history, and personalized financial advice.</Text>
+            <Text style={s.connectTitle}>Connect Your Bank</Text>
+            <Text style={s.connectText}>Link your bank account to unlock spending insights, transaction history, and personalized AI advice.</Text>
             <TouchableOpacity style={s.btn} onPress={openDrawer}>
               <Text style={s.btnText}>Get Started</Text>
             </TouchableOpacity>
           </View>
         )}
 
-        <View style={{ height: 20 }} />
+        <View style={{ height: 24 }} />
       </ScrollView>
     );
   };
@@ -498,8 +575,8 @@ export default function App() {
     if (!transactions.length) {
       return (
         <View style={[s.tab, s.center]}>
-          <Text style={{ fontSize: 48, marginBottom: 16 }}>📊</Text>
-          <Text style={s.emptyTitle}>No insights yet</Text>
+          <Icon char="%" color={C.accent} size={56} radius={16} />
+          <Text style={[s.emptyTitle, { marginTop: 20 }]}>No insights yet</Text>
           <Text style={s.emptyText}>Connect your bank and sync transactions to see spending insights and charts.</Text>
         </View>
       );
@@ -507,7 +584,6 @@ export default function App() {
 
     return (
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}>
-        {/* Summary cards */}
         <View style={s.statsRow}>
           <View style={s.statCard}>
             <Text style={s.statLabel}>Total Spent</Text>
@@ -519,14 +595,13 @@ export default function App() {
           </View>
         </View>
 
-        {/* Weekly trend chart */}
         <View style={s.section}>
           <Text style={s.sectionTitle}>Weekly Spending</Text>
           <View style={s.chartCard}>
             <LineChart
               data={{
                 labels: ['3 wks', '2 wks', 'Last wk', 'This wk'],
-                datasets: [{ data: weeklyData.map(v => Math.max(0, v)) }],
+                datasets: [{ data: weeklyData.map(v => Math.max(0.01, v)) }],
               }}
               width={SW - 64}
               height={160}
@@ -538,7 +613,6 @@ export default function App() {
           </View>
         </View>
 
-        {/* Category breakdown */}
         {catData && (
           <View style={s.section}>
             <Text style={s.sectionTitle}>Spending by Category</Text>
@@ -549,7 +623,7 @@ export default function App() {
                   <View style={[s.insightDot, { backgroundColor: CAT_COLORS[i] }]} />
                   <View style={{ flex: 1 }}>
                     <View style={s.catInfo}>
-                      <Text style={s.catName}>{getCategoryEmoji(cat)} {cat}</Text>
+                      <Text style={s.catName}>{cat}</Text>
                       <Text style={s.catAmt}>${fmtMoney(amt)}</Text>
                     </View>
                     <View style={s.barBg}>
@@ -563,16 +637,17 @@ export default function App() {
           </View>
         )}
 
-        {/* Top merchant */}
         {catData && catData[0] && (
           <View style={[s.highlightCard, { borderColor: CAT_COLORS[0] }]}>
             <Text style={s.highlightLabel}>Biggest Category</Text>
             <Text style={s.highlightValue}>{catData[0][0]}</Text>
-            <Text style={s.highlightSub}>${fmtMoney(catData[0][1])} · {Math.round((catData[0][1] / total) * 100)}% of total</Text>
+            <Text style={s.highlightSub}>
+              ${fmtMoney(catData[0][1])} · {Math.round((catData[0][1] / total) * 100)}% of spending
+            </Text>
           </View>
         )}
 
-        <View style={{ height: 20 }} />
+        <View style={{ height: 24 }} />
       </ScrollView>
     );
   };
@@ -585,7 +660,11 @@ export default function App() {
       <View style={s.txTopBar}>
         <Text style={s.sectionTitle}>Transactions</Text>
         <TouchableOpacity style={s.syncBtn} onPress={syncTransactions} disabled={syncing || loadingTx}>
-          {syncing ? <ActivityIndicator size="small" color={C.accent} /> : <Text style={s.syncText}>↻ Sync</Text>}
+          {syncing ? (
+            <ActivityIndicator size="small" color={C.accent} />
+          ) : (
+            <Text style={s.syncText}>↻  Sync</Text>
+          )}
         </TouchableOpacity>
       </View>
       {loadingTx ? (
@@ -595,9 +674,9 @@ export default function App() {
         </View>
       ) : transactions.length === 0 ? (
         <View style={[s.center, { flex: 1, paddingHorizontal: 32 }]}>
-          <Text style={{ fontSize: 48, marginBottom: 16 }}>💳</Text>
-          <Text style={s.emptyTitle}>No transactions yet</Text>
-          <Text style={s.emptyText}>Connect your bank account and tap Sync to load your transaction history.</Text>
+          <Icon char="$" color={C.textMuted} size={56} radius={16} />
+          <Text style={[s.emptyTitle, { marginTop: 20 }]}>No transactions yet</Text>
+          <Text style={s.emptyText}>Connect your bank and tap Sync to load your transaction history.</Text>
         </View>
       ) : (
         <FlatList
@@ -607,9 +686,7 @@ export default function App() {
           showsVerticalScrollIndicator={false}
           renderItem={({ item }) => (
             <View style={s.txItem}>
-              <View style={s.txIcon}>
-                <Text style={{ fontSize: 20 }}>{getCategoryEmoji(item.category)}</Text>
-              </View>
+              <CatIcon category={item.category} />
               <View style={{ flex: 1 }}>
                 <Text style={s.txMerchant} numberOfLines={1}>
                   {item.merchant_name || item.description || 'Unknown'}
@@ -659,7 +736,9 @@ export default function App() {
           onPress={sendChat}
           disabled={loadingChat || !chatInput.trim()}
         >
-          {loadingChat ? <ActivityIndicator size="small" color="#fff" /> : <Text style={s.sendBtnText}>↑</Text>}
+          {loadingChat
+            ? <ActivityIndicator size="small" color="#fff" />
+            : <Text style={s.sendBtnText}>↑</Text>}
         </TouchableOpacity>
       </View>
     </View>
@@ -675,7 +754,7 @@ export default function App() {
       </Animated.View>
       <Animated.View style={[s.drawer, { transform: [{ translateX: drawerX }] }]}>
         <ScrollView showsVerticalScrollIndicator={false}>
-          {/* User section */}
+          {/* User */}
           <View style={s.drawerUser}>
             <View style={s.avatar}>
               <Text style={s.avatarText}>{(displayName?.[0] || 'W').toUpperCase()}</Text>
@@ -691,10 +770,12 @@ export default function App() {
               style={s.drawerRow}
               onPress={() => { closeDrawer(); setTimeout(openPlaidLink, 300); }}
             >
-              <Text style={s.drawerRowIcon}>🏦</Text>
-              <View style={{ flex: 1 }}>
+              <Icon char="B" color={C.blue} size={32} />
+              <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={s.drawerRowText}>Connect Bank</Text>
-                <Text style={s.drawerRowSub}>{linkedAccount ? 'Connected · tap to reconnect' : 'Not connected'}</Text>
+                <Text style={s.drawerRowSub}>
+                  {linkedAccount ? 'Connected · tap to reconnect' : 'Not connected'}
+                </Text>
               </View>
               <View style={[s.statusDot, { backgroundColor: linkedAccount ? C.green : C.textMuted }]} />
             </TouchableOpacity>
@@ -703,45 +784,39 @@ export default function App() {
                 style={s.drawerRow}
                 onPress={() => { closeDrawer(); setTimeout(syncTransactions, 300); }}
               >
-                <Text style={s.drawerRowIcon}>↻</Text>
-                <Text style={s.drawerRowText}>Sync Transactions</Text>
+                <Icon char="↻" color={C.accent} size={32} />
+                <Text style={[s.drawerRowText, { marginLeft: 12 }]}>Sync Transactions</Text>
               </TouchableOpacity>
             )}
-            {!!plaidError && <Text style={[s.drawerRowSub, { color: C.red, paddingHorizontal: 20, paddingBottom: 8 }]}>{plaidError}</Text>}
-            {!!plaidStatus && <Text style={[s.drawerRowSub, { color: C.green, paddingHorizontal: 20, paddingBottom: 8 }]}>{plaidStatus}</Text>}
+            {!!plaidError && (
+              <Text style={[s.drawerRowSub, { color: C.red, paddingHorizontal: 0, paddingBottom: 8 }]}>{plaidError}</Text>
+            )}
+            {!!plaidStatus && (
+              <Text style={[s.drawerRowSub, { color: C.green, paddingBottom: 8 }]}>{plaidStatus}</Text>
+            )}
           </View>
 
           {/* Settings */}
           <View style={s.drawerGroup}>
             <Text style={s.drawerGroupLabel}>Settings</Text>
             <View style={s.drawerRow}>
-              <Text style={s.drawerRowIcon}>🔔</Text>
-              <Text style={[s.drawerRowText, { flex: 1 }]}>Notifications</Text>
-              <Switch
-                value={notifs}
-                onValueChange={setNotifs}
-                trackColor={{ false: C.border, true: C.accent }}
-                thumbColor="#fff"
-              />
+              <Icon char="N" color={C.amber} size={32} />
+              <Text style={[s.drawerRowText, { flex: 1, marginLeft: 12 }]}>Notifications</Text>
+              <Switch value={notifs} onValueChange={setNotifs} trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff" />
             </View>
             <View style={s.drawerRow}>
-              <Text style={s.drawerRowIcon}>🔐</Text>
-              <Text style={[s.drawerRowText, { flex: 1 }]}>Face ID / Biometrics</Text>
-              <Switch
-                value={biometrics}
-                onValueChange={setBiometrics}
-                trackColor={{ false: C.border, true: C.accent }}
-                thumbColor="#fff"
-              />
+              <Icon char="ID" color={C.green} size={32} />
+              <Text style={[s.drawerRowText, { flex: 1, marginLeft: 12 }]}>Face ID / Biometrics</Text>
+              <Switch value={biometrics} onValueChange={setBiometrics} trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff" />
             </View>
             <TouchableOpacity style={s.drawerRow}>
-              <Text style={s.drawerRowIcon}>🔒</Text>
-              <Text style={[s.drawerRowText, { flex: 1 }]}>Privacy & Security</Text>
+              <Icon char="P" color={C.textSub} size={32} />
+              <Text style={[s.drawerRowText, { flex: 1, marginLeft: 12 }]}>Privacy & Security</Text>
               <Text style={s.chevron}>›</Text>
             </TouchableOpacity>
             <TouchableOpacity style={s.drawerRow}>
-              <Text style={s.drawerRowIcon}>💱</Text>
-              <View style={{ flex: 1 }}>
+              <Icon char="$" color={C.green} size={32} />
+              <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={s.drawerRowText}>Currency</Text>
                 <Text style={s.drawerRowSub}>USD · US Dollar</Text>
               </View>
@@ -753,18 +828,18 @@ export default function App() {
           <View style={s.drawerGroup}>
             <Text style={s.drawerGroupLabel}>Support</Text>
             <TouchableOpacity style={s.drawerRow}>
-              <Text style={s.drawerRowIcon}>❓</Text>
-              <Text style={[s.drawerRowText, { flex: 1 }]}>Help & FAQ</Text>
+              <Icon char="?" color={C.blue} size={32} />
+              <Text style={[s.drawerRowText, { flex: 1, marginLeft: 12 }]}>Help & FAQ</Text>
               <Text style={s.chevron}>›</Text>
             </TouchableOpacity>
             <TouchableOpacity style={s.drawerRow}>
-              <Text style={s.drawerRowIcon}>⭐</Text>
-              <Text style={[s.drawerRowText, { flex: 1 }]}>Rate WealthPal AI</Text>
+              <Icon char="★" color={C.amber} size={32} />
+              <Text style={[s.drawerRowText, { flex: 1, marginLeft: 12 }]}>Rate WealthPal AI</Text>
               <Text style={s.chevron}>›</Text>
             </TouchableOpacity>
             <TouchableOpacity style={s.drawerRow}>
-              <Text style={s.drawerRowIcon}>ℹ️</Text>
-              <View style={{ flex: 1 }}>
+              <Icon char="i" color={C.textSub} size={32} />
+              <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={s.drawerRowText}>About</Text>
                 <Text style={s.drawerRowSub}>Version 1.0.0</Text>
               </View>
@@ -789,7 +864,6 @@ export default function App() {
     <SafeAreaView style={s.appWrap}>
       <StatusBar barStyle="light-content" />
 
-      {/* Header */}
       <View style={s.header}>
         <View>
           <Text style={s.headerGreet}>Welcome back,</Text>
@@ -802,7 +876,6 @@ export default function App() {
         </TouchableOpacity>
       </View>
 
-      {/* Tab content */}
       <View style={{ flex: 1 }}>
         {activeTab === 'dashboard' && renderDashboard()}
         {activeTab === 'insights' && renderInsights()}
@@ -810,18 +883,22 @@ export default function App() {
         {activeTab === 'chat' && renderChat()}
       </View>
 
-      {/* Bottom nav */}
       <View style={s.bottomNav}>
         {[
-          { id: 'dashboard', label: 'Home', icon: '⌂' },
-          { id: 'insights', label: 'Insights', icon: '◈' },
-          { id: 'transactions', label: 'Transactions', icon: '≡' },
-          { id: 'chat', label: 'AI Chat', icon: '✦' },
+          { id: 'dashboard', label: 'Home', char: 'H', color: C.accent },
+          { id: 'insights', label: 'Insights', char: '%', color: C.blue },
+          { id: 'transactions', label: 'Transactions', char: '$', color: C.green },
+          { id: 'chat', label: 'AI Chat', char: 'AI', color: C.amber },
         ].map(tab => (
           <TouchableOpacity key={tab.id} style={s.navTab} onPress={() => setActiveTab(tab.id)}>
-            <Text style={[s.navIcon, activeTab === tab.id && s.navIconOn]}>{tab.icon}</Text>
-            <Text style={[s.navLabel, activeTab === tab.id && s.navLabelOn]}>{tab.label}</Text>
-            {activeTab === tab.id && <View style={s.navDot} />}
+            <Icon
+              char={tab.char}
+              color={activeTab === tab.id ? tab.color : C.textMuted}
+              size={30}
+              radius={8}
+            />
+            <Text style={[s.navLabel, activeTab === tab.id && { color: tab.color }]}>{tab.label}</Text>
+            {activeTab === tab.id && <View style={[s.navDot, { backgroundColor: tab.color }]} />}
           </TouchableOpacity>
         ))}
       </View>
@@ -835,24 +912,22 @@ export default function App() {
 // STYLES
 // ════════════════════════════════════════════════════
 const s = StyleSheet.create({
-  // Layout
   appWrap: { flex: 1, backgroundColor: C.bg },
   bg: { flex: 1, backgroundColor: C.bg },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   tab: { flex: 1, paddingHorizontal: 16, paddingTop: 8 },
 
-  // Splash
   splashBg: { flex: 1, backgroundColor: C.bg, justifyContent: 'center', alignItems: 'center' },
   splashIcon: { width: 80, height: 80, borderRadius: 24, backgroundColor: C.accent, justifyContent: 'center', alignItems: 'center', marginBottom: 20, shadowColor: C.accent, shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.5, shadowRadius: 20, elevation: 12 },
   splashIconText: { fontSize: 40, fontWeight: 'bold', color: '#fff' },
   splashTitle: { fontSize: 30, fontWeight: 'bold', color: C.text, marginBottom: 8 },
   splashSub: { fontSize: 15, color: C.textSub },
 
-  // Auth
   authScroll: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 60, paddingBottom: 40 },
   authTop: { alignItems: 'center', marginBottom: 36 },
   authTitle: { fontSize: 26, fontWeight: 'bold', color: C.text, marginTop: 20, marginBottom: 8 },
   authSub: { fontSize: 14, color: C.textSub },
+  nameRow: { flexDirection: 'row', marginBottom: 0 },
   label: { color: C.textSub, fontSize: 13, fontWeight: '600', marginBottom: 8 },
   input: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, color: C.text, fontSize: 15, marginBottom: 18 },
   errBox: { backgroundColor: '#1f0808', borderWidth: 1, borderColor: '#5c1515', borderRadius: 10, padding: 12, marginBottom: 16 },
@@ -864,37 +939,38 @@ const s = StyleSheet.create({
   linkText: { color: C.textSub, fontSize: 14 },
   linkAccent: { color: C.accent, fontWeight: '700' },
 
-  // Header
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: C.border },
   headerGreet: { fontSize: 12, color: C.textSub, marginBottom: 2 },
   headerName: { fontSize: 20, fontWeight: 'bold', color: C.text },
   menuBtn: { padding: 8, alignItems: 'flex-end', justifyContent: 'center', gap: 5 },
   menuLine: { height: 2, width: 24, backgroundColor: C.text, borderRadius: 2 },
 
-  // Balance card
   balanceCard: { borderRadius: 22, padding: 24, marginBottom: 20, marginTop: 8, backgroundColor: C.accent, shadowColor: C.accent, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 18, elevation: 10 },
   balanceLabel: { color: 'rgba(255,255,255,0.65)', fontSize: 13, marginBottom: 8 },
   balanceAmt: { fontSize: 42, fontWeight: 'bold', color: '#fff', marginBottom: 10 },
   balanceSub: { color: 'rgba(255,255,255,0.65)', fontSize: 13 },
 
-  // Account chips
   chip: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12, marginRight: 10, minWidth: 120 },
   chipActive: { backgroundColor: C.accent, borderColor: C.accent },
   chipTitle: { color: C.textSub, fontSize: 13, fontWeight: '600', marginBottom: 3 },
   chipTitleActive: { color: '#fff' },
   chipSub: { color: C.textMuted, fontSize: 12 },
 
-  // Stats
   statsRow: { flexDirection: 'row', gap: 12, marginBottom: 20 },
   statCard: { flex: 1, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 16, padding: 16 },
   statLabel: { color: C.textSub, fontSize: 12, marginBottom: 8 },
   statVal: { fontSize: 22, fontWeight: 'bold', color: C.text },
 
-  // Section
+  reconnectCard: { backgroundColor: '#1a0c0c', borderWidth: 1, borderColor: '#5c2020', borderRadius: 16, padding: 18, marginBottom: 20 },
+  reconnectTitle: { color: '#fca5a5', fontSize: 15, fontWeight: '700', marginBottom: 6 },
+  reconnectText: { color: '#f87171', fontSize: 13, marginBottom: 14, lineHeight: 20 },
+
+  refreshBtn: { borderWidth: 1, borderColor: C.border, borderRadius: 12, paddingVertical: 10, alignItems: 'center', marginBottom: 20 },
+  refreshText: { color: C.textSub, fontSize: 13, fontWeight: '600' },
+
   section: { marginBottom: 22 },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: C.text, marginBottom: 14 },
 
-  // Category bars
   catRow: { marginBottom: 14 },
   catInfo: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 7 },
   catName: { color: C.text, fontSize: 14, fontWeight: '500' },
@@ -902,12 +978,10 @@ const s = StyleSheet.create({
   barBg: { height: 6, backgroundColor: C.border, borderRadius: 3, overflow: 'hidden' },
   bar: { height: 6, borderRadius: 3 },
 
-  // Connect prompt
   connectCard: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 18, padding: 22, marginBottom: 20 },
   connectTitle: { color: C.text, fontSize: 17, fontWeight: '700', marginBottom: 10 },
   connectText: { color: C.textSub, fontSize: 13, lineHeight: 20, marginBottom: 18 },
 
-  // Insights
   chartCard: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 16, padding: 16, alignItems: 'center' },
   insightCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.surface, borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: C.border, gap: 12 },
   insightDot: { width: 10, height: 10, borderRadius: 5 },
@@ -919,17 +993,14 @@ const s = StyleSheet.create({
   emptyTitle: { color: C.text, fontSize: 18, fontWeight: '700', marginBottom: 10, textAlign: 'center' },
   emptyText: { color: C.textSub, fontSize: 14, textAlign: 'center', lineHeight: 22 },
 
-  // Transactions
   txTopBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 },
   syncBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
   syncText: { color: C.accent, fontSize: 13, fontWeight: '700' },
   txItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.surface, borderRadius: 16, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: C.border, gap: 12 },
-  txIcon: { width: 44, height: 44, backgroundColor: C.surface2, borderRadius: 13, justifyContent: 'center', alignItems: 'center' },
   txMerchant: { color: C.text, fontSize: 14, fontWeight: '600', marginBottom: 3 },
   txMeta: { color: C.textSub, fontSize: 12 },
   txAmt: { color: C.red, fontSize: 15, fontWeight: '700' },
 
-  // Chat
   bubble: { borderRadius: 18, padding: 14, marginBottom: 12, maxWidth: '85%', borderWidth: 1 },
   aiBubble: { alignSelf: 'flex-start', backgroundColor: C.surface, borderColor: C.border, borderBottomLeftRadius: 4 },
   userBubble: { alignSelf: 'flex-end', backgroundColor: C.accent, borderColor: C.accent, borderBottomRightRadius: 4 },
@@ -941,16 +1012,11 @@ const s = StyleSheet.create({
   sendBtnOff: { backgroundColor: C.textMuted },
   sendBtnText: { color: '#fff', fontSize: 22, fontWeight: 'bold', lineHeight: 26 },
 
-  // Bottom nav
   bottomNav: { flexDirection: 'row', backgroundColor: C.surface, borderTopWidth: 1, borderTopColor: C.border, paddingBottom: 28, paddingTop: 10 },
-  navTab: { flex: 1, alignItems: 'center', paddingVertical: 4 },
-  navIcon: { fontSize: 20, color: C.textMuted, marginBottom: 3 },
-  navIconOn: { color: C.accent },
+  navTab: { flex: 1, alignItems: 'center', paddingVertical: 4, gap: 4 },
   navLabel: { fontSize: 10, color: C.textMuted, fontWeight: '500' },
-  navLabelOn: { color: C.accent, fontWeight: '700' },
-  navDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: C.accent, marginTop: 3 },
+  navDot: { width: 4, height: 4, borderRadius: 2, marginTop: 2 },
 
-  // Drawer
   overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.65)', zIndex: 20 },
   drawer: { position: 'absolute', top: 0, right: 0, bottom: 0, width: 300, backgroundColor: C.surface, zIndex: 21, borderLeftWidth: 1, borderLeftColor: C.border },
   drawerUser: { alignItems: 'center', paddingVertical: 32, paddingHorizontal: 20, borderBottomWidth: 1, borderBottomColor: C.border },
@@ -960,15 +1026,12 @@ const s = StyleSheet.create({
   drawerEmail: { fontSize: 13, color: C.textSub },
   drawerGroup: { paddingHorizontal: 20, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.border },
   drawerGroupLabel: { fontSize: 10, fontWeight: '700', color: C.textMuted, textTransform: 'uppercase', letterSpacing: 1.2, marginBottom: 6, marginTop: 6 },
-  drawerRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 13, gap: 14 },
-  drawerRowIcon: { fontSize: 18, width: 24, textAlign: 'center' },
+  drawerRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
   drawerRowText: { color: C.text, fontSize: 15 },
   drawerRowSub: { color: C.textSub, fontSize: 12, marginTop: 2 },
   statusDot: { width: 9, height: 9, borderRadius: 5 },
   chevron: { color: C.textMuted, fontSize: 22 },
   logoutBtn: { margin: 20, marginTop: 10, backgroundColor: '#1e0808', borderWidth: 1, borderColor: '#5c1515', borderRadius: 14, paddingVertical: 15, alignItems: 'center' },
   logoutText: { color: C.red, fontSize: 15, fontWeight: '700' },
-
-  // Misc
   subText: { color: C.textSub, fontSize: 14 },
 });

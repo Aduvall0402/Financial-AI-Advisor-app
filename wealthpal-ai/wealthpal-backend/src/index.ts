@@ -27,16 +27,16 @@ app.get("/health", (req: Request, res: Response) => {
 
 app.post("/api/auth/signup", async (req: Request, res: Response) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, fullName } = req.body;
     if (!email || !password) {
       return res.status(400).json({ error: "Email and password required" });
     }
-    const { user, error } = await auth.signupUser(email, password);
+    const { user, error } = await auth.signupUser(email, password, fullName);
     if (error) {
       return res.status(400).json({ error: (error as any).message || "Signup failed" });
     }
     if (user) {
-      await auth.createUserProfile(user.id, email);
+      await auth.createUserProfile(user.id, email, fullName);
     }
     res.json({ user, message: "Signup successful" });
   } catch (error) {
@@ -54,7 +54,13 @@ app.post("/api/auth/login", async (req: Request, res: Response) => {
     if (error) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
-    res.json({ session, message: "Login successful" });
+    // Fetch full_name from users table and attach to response
+    let fullName = session?.user?.user_metadata?.full_name || null;
+    if (!fullName && session?.user?.id) {
+      const { profile } = await auth.getUserProfile(session.user.id);
+      fullName = profile?.full_name || null;
+    }
+    res.json({ session, full_name: fullName, message: "Login successful" });
   } catch (error) {
     res.status(500).json({ error: "Login failed" });
   }
