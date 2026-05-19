@@ -246,6 +246,7 @@ export default function App() {
     finally { setLoading(false); }
   };
 
+  // ✅ FIXED: Added fetchAccounts and fetchTransactions calls
   const handleSignup = async () => {
     if (!email || !password || !firstName || !lastName) {
       setError('Please fill in all fields'); return;
@@ -271,6 +272,9 @@ export default function App() {
       } catch { setDashboardData({ monthly_spending: 0, top_categories: [] }); }
       setScreen('dashboard');
       setDashboardLoading(false);
+      // ✅ ADDED THESE TWO LINES:
+      fetchAccounts(uid);
+      fetchTransactions(uid);
     } catch { setError('Could not connect to server'); }
     finally { setLoading(false); }
   };
@@ -394,6 +398,8 @@ export default function App() {
             await new Promise(r => setTimeout(r, 800));
             await fetchAccounts();
             await syncTransactions();
+            // ✅ Already has fetchTransactions call
+            await fetchTransactions(userIdRef.current);
           } catch (err) { setPlaidError(err.message); }
           finally { setPlaidLoading(false); }
         },
