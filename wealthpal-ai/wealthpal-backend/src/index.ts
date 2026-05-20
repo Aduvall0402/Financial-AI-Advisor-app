@@ -156,7 +156,7 @@ app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) =
     const { userId } = req.params;
     const { data: accountData, error: accountError } = await supabase
       .from("accounts")
-      .select("plaid_access_token")
+      .select("id, plaid_access_token")
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(1);
@@ -164,17 +164,20 @@ app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) =
       return res.status(404).json({ error: "No connected account found" });
     }
     const accessToken = accountData[0].plaid_access_token;
+    const accountId = accountData[0].id;
     // Ask Plaid to pull latest data for this item before syncing
     await plaidService.refreshTransactions(accessToken);
     const transactions = await plaidService.getTransactions(accessToken);
     // Clear existing transactions for this user before inserting fresh data
     await supabase.from("transactions").delete().eq("user_id", userId);
     let synced = 0;
+    let failed = 0;
     for (const tx of transactions) {
       const { error } = await supabase
         .from("transactions")
         .insert([{
           user_id: userId,
+          account_id: accountId,
           plaid_transaction_id: tx.transaction_id,
           merchant_name: tx.merchant_name || tx.name || "Unknown",
           amount: Math.abs(tx.amount),
@@ -183,8 +186,9 @@ app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) =
           description: tx.name,
         }]);
       if (!error) synced++;
+      else { failed++; if (failed <= 3) console.error("Insert error:", JSON.stringify(error)); }
     }
-    console.log(`Synced ${synced}/${transactions.length} transactions for user ${userId}`);
+    console.log(`Synced ${synced}/${transactions.length} transactions for user ${userId} (${failed} failed)`);
     res.json({ synced, total: transactions.length });
   } catch (error: any) {
     const msg = error?.message || "Failed to sync transactions";
