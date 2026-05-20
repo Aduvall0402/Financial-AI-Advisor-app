@@ -296,13 +296,16 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
     }
 
     // Fetch all transactions for spending summary
+    const monthlyCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+    const weeklyCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
     const { data: txData } = await supabase
       .from("transactions")
       .select("*")
       .eq("user_id", userId)
-      .gte("transaction_date", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]);
+      .gte("transaction_date", monthlyCutoff);
 
     const monthly_spending = txData?.reduce((sum, t) => sum + t.amount, 0) || 0;
+    const weekly_spending = (txData || []).filter(t => t.transaction_date >= weeklyCutoff).reduce((sum, t) => sum + t.amount, 0);
     const categoryMap: { [key: string]: number } = {};
     txData?.forEach((t) => { categoryMap[t.category] = (categoryMap[t.category] || 0) + t.amount; });
     const top_categories = Object.entries(categoryMap)
@@ -310,13 +313,13 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 5);
 
-    // Fetch recent transactions for AI context (last 20)
+    // Fetch recent transactions for AI context (up to 100)
     const { data: recentTx } = await supabase
       .from("transactions")
       .select("merchant_name, amount, category, transaction_date")
       .eq("user_id", userId)
       .order("transaction_date", { ascending: false })
-      .limit(20);
+      .limit(100);
 
     const recent_transactions = (recentTx || []).map(t => ({
       merchant: t.merchant_name || "Unknown",
@@ -349,7 +352,7 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
     const { data: debts } = await supabase.from("debts").select("*").eq("user_id", userId);
     const debt = (debts || []).map((d) => ({ name: d.debt_name, balance: d.current_balance, interest: d.interest_rate }));
 
-    const summary = { monthly_income: 0, monthly_spending, top_categories, debt, accounts, recent_transactions };
+    const summary = { monthly_income: 0, monthly_spending, weekly_spending, top_categories, debt, accounts, recent_transactions };
     const response = await openaiService.chatWithAssistant(message, summary);
 
     await supabase.from("chat_messages").insert([
@@ -402,18 +405,10 @@ app.put("/api/auth/profile/:userId", async (req: Request, res: Response) => {
     if (!userId || !firstName) {
       return res.status(400).json({ error: "User ID and first name required" });
     }
-    const { data: updated, error: updateError } = await supabase
+    const { error } = await supabase
       .from("users")
-      .update({ "First Name": firstName, "Last Name": lastName || null })
-      .eq("id", userId)
-      .select();
-    if (updateError) throw updateError;
-    if (!updated || updated.length === 0) {
-      const { error: insertError } = await supabase
-        .from("users")
-        .insert([{ id: userId, email: email || "", "First Name": firstName, "Last Name": lastName || null }]);
-      if (insertError) throw insertError;
-    }
+      .upsert([{ id: userId, email: email || "", "First Name": firstName, "Last Name": lastName || null }], { onConflict: "id" });
+    if (error) return res.status(500).json({ error: error.message });
     res.json({ message: "Profile updated" });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "Failed to update profile" });
@@ -531,6 +526,44 @@ app.patch("/api/groups/:groupId/goals/:goalId", async (req: Request, res: Respon
     const { error } = await supabase.from("group_goals").update(req.body).eq("id", req.params.goalId);
     if (error) throw error;
     res.json({ message: "Goal updated" });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+// ============================================
+// BUDGET ROUTES
+// ============================================
+
+app.get("/api/budgets/:userId", async (req: Request, res: Response) => {
+  try {
+    const { data, error } = await supabase.from("budgets").select("*").eq("user_id", req.params.userId).order("category");
+    if (error) throw error;
+    res.json({ budgets: data || [] });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+app.post("/api/budgets", async (req: Request, res: Response) => {
+  try {
+    const { user_id, category, monthly_limit } = req.body;
+    const { data, error } = await supabase.from("budgets").upsert([{ user_id, category, monthly_limit }], { onConflict: "user_id,category" }).select();
+    if (error) throw error;
+    res.json({ budget: data?.[0] });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+app.patch("/api/budgets/:budgetId", async (req: Request, res: Response) => {
+  try {
+    const { monthly_limit } = req.body;
+    const { error } = await supabase.from("budgets").update({ monthly_limit }).eq("id", req.params.budgetId);
+    if (error) throw error;
+    res.json({ message: "Budget updated" });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+app.delete("/api/budgets/:budgetId", async (req: Request, res: Response) => {
+  try {
+    const { error } = await supabase.from("budgets").delete().eq("id", req.params.budgetId);
+    if (error) throw error;
+    res.json({ message: "Budget deleted" });
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 

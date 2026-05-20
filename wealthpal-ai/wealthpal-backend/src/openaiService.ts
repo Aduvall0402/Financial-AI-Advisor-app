@@ -113,6 +113,7 @@ export async function chatWithAssistant(
   financialSummary: {
     monthly_income: number;
     monthly_spending: number;
+    weekly_spending?: number;
     top_categories: Array<{ name: string; amount: number }>;
     debt: Array<{ name: string; balance: number; interest: number }>;
     accounts?: Array<{ name: string; type: string; subtype: string; balance: number }>;
@@ -129,19 +130,21 @@ export async function chatWithAssistant(
 
   const systemPrompt = `You are WealthPal AI, a friendly and knowledgeable personal finance assistant. You have full visibility into this user's real financial data — use it to give specific, personalized advice.
 
-USER'S FINANCIAL SNAPSHOT:
+USER'S FINANCIAL SNAPSHOT (today: ${new Date().toISOString().split("T")[0]}):
+Weekly Spending (last 7 days): $${(financialSummary.weekly_spending || 0).toFixed(2)}
 Monthly Spending (last 30 days): $${financialSummary.monthly_spending.toFixed(2)}
-Top Spending Categories:
+Top Spending Categories (last 30 days):
 ${financialSummary.top_categories.map(c => `  - ${c.name}: $${c.amount.toFixed(2)}`).join("\n") || "  - None yet"}
 Debts: ${financialSummary.debt.length > 0 ? financialSummary.debt.map(d => `${d.name} ($${d.balance} @ ${d.interest}%)`).join(", ") : "None"}
 
 LINKED BANK ACCOUNTS:
 ${accountsSection}
 
-RECENT TRANSACTIONS (last 20):
+RECENT TRANSACTIONS (up to 100, newest first):
 ${recentTxSection}
 
 INSTRUCTIONS:
+- Always use the actual transaction dates above when answering questions about specific time periods (e.g. "last week" = last 7 days from today's date)
 - Reference their actual numbers and transactions when relevant
 - Be conversational, concise, and encouraging
 - Give actionable advice specific to their situation

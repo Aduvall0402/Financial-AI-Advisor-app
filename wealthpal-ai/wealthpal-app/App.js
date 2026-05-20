@@ -178,6 +178,18 @@ export default function App() {
       .reduce((sum, tx) => sum + parseFloat(tx.amount || 0), 0);
   }, [transactions]);
 
+  const sortedTransactions = useMemo(() => {
+    const txs = [...transactions];
+    switch (txSortBy) {
+      case 'date_asc':    return txs.sort((a, b) => new Date(a.transaction_date) - new Date(b.transaction_date));
+      case 'amount_desc': return txs.sort((a, b) => parseFloat(b.amount) - parseFloat(a.amount));
+      case 'amount_asc':  return txs.sort((a, b) => parseFloat(a.amount) - parseFloat(b.amount));
+      case 'merchant':    return txs.sort((a, b) => (a.merchant_name || '').localeCompare(b.merchant_name || ''));
+      case 'category':    return txs.sort((a, b) => (a.category || '').localeCompare(b.category || ''));
+      default:            return txs.sort((a, b) => new Date(b.transaction_date) - new Date(a.transaction_date));
+    }
+  }, [transactions, txSortBy]);
+
   // Notifications
   const [notifOverall, setNotifOverall] = useState(false);
   const [notifDaily, setNotifDaily] = useState(false);
@@ -208,6 +220,7 @@ export default function App() {
   const [goalsLoading, setGoalsLoading] = useState(false);
   const [addGoalVisible, setAddGoalVisible] = useState(false);
   const [addGoalType, setAddGoalType] = useState('savings');
+  const [addGoalUpdateMode, setAddGoalUpdateMode] = useState('manual');
   const [newGoal, setNewGoal] = useState({});
   const [savingGoal, setSavingGoal] = useState(false);
 
@@ -232,6 +245,17 @@ export default function App() {
   const [editLast, setEditLast] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileError, setProfileError] = useState('');
+
+  // Budgets
+  const [budgets, setBudgets] = useState([]);
+  const [addBudgetVisible, setAddBudgetVisible] = useState(false);
+  const [editingBudget, setEditingBudget] = useState(null);
+  const [newBudgetCat, setNewBudgetCat] = useState('');
+  const [newBudgetLimit, setNewBudgetLimit] = useState('');
+  const [savingBudget, setSavingBudget] = useState(false);
+
+  // Transactions sort
+  const [txSortBy, setTxSortBy] = useState('date_desc');
 
   // ── Theme + persisted prefs ──────────────────────────
   useEffect(() => {
@@ -310,6 +334,7 @@ export default function App() {
       fetchTransactions(uid);
       fetchGoals(uid);
       fetchGroups(uid);
+      fetchBudgets(uid);
     } catch { setError('Could not connect to server'); }
     finally { setLoading(false); }
   };
@@ -346,6 +371,7 @@ export default function App() {
       fetchTransactions(uid);
       fetchGoals(uid);
       fetchGroups(uid);
+      fetchBudgets(uid);
     } catch { setError('Could not connect to server'); }
     finally { setLoading(false); }
   };
@@ -409,6 +435,7 @@ export default function App() {
         else if (data.synced === 0 && data.total > 0) setSyncError(`Failed to save transactions (0/${data.total} saved). Check server logs.`);
         else setSyncError('');
         await fetchTransactions();
+        autoUpdateGoals();
       }
     } catch (e) { setSyncError('Network error — could not reach server'); }
     finally { setSyncing(false); }
@@ -430,17 +457,17 @@ export default function App() {
   const saveProfile = async () => {
     if (!editFirst.trim()) { setProfileError('First name is required'); return; }
     setSavingProfile(true); setProfileError('');
-    const fullName = `${editFirst.trim()} ${editLast.trim()}`.trim();
     try {
       const res = await fetch(`${API_URL}/api/auth/profile/${userIdRef.current}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ firstName: editFirst.trim(), lastName: editLast.trim(), email }),
       });
-      if (!res.ok) throw new Error('Failed to save');
+      const data = await res.json();
+      if (!res.ok) { setProfileError(data.error || 'Failed to save profile'); return; }
       setDisplayName(editFirst.trim());
       AsyncStorage.setItem('displayName', editFirst.trim());
       setEditProfileVisible(false);
-    } catch { setProfileError('Could not save. Try again.'); }
+    } catch { setProfileError('Could not connect to server'); }
     finally { setSavingProfile(false); }
   };
 
@@ -594,6 +621,49 @@ export default function App() {
     } catch {}
   };
 
+  const fetchBudgets = async (uid) => {
+    const id = uid || userIdRef.current;
+    if (!id) return;
+    try {
+      const res = await fetch(`${API_URL}/api/budgets/${id}`);
+      const d = await res.json();
+      setBudgets(d.budgets || []);
+    } catch {}
+  };
+
+  const autoUpdateGoals = async () => {
+    const autoGoals = goals.filter(g => g.update_mode === 'auto' && !g.is_completed);
+    if (!autoGoals.length) return;
+    for (const goal of autoGoals) {
+      let total = 0;
+      if (goal.type === 'savings') {
+        total = transactions
+          .filter(tx => {
+            const cat = (tx.category || '').toLowerCase();
+            const merch = (tx.merchant_name || '').toLowerCase();
+            return cat.includes('transfer') || cat.includes('saving') || merch.includes('saving');
+          })
+          .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+      } else if (goal.type === 'debt_payoff') {
+        const kw = (goal.title || '').toLowerCase().split(' ')[0];
+        total = transactions
+          .filter(tx => {
+            const cat = (tx.category || '').toLowerCase();
+            const merch = (tx.merchant_name || '').toLowerCase();
+            return cat.includes('payment') || cat.includes('loan') || (kw.length > 2 && merch.includes(kw));
+          })
+          .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+      }
+      if (Math.abs(total - goal.current_amount) > 0.01) {
+        await fetch(`${API_URL}/api/goals/${goal.id}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ current_amount: total, is_completed: goal.target_amount > 0 && total >= goal.target_amount }),
+        });
+      }
+    }
+    fetchGoals();
+  };
+
   // ── Insight helpers ─────────────────────────────────
   const getFilteredTx = () => {
     const ranges = { '7d': 7, '30d': 30, '3m': 90, '6m': 180, 'all': 99999 };
@@ -610,18 +680,66 @@ export default function App() {
     return Object.entries(m).sort(([, a], [, b]) => b - a).slice(0, 5);
   };
 
-  const getWeeklyData = () => {
+  const getChartData = () => {
     const txs = selectedCategory
       ? getFilteredTx().filter(tx => tx.category === selectedCategory)
       : getFilteredTx();
-    const weeks = [0, 0, 0, 0];
-    const now = Date.now();
+    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const now = new Date();
+
+    if (insightsRange === '7d') {
+      const labels = [], data = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(now); d.setDate(d.getDate() - i);
+        const key = d.toISOString().split('T')[0];
+        labels.push(['Su','Mo','Tu','We','Th','Fr','Sa'][d.getDay()]);
+        data.push(txs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
+      }
+      return { labels, data };
+    }
+
+    if (insightsRange === '30d') {
+      const labels = [], data = [];
+      for (let i = 3; i >= 0; i--) {
+        const end = new Date(now); end.setDate(end.getDate() - i * 7);
+        const start = new Date(end); start.setDate(start.getDate() - 7);
+        labels.push(`${end.getMonth()+1}/${end.getDate()}`);
+        data.push(txs.filter(tx => {
+          const t = new Date(tx.transaction_date).getTime();
+          return t > start.getTime() && t <= end.getTime() + 86400000;
+        }).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
+      }
+      return { labels, data };
+    }
+
+    if (insightsRange === '3m' || insightsRange === '6m') {
+      const count = insightsRange === '3m' ? 3 : 6;
+      const months = {}, labels = [];
+      for (let i = count - 1; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+        labels.push(monthNames[d.getMonth()]);
+        months[key] = 0;
+      }
+      txs.forEach(tx => {
+        const key = (tx.transaction_date || '').slice(0, 7);
+        if (months[key] !== undefined) months[key] += parseFloat(tx.amount || 0);
+      });
+      return { labels, data: Object.values(months) };
+    }
+
+    // 'all' — monthly buckets for all available data
+    if (!txs.length) return { labels: ['No data'], data: [0] };
+    const monthSet = {};
     txs.forEach(tx => {
-      const days = Math.floor((now - new Date(tx.transaction_date || tx.date)) / 86400000);
-      const w = Math.min(3, Math.floor(days / 7));
-      weeks[3 - w] += parseFloat(tx.amount || 0);
+      const key = (tx.transaction_date || '').slice(0, 7);
+      if (key) monthSet[key] = (monthSet[key] || 0) + parseFloat(tx.amount || 0);
     });
-    return weeks;
+    const sorted = Object.keys(monthSet).sort();
+    return {
+      labels: sorted.map(k => monthNames[parseInt(k.split('-')[1]) - 1]),
+      data: sorted.map(k => monthSet[k]),
+    };
   };
 
   // ════════════════════════════════════════════════════
@@ -820,7 +938,8 @@ export default function App() {
   const renderInsights = () => {
     const filteredTx = getFilteredTx();
     const catData = getCatData();
-    const weeklyData = getWeeklyData();
+    const { labels: chartLabels, data: chartRawData } = getChartData();
+    const chartData = chartRawData.map(v => Math.max(0.01, v));
     const total = filteredTx.reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
     const avg = filteredTx.length ? total / filteredTx.length : 0;
 
@@ -885,14 +1004,14 @@ export default function App() {
           <View style={s.chartCard}>
             {chartType === 'line' && (
               <LineChart
-                data={{ labels: ['3 wks', '2 wks', 'Last wk', 'This wk'], datasets: [{ data: weeklyData.map(v => Math.max(0.01, v)) }] }}
+                data={{ labels: chartLabels, datasets: [{ data: chartData }] }}
                 width={SW - 64} height={160} chartConfig={CHART_CFG} bezier
                 style={{ borderRadius: 10, marginLeft: -8 }} withInnerLines={false}
               />
             )}
             {chartType === 'bar' && (
               <BarChart
-                data={{ labels: ['3 wks', '2 wks', 'Last wk', 'This wk'], datasets: [{ data: weeklyData.map(v => Math.max(0.01, v)) }] }}
+                data={{ labels: chartLabels, datasets: [{ data: chartData }] }}
                 width={SW - 64} height={160} chartConfig={CHART_CFG}
                 style={{ borderRadius: 10, marginLeft: -8 }} withInnerLines={false}
                 showValuesOnTopOfBars={false} yAxisLabel="$" yAxisSuffix=""
@@ -967,6 +1086,19 @@ export default function App() {
           )}
         </TouchableOpacity>
       </View>
+      {transactions.length > 0 && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingHorizontal: 16, marginBottom: 6 }}>
+          {[['date_desc','Date ↓'],['date_asc','Date ↑'],['amount_desc','$ High'],['amount_asc','$ Low'],['merchant','Name'],['category','Category']].map(([key, label]) => (
+            <TouchableOpacity
+              key={key}
+              onPress={() => setTxSortBy(key)}
+              style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, marginRight: 6, backgroundColor: txSortBy === key ? C.accent : C.surface, borderWidth: 1, borderColor: txSortBy === key ? C.accent : C.border }}
+            >
+              <Text style={{ color: txSortBy === key ? '#fff' : C.textSub, fontSize: 11, fontWeight: '600' }}>{label}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      )}
       {!!syncError && (
         <View style={[s.errBox, { margin: 16, marginTop: 4 }]}>
           <Text style={s.errText}>Sync error: {syncError}</Text>
@@ -985,7 +1117,7 @@ export default function App() {
         </View>
       ) : (
         <FlatList
-          data={transactions}
+          data={sortedTransactions}
           keyExtractor={(item, i) => item.id?.toString() || item.plaid_transaction_id || i.toString()}
           contentContainerStyle={{ padding: 16, paddingTop: 4 }}
           showsVerticalScrollIndicator={false}
@@ -1034,7 +1166,10 @@ export default function App() {
         <View style={[s.insightCard, { flexDirection: 'column', alignItems: 'stretch', gap: 8 }]}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <Text style={{ color: C.text, fontSize: 14, fontWeight: '600', flex: 1 }} numberOfLines={1}>{goal.title}</Text>
-            {goal.is_completed && <Text style={{ color: C.green, fontSize: 11, fontWeight: '700' }}>✓ Done</Text>}
+            <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+              {goal.update_mode === 'auto' && <Text style={{ color: C.accent, fontSize: 10, fontWeight: '700', backgroundColor: C.surface2, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>AUTO</Text>}
+              {goal.is_completed && <Text style={{ color: C.green, fontSize: 11, fontWeight: '700' }}>✓ Done</Text>}
+            </View>
           </View>
           {goal.target_amount > 0 && (
             <>
@@ -1077,7 +1212,7 @@ export default function App() {
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, marginTop: 4 }}>
           <Text style={{ color: C.text, fontSize: 20, fontWeight: '700' }}>My Goals</Text>
-          <TouchableOpacity style={s.syncBtn} onPress={() => { setNewGoal({}); setAddGoalType('savings'); setAddGoalVisible(true); }}>
+          <TouchableOpacity style={s.syncBtn} onPress={() => { setNewGoal({}); setAddGoalType('savings'); setAddGoalUpdateMode('manual'); setAddGoalVisible(true); }}>
             <Text style={s.syncText}>+ New Goal</Text>
           </TouchableOpacity>
         </View>
@@ -1087,7 +1222,7 @@ export default function App() {
             <Icon char="★" color={C.accent} size={52} radius={16} />
             <Text style={[s.emptyTitle, { marginTop: 16 }]}>No goals yet</Text>
             <Text style={[s.emptyText, { marginBottom: 20 }]}>Set debt payoff, savings, spending, or streak goals to stay on track.</Text>
-            <TouchableOpacity style={s.btn} onPress={() => { setNewGoal({}); setAddGoalVisible(true); }}>
+            <TouchableOpacity style={s.btn} onPress={() => { setNewGoal({}); setAddGoalUpdateMode('manual'); setAddGoalVisible(true); }}>
               <Text style={s.btnText}>Create First Goal</Text>
             </TouchableOpacity>
           </View>
@@ -1158,15 +1293,55 @@ export default function App() {
               </TouchableOpacity>
             </View>
             {groupDetail.members.map(m => (
-              <View key={m.id} style={s.txItem}>
-                <Icon char={(m.email?.[0] || '?').toUpperCase()} color={C.blue} size={42} radius={12} />
-                <View style={{ flex: 1 }}>
-                  <Text style={s.txMerchant} numberOfLines={1}>{m.email}</Text>
-                  <Text style={s.txMeta}>{m.role}</Text>
+              <View key={m.id} style={[s.txItem, { flexDirection: 'column', alignItems: 'stretch', gap: 10 }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                  <Icon char={(m.email?.[0] || '?').toUpperCase()} color={C.blue} size={42} radius={12} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.txMerchant} numberOfLines={1}>{m.email}</Text>
+                    <Text style={s.txMeta}>{m.role}</Text>
+                  </View>
+                  <TouchableOpacity onPress={async () => {
+                    await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, { method: 'DELETE' });
+                    fetchGroupDetail(currentGroup.id);
+                  }}>
+                    <Text style={{ color: C.red, fontSize: 11, fontWeight: '600' }}>Remove</Text>
+                  </TouchableOpacity>
                 </View>
-                <View style={{ gap: 4 }}>
-                  {m.share_transactions && <Text style={{ color: C.green, fontSize: 10 }}>Txns ✓</Text>}
-                  {m.share_accounts && <Text style={{ color: C.green, fontSize: 10 }}>Accts ✓</Text>}
+                <View style={{ paddingTop: 8, borderTopWidth: 1, borderTopColor: C.border, gap: 10 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <View>
+                      <Text style={{ color: C.text, fontSize: 13 }}>Share Transactions</Text>
+                      <Text style={{ color: C.textMuted, fontSize: 11 }}>Let them see your transactions</Text>
+                    </View>
+                    <Switch
+                      value={!!m.share_transactions}
+                      onValueChange={async (v) => {
+                        await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, {
+                          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ share_transactions: v, share_accounts: !!m.share_accounts }),
+                        });
+                        fetchGroupDetail(currentGroup.id);
+                      }}
+                      trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff"
+                    />
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <View>
+                      <Text style={{ color: C.text, fontSize: 13 }}>Share Accounts</Text>
+                      <Text style={{ color: C.textMuted, fontSize: 11 }}>Let them see your balances</Text>
+                    </View>
+                    <Switch
+                      value={!!m.share_accounts}
+                      onValueChange={async (v) => {
+                        await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, {
+                          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ share_transactions: !!m.share_transactions, share_accounts: v }),
+                        });
+                        fetchGroupDetail(currentGroup.id);
+                      }}
+                      trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff"
+                    />
+                  </View>
                 </View>
               </View>
             ))}
@@ -1234,6 +1409,91 @@ export default function App() {
       )}
     </View>
   );
+
+  // ════════════════════════════════════════════════════
+  // BUDGET TAB
+  // ════════════════════════════════════════════════════
+  const renderBudget = () => {
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    const monthKey = monthStart.toISOString().split('T')[0];
+    const catSpend = {};
+    transactions.filter(tx => (tx.transaction_date || '') >= monthKey).forEach(tx => {
+      const c = tx.category || 'Other';
+      catSpend[c] = (catSpend[c] || 0) + parseFloat(tx.amount || 0);
+    });
+    const totalBudgeted = budgets.reduce((s, b) => s + parseFloat(b.monthly_limit || 0), 0);
+    const totalSpent = budgets.reduce((s, b) => s + (catSpend[b.category] || 0), 0);
+
+    return (
+      <ScrollView style={s.tab} showsVerticalScrollIndicator={false}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, marginTop: 4 }}>
+          <Text style={{ color: C.text, fontSize: 20, fontWeight: '700' }}>Budget</Text>
+          <TouchableOpacity style={s.syncBtn} onPress={() => { setEditingBudget(null); setNewBudgetCat(''); setNewBudgetLimit(''); setAddBudgetVisible(true); }}>
+            <Text style={s.syncText}>+ Add Budget</Text>
+          </TouchableOpacity>
+        </View>
+
+        {budgets.length > 0 && (
+          <View style={s.statsRow}>
+            <View style={s.statCard}>
+              <Text style={s.statLabel}>Total Budgeted</Text>
+              <Text style={s.statVal}>${fmtMoney(totalBudgeted)}</Text>
+            </View>
+            <View style={s.statCard}>
+              <Text style={s.statLabel}>Spent This Month</Text>
+              <Text style={[s.statVal, { color: totalSpent > totalBudgeted ? C.red : C.green }]}>${fmtMoney(totalSpent)}</Text>
+            </View>
+          </View>
+        )}
+
+        {budgets.length === 0 ? (
+          <View style={[s.connectCard, { alignItems: 'center', paddingVertical: 40 }]}>
+            <Icon char="$" color={C.accent} size={52} radius={16} />
+            <Text style={[s.emptyTitle, { marginTop: 16 }]}>No budgets yet</Text>
+            <Text style={[s.emptyText, { marginBottom: 20 }]}>Set monthly spending limits by category to track where your money goes.</Text>
+            <TouchableOpacity style={s.btn} onPress={() => { setEditingBudget(null); setNewBudgetCat(''); setNewBudgetLimit(''); setAddBudgetVisible(true); }}>
+              <Text style={s.btnText}>Create First Budget</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          budgets.map(b => {
+            const spent = catSpend[b.category] || 0;
+            const limit = parseFloat(b.monthly_limit || 0);
+            const pct = limit > 0 ? Math.min(100, Math.round((spent / limit) * 100)) : 0;
+            const barColor = pct >= 100 ? C.red : pct >= 75 ? C.amber : C.green;
+            return (
+              <View key={b.id} style={[s.insightCard, { flexDirection: 'column', alignItems: 'stretch', gap: 10 }]}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={{ color: C.text, fontSize: 14, fontWeight: '600' }}>{b.category}</Text>
+                  <View style={{ flexDirection: 'row', gap: 12 }}>
+                    <TouchableOpacity onPress={() => { setEditingBudget(b); setNewBudgetCat(b.category); setNewBudgetLimit(String(b.monthly_limit)); setAddBudgetVisible(true); }}>
+                      <Text style={{ color: C.accent, fontSize: 12, fontWeight: '600' }}>Edit</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={async () => { await fetch(`${API_URL}/api/budgets/${b.id}`, { method: 'DELETE' }); fetchBudgets(); }}>
+                      <Text style={{ color: C.red, fontSize: 12, fontWeight: '600' }}>Delete</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <Text style={{ color: C.textSub, fontSize: 12 }}>${fmtMoney(spent)} spent</Text>
+                  <Text style={{ color: barColor, fontSize: 12, fontWeight: '700' }}>{pct}% of ${fmtMoney(limit)}</Text>
+                </View>
+                <View style={s.barBg}><View style={[s.bar, { width: `${pct}%`, backgroundColor: barColor }]} /></View>
+                {pct >= 100 && (
+                  <Text style={{ color: C.red, fontSize: 11, fontWeight: '600' }}>Over budget by ${fmtMoney(spent - limit)}</Text>
+                )}
+                {pct >= 75 && pct < 100 && (
+                  <Text style={{ color: C.amber, fontSize: 11, fontWeight: '600' }}>Approaching limit — ${fmtMoney(limit - spent)} remaining</Text>
+                )}
+              </View>
+            );
+          })
+        )}
+        <View style={{ height: 24 }} />
+      </ScrollView>
+    );
+  };
 
   // CHAT TAB
   // ════════════════════════════════════════════════════
@@ -1503,6 +1763,7 @@ export default function App() {
             {activeTab === 'insights' && renderInsights()}
             {activeTab === 'transactions' && renderTransactions()}
             {activeTab === 'goals' && renderGoals()}
+            {activeTab === 'budget' && renderBudget()}
             {activeTab === 'chat' && renderChat()}
           </>
         )}
@@ -1515,7 +1776,8 @@ export default function App() {
             { id: 'insights', label: 'Insights', icon: '◈' },
             { id: 'transactions', label: 'Txns', icon: '≡' },
             { id: 'goals', label: 'Goals', icon: '★' },
-            { id: 'chat', label: 'AI Chat', icon: '✦' },
+            { id: 'budget', label: 'Budget', icon: '◎' },
+            { id: 'chat', label: 'AI', icon: '✦' },
           ].map(tab => (
             <TouchableOpacity key={tab.id} style={s.navTab} onPress={() => setActiveTab(tab.id)}>
               <Text style={[s.navIcon, activeTab === tab.id && s.navIconOn]}>{tab.icon}</Text>
@@ -1679,6 +1941,26 @@ export default function App() {
                   </TouchableOpacity>
                 ))}
               </ScrollView>
+              {(addGoalType === 'savings' || addGoalType === 'debt_payoff') && (
+                <>
+                  <Text style={s.label}>Update Mode</Text>
+                  <View style={{ flexDirection: 'row', gap: 10, marginBottom: 18 }}>
+                    {[['manual','Manual'],['auto','Automatic']].map(([k, l]) => (
+                      <TouchableOpacity key={k} onPress={() => setAddGoalUpdateMode(k)}
+                        style={{ flex: 1, paddingVertical: 10, borderRadius: 14, alignItems: 'center', backgroundColor: addGoalUpdateMode === k ? C.accent : C.surface, borderWidth: 1, borderColor: addGoalUpdateMode === k ? C.accent : C.border }}>
+                        <Text style={{ color: addGoalUpdateMode === k ? '#fff' : C.textSub, fontWeight: '600', fontSize: 13 }}>{l}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  {addGoalUpdateMode === 'auto' && (
+                    <View style={{ backgroundColor: C.bg, borderRadius: 10, padding: 12, marginBottom: 14, borderWidth: 1, borderColor: C.border }}>
+                      <Text style={{ color: C.textSub, fontSize: 12, lineHeight: 18 }}>
+                        Automatic: after each sync, progress is computed from your transactions — savings/transfer transactions for savings goals, loan/payment transactions for debt payoff goals.
+                      </Text>
+                    </View>
+                  )}
+                </>
+              )}
               <Text style={s.label}>Title</Text>
               <TextInput style={s.input} placeholder={addGoalType === 'debt_payoff' ? 'e.g. Pay off car loan' : addGoalType === 'savings' ? 'e.g. Emergency fund' : addGoalType === 'spending_behavior' ? 'e.g. Reduce dining out' : 'e.g. Under budget streak'} placeholderTextColor={C.textMuted} value={newGoal.title || ''} onChangeText={v => setNewGoal(p => ({...p, title: v}))} />
               {addGoalType !== 'streak' && (
@@ -1703,7 +1985,7 @@ export default function App() {
                 onPress={async () => {
                   setSavingGoal(true);
                   try {
-                    await fetch(`${API_URL}/api/goals`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, type: addGoalType, ...newGoal, target_amount: parseFloat(newGoal.target_amount) || null, current_amount: parseFloat(newGoal.current_amount) || 0 }) });
+                    await fetch(`${API_URL}/api/goals`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, type: addGoalType, update_mode: addGoalUpdateMode, ...newGoal, target_amount: parseFloat(newGoal.target_amount) || null, current_amount: parseFloat(newGoal.current_amount) || 0 }) });
                     setAddGoalVisible(false);
                     setNewGoal({});
                     fetchGoals();
@@ -1744,6 +2026,56 @@ export default function App() {
               <Text style={s.btnText}>Create Group</Text>
             </TouchableOpacity>
             <TouchableOpacity style={s.linkRow} onPress={() => setCreateGroupVisible(false)}><Text style={s.linkText}>Cancel</Text></TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Add / Edit Budget Modal */}
+      <Modal visible={addBudgetVisible} animationType="slide" transparent onRequestClose={() => setAddBudgetVisible(false)}>
+        <View style={s.modalOverlay}>
+          <View style={s.modalCard}>
+            <Text style={s.modalTitle}>{editingBudget ? 'Edit Budget' : 'New Budget'}</Text>
+            <Text style={s.label}>Category</Text>
+            <TextInput
+              style={s.input}
+              placeholder="e.g. Food and Drink, Shopping…"
+              placeholderTextColor={C.textMuted}
+              value={newBudgetCat}
+              onChangeText={setNewBudgetCat}
+              editable={!editingBudget}
+            />
+            <Text style={s.label}>Monthly Limit ($)</Text>
+            <TextInput
+              style={s.input}
+              keyboardType="decimal-pad"
+              placeholder="0.00"
+              placeholderTextColor={C.textMuted}
+              value={newBudgetLimit}
+              onChangeText={setNewBudgetLimit}
+            />
+            <TouchableOpacity
+              style={[s.btn, (savingBudget || !newBudgetCat.trim() || !newBudgetLimit) && s.btnOff]}
+              disabled={savingBudget || !newBudgetCat.trim() || !newBudgetLimit}
+              onPress={async () => {
+                setSavingBudget(true);
+                try {
+                  if (editingBudget) {
+                    await fetch(`${API_URL}/api/budgets/${editingBudget.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ monthly_limit: parseFloat(newBudgetLimit) }) });
+                  } else {
+                    await fetch(`${API_URL}/api/budgets`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, category: newBudgetCat.trim(), monthly_limit: parseFloat(newBudgetLimit) }) });
+                  }
+                  setAddBudgetVisible(false);
+                  setEditingBudget(null);
+                  fetchBudgets();
+                } catch {}
+                finally { setSavingBudget(false); }
+              }}
+            >
+              {savingBudget ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>{editingBudget ? 'Save Changes' : 'Create Budget'}</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity style={s.linkRow} onPress={() => { setAddBudgetVisible(false); setEditingBudget(null); }}>
+              <Text style={s.linkText}>Cancel</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
