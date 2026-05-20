@@ -297,7 +297,7 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
 
     // Fetch all transactions for spending summary
     const monthlyCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-    const weeklyCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+    const weeklyCutoff = new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]; // 6 days back = 7 days total (today + 6)
     const { data: txData } = await supabase
       .from("transactions")
       .select("*")
@@ -512,6 +512,36 @@ app.delete("/api/groups/:groupId/members/:email", async (req: Request, res: Resp
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
+app.get("/api/groups/:groupId/shared-transactions", async (req: Request, res: Response) => {
+  try {
+    const { data: members, error: membersError } = await supabase
+      .from("group_members")
+      .select("user_id, email")
+      .eq("group_id", req.params.groupId)
+      .eq("share_transactions", true);
+    if (membersError) throw membersError;
+    const userIds = (members || []).filter((m: any) => m.user_id).map((m: any) => m.user_id);
+    if (!userIds.length) return res.json({ transactions: [] });
+    const { data: txs, error: txError } = await supabase
+      .from("transactions")
+      .select("merchant_name, amount, category, transaction_date, user_id")
+      .in("user_id", userIds)
+      .order("transaction_date", { ascending: false })
+      .limit(50);
+    if (txError) throw txError;
+    const emailMap: Record<string, string> = {};
+    (members || []).forEach((m: any) => { if (m.user_id) emailMap[m.user_id] = m.email; });
+    const enriched = (txs || []).map((tx: any) => ({
+      merchant_name: tx.merchant_name,
+      amount: tx.amount,
+      category: tx.category,
+      transaction_date: tx.transaction_date,
+      member_email: emailMap[tx.user_id] || "Unknown",
+    }));
+    res.json({ transactions: enriched });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
 app.post("/api/groups/:groupId/goals", async (req: Request, res: Response) => {
   try {
     const { title, target_amount, deadline, created_by } = req.body;
@@ -543,8 +573,8 @@ app.get("/api/budgets/:userId", async (req: Request, res: Response) => {
 
 app.post("/api/budgets", async (req: Request, res: Response) => {
   try {
-    const { user_id, category, monthly_limit } = req.body;
-    const { data, error } = await supabase.from("budgets").upsert([{ user_id, category, monthly_limit }], { onConflict: "user_id,category" }).select();
+    const { user_id, category, monthly_limit, period } = req.body;
+    const { data, error } = await supabase.from("budgets").upsert([{ user_id, category, monthly_limit, period: period || "monthly" }], { onConflict: "user_id,category" }).select();
     if (error) throw error;
     res.json({ budget: data?.[0] });
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
@@ -552,8 +582,10 @@ app.post("/api/budgets", async (req: Request, res: Response) => {
 
 app.patch("/api/budgets/:budgetId", async (req: Request, res: Response) => {
   try {
-    const { monthly_limit } = req.body;
-    const { error } = await supabase.from("budgets").update({ monthly_limit }).eq("id", req.params.budgetId);
+    const { monthly_limit, period } = req.body;
+    const updates: any = { monthly_limit };
+    if (period) updates.period = period;
+    const { error } = await supabase.from("budgets").update(updates).eq("id", req.params.budgetId);
     if (error) throw error;
     res.json({ message: "Budget updated" });
   } catch (e: any) { res.status(500).json({ error: e?.message }); }

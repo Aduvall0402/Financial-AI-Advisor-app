@@ -59,11 +59,42 @@ function hexToRgb(hex) {
   return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
 }
 
+const PLAID_CATEGORIES = [
+  { key: 'FOOD_AND_DRINK', label: 'Food & Drink', icon: 'F' },
+  { key: 'GENERAL_MERCHANDISE', label: 'Shopping', icon: 'S' },
+  { key: 'TRANSPORTATION', label: 'Transportation', icon: 'T' },
+  { key: 'TRAVEL', label: 'Travel', icon: '✈' },
+  { key: 'ENTERTAINMENT', label: 'Entertainment', icon: 'E' },
+  { key: 'PERSONAL_CARE', label: 'Personal Care', icon: 'P' },
+  { key: 'MEDICAL', label: 'Medical', icon: '+' },
+  { key: 'RENT_AND_UTILITIES', label: 'Rent & Utilities', icon: 'U' },
+  { key: 'HOME_IMPROVEMENT', label: 'Home Improvement', icon: 'H' },
+  { key: 'GENERAL_SERVICES', label: 'General Services', icon: 'G' },
+  { key: 'LOAN_PAYMENTS', label: 'Loan Payments', icon: '$' },
+  { key: 'BANK_FEES', label: 'Bank Fees', icon: 'B' },
+  { key: 'OTHER', label: 'Other', icon: 'O' },
+];
+
+const RANGE_LABELS = {
+  '7d': 'Last 7 Days', '30d': 'Last 30 Days',
+  '3m': 'Last 3 Months', '6m': 'Last 6 Months', 'all': 'All Time',
+};
+
+const SORT_LABELS = {
+  'date_desc': 'Date: Newest First', 'date_asc': 'Date: Oldest First',
+  'amount_desc': 'Amount: High to Low', 'amount_asc': 'Amount: Low to High',
+  'merchant': 'Name A–Z', 'category': 'Category A–Z',
+};
+
 const CAT_LETTERS = {
   Groceries: 'G', 'Food and Drink': 'F', Food: 'F', Restaurants: 'R',
   Gas: 'G', Transportation: 'T', Travel: 'T', Shopping: 'S',
   Entertainment: 'E', Subscriptions: 'S', Utilities: 'U',
   Health: 'H', Healthcare: 'H', Other: 'O',
+  FOOD_AND_DRINK: 'F', GENERAL_MERCHANDISE: 'S', TRANSPORTATION: 'T',
+  TRAVEL: '✈', ENTERTAINMENT: 'E', PERSONAL_CARE: 'P', MEDICAL: '+',
+  RENT_AND_UTILITIES: 'U', HOME_IMPROVEMENT: 'H', GENERAL_SERVICES: 'G',
+  LOAN_PAYMENTS: '$', BANK_FEES: 'B',
 };
 
 const CAT_BG = {
@@ -72,6 +103,10 @@ const CAT_BG = {
   Travel: '#7c3aed', Shopping: '#db2777', Entertainment: '#dc2626',
   Subscriptions: '#0891b2', Utilities: '#65a30d', Health: '#059669',
   Healthcare: '#059669', Other: '#475569',
+  FOOD_AND_DRINK: '#d97706', GENERAL_MERCHANDISE: '#db2777', TRANSPORTATION: '#2563eb',
+  TRAVEL: '#7c3aed', ENTERTAINMENT: '#dc2626', PERSONAL_CARE: '#0891b2',
+  MEDICAL: '#059669', RENT_AND_UTILITIES: '#65a30d', HOME_IMPROVEMENT: '#b45309',
+  GENERAL_SERVICES: '#6366f1', LOAN_PAYMENTS: '#ef4444', BANK_FEES: '#64748b',
 };
 
 // Icon component — colored rounded square with a letter/symbol
@@ -252,10 +287,18 @@ export default function App() {
   const [editingBudget, setEditingBudget] = useState(null);
   const [newBudgetCat, setNewBudgetCat] = useState('');
   const [newBudgetLimit, setNewBudgetLimit] = useState('');
+  const [newBudgetPeriod, setNewBudgetPeriod] = useState('monthly');
   const [savingBudget, setSavingBudget] = useState(false);
 
   // Transactions sort
   const [txSortBy, setTxSortBy] = useState('date_desc');
+  const [txSortDropdownVisible, setTxSortDropdownVisible] = useState(false);
+
+  // Insights dropdown
+  const [insightsDropdownVisible, setInsightsDropdownVisible] = useState(false);
+
+  // Groups shared data
+  const [groupSharedTx, setGroupSharedTx] = useState([]);
 
   // ── Theme + persisted prefs ──────────────────────────
   useEffect(() => {
@@ -615,9 +658,20 @@ export default function App() {
 
   const fetchGroupDetail = async (groupId) => {
     try {
-      const res = await fetch(`${API_URL}/api/groups/${groupId}/detail`);
+      const [detailRes, sharedRes] = await Promise.all([
+        fetch(`${API_URL}/api/groups/${groupId}/detail`),
+        fetch(`${API_URL}/api/groups/${groupId}/shared-transactions`),
+      ]);
+      if (detailRes.ok) setGroupDetail(await detailRes.json());
+      if (sharedRes.ok) { const d = await sharedRes.json(); setGroupSharedTx(d.transactions || []); }
+    } catch {}
+  };
+
+  const fetchGroupSharedTx = async (groupId) => {
+    try {
+      const res = await fetch(`${API_URL}/api/groups/${groupId}/shared-transactions`);
       const d = await res.json();
-      setGroupDetail(d);
+      setGroupSharedTx(d.transactions || []);
     } catch {}
   };
 
@@ -662,6 +716,13 @@ export default function App() {
       }
     }
     fetchGoals();
+  };
+
+  const getPeriodStart = (period) => {
+    const now = new Date();
+    if (period === 'weekly') { const d = new Date(now); d.setDate(d.getDate() - 6); return d.toISOString().split('T')[0]; }
+    if (period === 'biweekly') { const d = new Date(now); d.setDate(d.getDate() - 13); return d.toISOString().split('T')[0]; }
+    return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]; // monthly
   };
 
   // ── Insight helpers ─────────────────────────────────
@@ -927,6 +988,77 @@ export default function App() {
           </View>
         )}
 
+        {/* Quick-action prompts */}
+        {linkedAccount && (
+          <View style={s.section}>
+            <Text style={s.sectionTitle}>Quick Actions</Text>
+            {goals.length === 0 && (
+              <TouchableOpacity
+                style={[s.quickCard, { borderColor: C.accent }]}
+                onPress={() => setActiveTab('goals')}
+                activeOpacity={0.8}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                  <Icon char="★" color={C.accent} size={40} radius={12} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>Set Your First Goal</Text>
+                    <Text style={{ color: C.textSub, fontSize: 12 }}>Track savings, debt payoff, spending habits, and more.</Text>
+                  </View>
+                  <Text style={{ color: C.accent, fontSize: 20 }}>›</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+            {budgets.length === 0 && (
+              <TouchableOpacity
+                style={[s.quickCard, { borderColor: C.blue }]}
+                onPress={() => setActiveTab('budget')}
+                activeOpacity={0.8}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                  <Icon char="◎" color={C.blue} size={40} radius={12} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>Create a Budget</Text>
+                    <Text style={{ color: C.textSub, fontSize: 12 }}>Set spending limits by category to stay on track.</Text>
+                  </View>
+                  <Text style={{ color: C.blue, fontSize: 20 }}>›</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+            {transactions.length === 0 && linkedAccount && (
+              <TouchableOpacity
+                style={[s.quickCard, { borderColor: C.green }]}
+                onPress={syncTransactions}
+                activeOpacity={0.8}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                  <Icon char="↻" color={C.green} size={40} radius={12} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>Sync Your Transactions</Text>
+                    <Text style={{ color: C.textSub, fontSize: 12 }}>Pull in your latest transactions for AI-powered insights.</Text>
+                  </View>
+                  <Text style={{ color: C.green, fontSize: 20 }}>›</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+            {goals.length > 0 && budgets.length > 0 && transactions.length > 0 && (
+              <TouchableOpacity
+                style={[s.quickCard, { borderColor: C.accent }]}
+                onPress={() => setActiveTab('chat')}
+                activeOpacity={0.8}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                  <Icon char="✦" color={C.accent} size={40} radius={12} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>Ask WealthPal AI</Text>
+                    <Text style={{ color: C.textSub, fontSize: 12 }}>Get personalized advice based on your real spending data.</Text>
+                  </View>
+                  <Text style={{ color: C.accent, fontSize: 20 }}>›</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
         <View style={{ height: 24 }} />
       </ScrollView>
     );
@@ -955,18 +1087,17 @@ export default function App() {
 
     return (
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}>
-        {/* Date range filter */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
-          {[['7d','7D'],['30d','30D'],['3m','3M'],['6m','6M'],['all','All']].map(([key, label]) => (
-            <TouchableOpacity
-              key={key}
-              onPress={() => { setInsightsRange(key); setSelectedCategory(null); }}
-              style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, marginRight: 8, backgroundColor: insightsRange === key ? C.accent : C.surface, borderWidth: 1, borderColor: insightsRange === key ? C.accent : C.border }}
-            >
-              <Text style={{ color: insightsRange === key ? '#fff' : C.textSub, fontSize: 13, fontWeight: '600' }}>{label}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        {/* Date range selector */}
+        <TouchableOpacity
+          onPress={() => setInsightsDropdownVisible(true)}
+          style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: C.surface, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 13, marginBottom: 16, borderWidth: 1, borderColor: C.border }}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text style={{ fontSize: 15 }}>📅</Text>
+            <Text style={{ color: C.text, fontSize: 14, fontWeight: '600' }}>{RANGE_LABELS[insightsRange]}</Text>
+          </View>
+          <Text style={{ color: C.textSub, fontSize: 18, lineHeight: 20 }}>▾</Text>
+        </TouchableOpacity>
 
         <View style={s.statsRow}>
           <View style={s.statCard}>
@@ -1002,25 +1133,37 @@ export default function App() {
             </View>
           </View>
           <View style={s.chartCard}>
+            {chartType !== 'pie' && (
+              <Text style={{ color: C.textMuted, fontSize: 11, alignSelf: 'flex-end', marginBottom: 4 }}>
+                Total: ${fmtMoney(chartData.reduce((s, v) => s + (v === 0.01 ? 0 : v), 0))}
+              </Text>
+            )}
             {chartType === 'line' && (
               <LineChart
                 data={{ labels: chartLabels, datasets: [{ data: chartData }] }}
-                width={SW - 64} height={160} chartConfig={CHART_CFG} bezier
-                style={{ borderRadius: 10, marginLeft: -8 }} withInnerLines={false}
+                width={SW - 64} height={200} bezier
+                chartConfig={{ ...CHART_CFG, decimalPlaces: 0, formatYLabel: (v) => '$' + (Number(v) >= 1000 ? (Number(v)/1000).toFixed(1)+'k' : v) }}
+                style={{ borderRadius: 10, marginLeft: -16 }} withInnerLines={false} withDots
               />
             )}
             {chartType === 'bar' && (
               <BarChart
                 data={{ labels: chartLabels, datasets: [{ data: chartData }] }}
-                width={SW - 64} height={160} chartConfig={CHART_CFG}
-                style={{ borderRadius: 10, marginLeft: -8 }} withInnerLines={false}
-                showValuesOnTopOfBars={false} yAxisLabel="$" yAxisSuffix=""
+                width={SW - 64} height={200}
+                chartConfig={{ ...CHART_CFG, decimalPlaces: 0, formatYLabel: (v) => '$' + (Number(v) >= 1000 ? (Number(v)/1000).toFixed(1)+'k' : v) }}
+                style={{ borderRadius: 10, marginLeft: -16 }} withInnerLines={false}
+                fromZero yAxisLabel="$" yAxisSuffix=""
               />
             )}
             {chartType === 'pie' && catData && (
               <PieChart
-                data={catData.map(([cat, amt], i) => ({ name: cat.length > 10 ? cat.slice(0, 10) + '…' : cat, population: Math.round(amt * 100) / 100, color: CAT_COLORS[i % CAT_COLORS.length], legendFontColor: C.textSub, legendFontSize: 11 }))}
-                width={SW - 64} height={160} chartConfig={CHART_CFG} accessor="population"
+                data={catData.map(([cat, amt], i) => ({
+                  name: cat.replace(/_/g, ' ').slice(0, 12),
+                  population: Math.round(amt * 100) / 100,
+                  color: CAT_COLORS[i % CAT_COLORS.length],
+                  legendFontColor: C.textSub, legendFontSize: 11,
+                }))}
+                width={SW - 64} height={200} chartConfig={CHART_CFG} accessor="population"
                 backgroundColor="transparent" paddingLeft="8" absolute={false}
               />
             )}
@@ -1087,17 +1230,14 @@ export default function App() {
         </TouchableOpacity>
       </View>
       {transactions.length > 0 && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingHorizontal: 16, marginBottom: 6 }}>
-          {[['date_desc','Date ↓'],['date_asc','Date ↑'],['amount_desc','$ High'],['amount_asc','$ Low'],['merchant','Name'],['category','Category']].map(([key, label]) => (
-            <TouchableOpacity
-              key={key}
-              onPress={() => setTxSortBy(key)}
-              style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, marginRight: 6, backgroundColor: txSortBy === key ? C.accent : C.surface, borderWidth: 1, borderColor: txSortBy === key ? C.accent : C.border }}
-            >
-              <Text style={{ color: txSortBy === key ? '#fff' : C.textSub, fontSize: 11, fontWeight: '600' }}>{label}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        <TouchableOpacity
+          onPress={() => setTxSortDropdownVisible(true)}
+          style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginBottom: 8, backgroundColor: C.surface, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11, borderWidth: 1, borderColor: C.border }}
+        >
+          <Text style={{ color: C.textSub, fontSize: 13, marginRight: 4 }}>Sort:</Text>
+          <Text style={{ color: C.text, fontSize: 13, fontWeight: '600', flex: 1 }}>{SORT_LABELS[txSortBy]}</Text>
+          <Text style={{ color: C.textSub, fontSize: 16, lineHeight: 18 }}>▾</Text>
+        </TouchableOpacity>
       )}
       {!!syncError && (
         <View style={[s.errBox, { margin: 16, marginTop: 4 }]}>
@@ -1281,9 +1421,76 @@ export default function App() {
         </ScrollView>
       ) : (
         <ScrollView style={{ flex: 1, padding: 16 }}>
-          <TouchableOpacity onPress={() => setCurrentGroup(null)} style={{ marginBottom: 16 }}>
+          <TouchableOpacity onPress={() => { setCurrentGroup(null); setGroupSharedTx([]); }} style={{ marginBottom: 16 }}>
             <Text style={{ color: C.accent, fontSize: 14, fontWeight: '600' }}>‹ All Groups</Text>
           </TouchableOpacity>
+
+          {/* Group Hub — Shared Feed */}
+          <View style={s.section}>
+            <Text style={s.sectionTitle}>Group Feed</Text>
+            {groupSharedTx.length === 0 ? (
+              <View style={[s.connectCard, { paddingVertical: 24, alignItems: 'center' }]}>
+                <Text style={{ color: C.textSub, fontSize: 13, textAlign: 'center' }}>
+                  No shared transactions yet. Members can share their transactions using the toggles below.
+                </Text>
+              </View>
+            ) : (
+              groupSharedTx.slice(0, 10).map((tx, i) => (
+                <View key={i} style={s.txItem}>
+                  <CatIcon category={tx.category} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.txMerchant} numberOfLines={1}>{tx.merchant_name || 'Unknown'}</Text>
+                    <Text style={s.txMeta}>{fmtDate(tx.transaction_date)} · {tx.member_email?.split('@')[0]}</Text>
+                  </View>
+                  <Text style={s.txAmt}>-${fmtMoney(tx.amount)}</Text>
+                </View>
+              ))
+            )}
+          </View>
+
+          {/* My Sharing Settings — only for current user's own row */}
+          {groupDetail.members.filter(m => m.email === email).map(m => (
+            <View key={m.id} style={[s.section]}>
+              <Text style={s.sectionTitle}>My Sharing Settings</Text>
+              <View style={[s.txItem, { flexDirection: 'column', alignItems: 'stretch', gap: 10 }]}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <View>
+                    <Text style={{ color: C.text, fontSize: 13, fontWeight: '600' }}>Share Transactions</Text>
+                    <Text style={{ color: C.textMuted, fontSize: 11 }}>Show the group your transactions</Text>
+                  </View>
+                  <Switch
+                    value={!!m.share_transactions}
+                    onValueChange={async (v) => {
+                      await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, {
+                        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ share_transactions: v, share_accounts: !!m.share_accounts }),
+                      });
+                      fetchGroupDetail(currentGroup.id);
+                    }}
+                    trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff"
+                  />
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <View>
+                    <Text style={{ color: C.text, fontSize: 13, fontWeight: '600' }}>Share Account Balances</Text>
+                    <Text style={{ color: C.textMuted, fontSize: 11 }}>Show the group your balances</Text>
+                  </View>
+                  <Switch
+                    value={!!m.share_accounts}
+                    onValueChange={async (v) => {
+                      await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, {
+                        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ share_transactions: !!m.share_transactions, share_accounts: v }),
+                      });
+                      fetchGroupDetail(currentGroup.id);
+                    }}
+                    trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff"
+                  />
+                </View>
+              </View>
+            </View>
+          ))}
+
           {/* Members */}
           <View style={s.section}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
@@ -1293,56 +1500,20 @@ export default function App() {
               </TouchableOpacity>
             </View>
             {groupDetail.members.map(m => (
-              <View key={m.id} style={[s.txItem, { flexDirection: 'column', alignItems: 'stretch', gap: 10 }]}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                  <Icon char={(m.email?.[0] || '?').toUpperCase()} color={C.blue} size={42} radius={12} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.txMerchant} numberOfLines={1}>{m.email}</Text>
-                    <Text style={s.txMeta}>{m.role}</Text>
-                  </View>
+              <View key={m.id} style={s.txItem}>
+                <Icon char={(m.email?.[0] || '?').toUpperCase()} color={C.blue} size={42} radius={12} />
+                <View style={{ flex: 1 }}>
+                  <Text style={s.txMerchant} numberOfLines={1}>{m.email}</Text>
+                  <Text style={s.txMeta}>{m.role} · {m.share_transactions ? 'Sharing txns' : ''}{m.share_accounts ? ' · Sharing accts' : ''}</Text>
+                </View>
+                {m.email !== email && (
                   <TouchableOpacity onPress={async () => {
                     await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, { method: 'DELETE' });
                     fetchGroupDetail(currentGroup.id);
                   }}>
                     <Text style={{ color: C.red, fontSize: 11, fontWeight: '600' }}>Remove</Text>
                   </TouchableOpacity>
-                </View>
-                <View style={{ paddingTop: 8, borderTopWidth: 1, borderTopColor: C.border, gap: 10 }}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <View>
-                      <Text style={{ color: C.text, fontSize: 13 }}>Share Transactions</Text>
-                      <Text style={{ color: C.textMuted, fontSize: 11 }}>Let them see your transactions</Text>
-                    </View>
-                    <Switch
-                      value={!!m.share_transactions}
-                      onValueChange={async (v) => {
-                        await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, {
-                          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ share_transactions: v, share_accounts: !!m.share_accounts }),
-                        });
-                        fetchGroupDetail(currentGroup.id);
-                      }}
-                      trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff"
-                    />
-                  </View>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <View>
-                      <Text style={{ color: C.text, fontSize: 13 }}>Share Accounts</Text>
-                      <Text style={{ color: C.textMuted, fontSize: 11 }}>Let them see your balances</Text>
-                    </View>
-                    <Switch
-                      value={!!m.share_accounts}
-                      onValueChange={async (v) => {
-                        await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, {
-                          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ share_transactions: !!m.share_transactions, share_accounts: v }),
-                        });
-                        fetchGroupDetail(currentGroup.id);
-                      }}
-                      trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff"
-                    />
-                  </View>
-                </View>
+                )}
               </View>
             ))}
             {/* Invite row */}
@@ -1414,16 +1585,14 @@ export default function App() {
   // BUDGET TAB
   // ════════════════════════════════════════════════════
   const renderBudget = () => {
-    const monthStart = new Date();
-    monthStart.setDate(1);
-    const monthKey = monthStart.toISOString().split('T')[0];
-    const catSpend = {};
-    transactions.filter(tx => (tx.transaction_date || '') >= monthKey).forEach(tx => {
-      const c = tx.category || 'Other';
-      catSpend[c] = (catSpend[c] || 0) + parseFloat(tx.amount || 0);
-    });
+    const getBudgetSpend = (budget) => {
+      const start = getPeriodStart(budget.period || 'monthly');
+      return transactions
+        .filter(tx => (tx.transaction_date || '') >= start && tx.category === budget.category)
+        .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+    };
     const totalBudgeted = budgets.reduce((s, b) => s + parseFloat(b.monthly_limit || 0), 0);
-    const totalSpent = budgets.reduce((s, b) => s + (catSpend[b.category] || 0), 0);
+    const totalSpent = budgets.reduce((s, b) => s + getBudgetSpend(b), 0);
 
     return (
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}>
@@ -1458,16 +1627,21 @@ export default function App() {
           </View>
         ) : (
           budgets.map(b => {
-            const spent = catSpend[b.category] || 0;
+            const spent = getBudgetSpend(b);
             const limit = parseFloat(b.monthly_limit || 0);
             const pct = limit > 0 ? Math.min(100, Math.round((spent / limit) * 100)) : 0;
             const barColor = pct >= 100 ? C.red : pct >= 75 ? C.amber : C.green;
+            const periodLabel = { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly' }[b.period || 'monthly'];
+            const catLabel = PLAID_CATEGORIES.find(c => c.key === b.category)?.label || b.category;
             return (
               <View key={b.id} style={[s.insightCard, { flexDirection: 'column', alignItems: 'stretch', gap: 10 }]}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={{ color: C.text, fontSize: 14, fontWeight: '600' }}>{b.category}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: C.text, fontSize: 14, fontWeight: '600' }}>{catLabel}</Text>
+                    <Text style={{ color: C.textMuted, fontSize: 11, marginTop: 1 }}>{periodLabel} Budget</Text>
+                  </View>
                   <View style={{ flexDirection: 'row', gap: 12 }}>
-                    <TouchableOpacity onPress={() => { setEditingBudget(b); setNewBudgetCat(b.category); setNewBudgetLimit(String(b.monthly_limit)); setAddBudgetVisible(true); }}>
+                    <TouchableOpacity onPress={() => { setEditingBudget(b); setNewBudgetCat(b.category); setNewBudgetLimit(String(b.monthly_limit)); setNewBudgetPeriod(b.period || 'monthly'); setAddBudgetVisible(true); }}>
                       <Text style={{ color: C.accent, fontSize: 12, fontWeight: '600' }}>Edit</Text>
                     </TouchableOpacity>
                     <TouchableOpacity onPress={async () => { await fetch(`${API_URL}/api/budgets/${b.id}`, { method: 'DELETE' }); fetchBudgets(); }}>
@@ -1511,6 +1685,12 @@ export default function App() {
           </View>
         )}
       />
+      {loadingChat && (
+        <View style={[s.aiBubble, s.bubble, { marginHorizontal: 16, marginBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
+          <ActivityIndicator size="small" color={C.accent} />
+          <Text style={{ color: C.textSub, fontSize: 13 }}>WealthPal AI is thinking…</Text>
+        </View>
+      )}
       <View style={s.chatBar}>
         <TextInput
           style={s.chatInput}
@@ -2033,50 +2213,88 @@ export default function App() {
       {/* Add / Edit Budget Modal */}
       <Modal visible={addBudgetVisible} animationType="slide" transparent onRequestClose={() => setAddBudgetVisible(false)}>
         <View style={s.modalOverlay}>
-          <View style={s.modalCard}>
-            <Text style={s.modalTitle}>{editingBudget ? 'Edit Budget' : 'New Budget'}</Text>
-            <Text style={s.label}>Category</Text>
-            <TextInput
-              style={s.input}
-              placeholder="e.g. Food and Drink, Shopping…"
-              placeholderTextColor={C.textMuted}
-              value={newBudgetCat}
-              onChangeText={setNewBudgetCat}
-              editable={!editingBudget}
-            />
-            <Text style={s.label}>Monthly Limit ($)</Text>
-            <TextInput
-              style={s.input}
-              keyboardType="decimal-pad"
-              placeholder="0.00"
-              placeholderTextColor={C.textMuted}
-              value={newBudgetLimit}
-              onChangeText={setNewBudgetLimit}
-            />
-            <TouchableOpacity
-              style={[s.btn, (savingBudget || !newBudgetCat.trim() || !newBudgetLimit) && s.btnOff]}
-              disabled={savingBudget || !newBudgetCat.trim() || !newBudgetLimit}
-              onPress={async () => {
-                setSavingBudget(true);
-                try {
-                  if (editingBudget) {
-                    await fetch(`${API_URL}/api/budgets/${editingBudget.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ monthly_limit: parseFloat(newBudgetLimit) }) });
-                  } else {
-                    await fetch(`${API_URL}/api/budgets`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, category: newBudgetCat.trim(), monthly_limit: parseFloat(newBudgetLimit) }) });
-                  }
-                  setAddBudgetVisible(false);
-                  setEditingBudget(null);
-                  fetchBudgets();
-                } catch {}
-                finally { setSavingBudget(false); }
-              }}
-            >
-              {savingBudget ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>{editingBudget ? 'Save Changes' : 'Create Budget'}</Text>}
-            </TouchableOpacity>
-            <TouchableOpacity style={s.linkRow} onPress={() => { setAddBudgetVisible(false); setEditingBudget(null); }}>
-              <Text style={s.linkText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
+          <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end' }}>
+            <View style={s.modalCard}>
+              <Text style={s.modalTitle}>{editingBudget ? 'Edit Budget' : 'New Budget'}</Text>
+
+              {/* Category picker — only for new budgets */}
+              {!editingBudget && (
+                <>
+                  <Text style={s.label}>Category</Text>
+                  <ScrollView style={{ maxHeight: 180, marginBottom: 18 }} showsVerticalScrollIndicator={false}>
+                    {PLAID_CATEGORIES.map(cat => (
+                      <TouchableOpacity
+                        key={cat.key}
+                        onPress={() => setNewBudgetCat(cat.key)}
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, marginBottom: 4, backgroundColor: newBudgetCat === cat.key ? C.accent : C.surface, borderWidth: 1, borderColor: newBudgetCat === cat.key ? C.accent : C.border }}
+                      >
+                        <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: newBudgetCat === cat.key ? 'rgba(255,255,255,0.2)' : C.surface2, justifyContent: 'center', alignItems: 'center' }}>
+                          <Text style={{ color: newBudgetCat === cat.key ? '#fff' : C.textSub, fontSize: 14, fontWeight: '700' }}>{cat.icon}</Text>
+                        </View>
+                        <Text style={{ color: newBudgetCat === cat.key ? '#fff' : C.text, fontSize: 14, fontWeight: '500', flex: 1 }}>{cat.label}</Text>
+                        {newBudgetCat === cat.key && <Text style={{ color: '#fff', fontSize: 16 }}>✓</Text>}
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </>
+              )}
+              {editingBudget && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.surface, borderRadius: 12, padding: 12, marginBottom: 18, borderWidth: 1, borderColor: C.border }}>
+                  <CatIcon category={editingBudget.category} />
+                  <Text style={{ color: C.text, fontSize: 14, fontWeight: '600' }}>{PLAID_CATEGORIES.find(c => c.key === editingBudget.category)?.label || editingBudget.category}</Text>
+                </View>
+              )}
+
+              {/* Budget period */}
+              <Text style={s.label}>Budget Period</Text>
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 18 }}>
+                {[['weekly','Weekly'],['biweekly','Biweekly'],['monthly','Monthly']].map(([k, l]) => (
+                  <TouchableOpacity
+                    key={k}
+                    onPress={() => setNewBudgetPeriod(k)}
+                    style={{ flex: 1, paddingVertical: 10, borderRadius: 12, alignItems: 'center', backgroundColor: newBudgetPeriod === k ? C.accent : C.surface, borderWidth: 1, borderColor: newBudgetPeriod === k ? C.accent : C.border }}
+                  >
+                    <Text style={{ color: newBudgetPeriod === k ? '#fff' : C.textSub, fontWeight: '600', fontSize: 12 }}>{l}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Limit */}
+              <Text style={s.label}>Spending Limit ($)</Text>
+              <TextInput
+                style={s.input}
+                keyboardType="decimal-pad"
+                placeholder="0.00"
+                placeholderTextColor={C.textMuted}
+                value={newBudgetLimit}
+                onChangeText={setNewBudgetLimit}
+              />
+
+              <TouchableOpacity
+                style={[s.btn, (savingBudget || !newBudgetCat.trim() || !newBudgetLimit) && s.btnOff]}
+                disabled={savingBudget || !newBudgetCat.trim() || !newBudgetLimit}
+                onPress={async () => {
+                  setSavingBudget(true);
+                  try {
+                    if (editingBudget) {
+                      await fetch(`${API_URL}/api/budgets/${editingBudget.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ monthly_limit: parseFloat(newBudgetLimit), period: newBudgetPeriod }) });
+                    } else {
+                      await fetch(`${API_URL}/api/budgets`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, category: newBudgetCat.trim(), monthly_limit: parseFloat(newBudgetLimit), period: newBudgetPeriod }) });
+                    }
+                    setAddBudgetVisible(false);
+                    setEditingBudget(null);
+                    fetchBudgets();
+                  } catch {}
+                  finally { setSavingBudget(false); }
+                }}
+              >
+                {savingBudget ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>{editingBudget ? 'Save Changes' : 'Create Budget'}</Text>}
+              </TouchableOpacity>
+              <TouchableOpacity style={s.linkRow} onPress={() => { setAddBudgetVisible(false); setEditingBudget(null); }}>
+                <Text style={s.linkText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
         </View>
       </Modal>
 
@@ -2108,6 +2326,50 @@ export default function App() {
             <TouchableOpacity style={s.linkRow} onPress={() => setAddGroupGoalVisible(false)}><Text style={s.linkText}>Cancel</Text></TouchableOpacity>
           </View>
         </View>
+      </Modal>
+
+      {/* Insights Range Dropdown Modal */}
+      <Modal visible={insightsDropdownVisible} animationType="fade" transparent onRequestClose={() => setInsightsDropdownVisible(false)}>
+        <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setInsightsDropdownVisible(false)}>
+          <View style={[s.modalCard, { paddingBottom: 8 }]}>
+            <Text style={s.modalTitle}>Select Date Range</Text>
+            {Object.entries(RANGE_LABELS).map(([key, label]) => (
+              <TouchableOpacity
+                key={key}
+                onPress={() => { setInsightsRange(key); setInsightsDropdownVisible(false); }}
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: C.border }}
+              >
+                <Text style={{ color: insightsRange === key ? C.accent : C.text, fontSize: 15, fontWeight: insightsRange === key ? '700' : '400' }}>{label}</Text>
+                {insightsRange === key && <Text style={{ color: C.accent, fontSize: 16 }}>✓</Text>}
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity style={[s.linkRow, { marginTop: 4 }]} onPress={() => setInsightsDropdownVisible(false)}>
+              <Text style={s.linkText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Transaction Sort Dropdown Modal */}
+      <Modal visible={txSortDropdownVisible} animationType="fade" transparent onRequestClose={() => setTxSortDropdownVisible(false)}>
+        <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setTxSortDropdownVisible(false)}>
+          <View style={[s.modalCard, { paddingBottom: 8 }]}>
+            <Text style={s.modalTitle}>Sort Transactions</Text>
+            {Object.entries(SORT_LABELS).map(([key, label]) => (
+              <TouchableOpacity
+                key={key}
+                onPress={() => { setTxSortBy(key); setTxSortDropdownVisible(false); }}
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: C.border }}
+              >
+                <Text style={{ color: txSortBy === key ? C.accent : C.text, fontSize: 15, fontWeight: txSortBy === key ? '700' : '400' }}>{label}</Text>
+                {txSortBy === key && <Text style={{ color: C.accent, fontSize: 16 }}>✓</Text>}
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity style={[s.linkRow, { marginTop: 4 }]} onPress={() => setTxSortDropdownVisible(false)}>
+              <Text style={s.linkText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
       </Modal>
 
     </SafeAreaView>
@@ -2168,6 +2430,7 @@ const makeStyles = (C) => StyleSheet.create({
   statVal: { fontSize: 22, fontWeight: 'bold', color: C.text },
 
   reconnectCard: { backgroundColor: '#1a0c0c', borderWidth: 1, borderColor: '#5c2020', borderRadius: 16, padding: 18, marginBottom: 20 },
+  quickCard: { backgroundColor: C.surface, borderWidth: 1.5, borderRadius: 16, padding: 16, marginBottom: 12 },
   reconnectTitle: { color: '#fca5a5', fontSize: 15, fontWeight: '700', marginBottom: 6 },
   reconnectText: { color: '#f87171', fontSize: 13, marginBottom: 14, lineHeight: 20 },
 

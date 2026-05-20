@@ -128,11 +128,15 @@ export async function chatWithAssistant(
     ? financialSummary.recent_transactions.map(t => `  - ${t.date}: ${t.merchant} — $${t.amount.toFixed(2)} (${t.category})`).join("\n")
     : "  - No recent transactions";
 
+  const today = new Date().toISOString().split("T")[0];
+  const sevenDaysAgo = new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+  const thirtyDaysAgo = new Date(Date.now() - 29 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
   const systemPrompt = `You are WealthPal AI, a friendly and knowledgeable personal finance assistant. You have full visibility into this user's real financial data — use it to give specific, personalized advice.
 
-USER'S FINANCIAL SNAPSHOT (today: ${new Date().toISOString().split("T")[0]}):
-Weekly Spending (last 7 days): $${(financialSummary.weekly_spending || 0).toFixed(2)}
-Monthly Spending (last 30 days): $${financialSummary.monthly_spending.toFixed(2)}
+USER'S FINANCIAL SNAPSHOT:
+Today's date: ${today}
+Last 7 days = ${sevenDaysAgo} through ${today}. Spending in that window: $${(financialSummary.weekly_spending || 0).toFixed(2)}
+Last 30 days = ${thirtyDaysAgo} through ${today}. Spending in that window: $${financialSummary.monthly_spending.toFixed(2)}
 Top Spending Categories (last 30 days):
 ${financialSummary.top_categories.map(c => `  - ${c.name}: $${c.amount.toFixed(2)}`).join("\n") || "  - None yet"}
 Debts: ${financialSummary.debt.length > 0 ? financialSummary.debt.map(d => `${d.name} ($${d.balance} @ ${d.interest}%)`).join(", ") : "None"}
@@ -144,7 +148,7 @@ RECENT TRANSACTIONS (up to 100, newest first):
 ${recentTxSection}
 
 INSTRUCTIONS:
-- Always use the actual transaction dates above when answering questions about specific time periods (e.g. "last week" = last 7 days from today's date)
+- "Last 7 days" always means the 7-day window shown above. Use the transaction dates to filter correctly — do NOT use monthly total when asked about weekly or shorter periods
 - Reference their actual numbers and transactions when relevant
 - Be conversational, concise, and encouraging
 - Give actionable advice specific to their situation
