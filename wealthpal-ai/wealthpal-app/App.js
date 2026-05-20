@@ -5,8 +5,14 @@ import {
   Animated, Dimensions, Switch, StatusBar, Modal,
 } from 'react-native';
 import { create, open } from 'react-native-plaid-link-sdk';
-import { LineChart } from 'react-native-chart-kit';
+import { LineChart, BarChart, PieChart } from 'react-native-chart-kit';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({ shouldShowAlert: true, shouldPlaySound: true, shouldSetBadge: false }),
+});
 
 const { width: SW } = Dimensions.get('window');
 const API_URL = 'https://financial-ai-advisor-app-production.up.railway.app';
@@ -86,7 +92,10 @@ function CatIcon({ category }) {
 }
 
 function fmtMoney(n) {
-  return Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const v = Math.round(Number(n || 0) * 100) / 100;
+  const parts = v.toFixed(2).split('.');
+  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return parts.join('.');
 }
 
 function fmtDate(d) {
@@ -162,9 +171,27 @@ export default function App() {
   }), [C]);
   const s = useMemo(() => makeStyles(C), [C]);
 
+  const monthlySpend = useMemo(() => {
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    return transactions
+      .filter(tx => new Date(tx.transaction_date).getTime() >= cutoff)
+      .reduce((sum, tx) => sum + parseFloat(tx.amount || 0), 0);
+  }, [transactions]);
+
+  // Notifications
+  const [notifOverall, setNotifOverall] = useState(false);
+  const [notifDaily, setNotifDaily] = useState(false);
+  const [notifWeekly, setNotifWeekly] = useState(false);
+  const [notifMonthly, setNotifMonthly] = useState(false);
+  const [notifIds, setNotifIds] = useState({});
+
   // Settings
-  const [notifs, setNotifs] = useState(true);
   const [biometrics, setBiometrics] = useState(false);
+  const [widgetEnabled, setWidgetEnabled] = useState(false);
+  const [widgetInfoVisible, setWidgetInfoVisible] = useState(false);
+
+  // Chart type for insights
+  const [chartType, setChartType] = useState('line');
 
   // Edit profile
   const [editProfileVisible, setEditProfileVisible] = useState(false);
@@ -176,11 +203,20 @@ export default function App() {
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileError, setProfileError] = useState('');
 
-  // ── Theme ────────────────────────────────────────────
+  // ── Theme + persisted prefs ──────────────────────────
   useEffect(() => {
-    AsyncStorage.multiGet(['themeBg', 'themeAccent']).then(pairs => {
-      if (pairs[0][1]) setThemeBg(pairs[0][1]);
-      if (pairs[1][1]) setThemeAccent(pairs[1][1]);
+    AsyncStorage.multiGet([
+      'themeBg', 'themeAccent', 'displayName',
+      'notifOverall', 'notifDaily', 'notifWeekly', 'notifMonthly',
+    ]).then(pairs => {
+      const m = Object.fromEntries(pairs.map(([k, v]) => [k, v]));
+      if (m.themeBg) setThemeBg(m.themeBg);
+      if (m.themeAccent) setThemeAccent(m.themeAccent);
+      if (m.displayName) setDisplayName(m.displayName);
+      if (m.notifOverall !== null) setNotifOverall(m.notifOverall === 'true');
+      if (m.notifDaily !== null) setNotifDaily(m.notifDaily === 'true');
+      if (m.notifWeekly !== null) setNotifWeekly(m.notifWeekly === 'true');
+      if (m.notifMonthly !== null) setNotifMonthly(m.notifMonthly === 'true');
     });
   }, []);
 
@@ -230,8 +266,10 @@ export default function App() {
       const uid = data.session.user.id;
       // Get name from login response (users table) or user_metadata
       const name = data.full_name || data.session.user.user_metadata?.full_name || '';
+      const firstName = name ? name.split(' ')[0] : email.split('@')[0];
       setUserId(uid); userIdRef.current = uid;
-      setDisplayName(name ? name.split(' ')[0] : email.split('@')[0]);
+      setDisplayName(firstName);
+      AsyncStorage.setItem('displayName', firstName);
       setPassword('');
       setDashboardLoading(true);
       try {
@@ -264,6 +302,7 @@ export default function App() {
       const uid = data.user.id;
       setUserId(uid); userIdRef.current = uid;
       setDisplayName(firstName.trim());
+      AsyncStorage.setItem('displayName', firstName.trim());
       setPassword(''); setFirstName(''); setLastName('');
       setDashboardLoading(true);
       try {
@@ -285,6 +324,7 @@ export default function App() {
       setScreen('login'); setUserId(null); userIdRef.current = null;
       setEmail(''); setPassword(''); setFirstName(''); setLastName('');
       setDisplayName(''); setError('');
+      AsyncStorage.removeItem('displayName');
       setTransactions([]); setAccounts([]); setSelectedAccount(null);
       setLinkedAccount(null); setAccountsError(false); setDashboardData(null);
       setChatMessages([{ id: '0', role: 'assistant', text: "Hi! I'm your WealthPal AI assistant. Ask me anything about your finances!" }]);
@@ -366,9 +406,70 @@ export default function App() {
       });
       if (!res.ok) throw new Error('Failed to save');
       setDisplayName(editFirst.trim());
+      AsyncStorage.setItem('displayName', editFirst.trim());
       setEditProfileVisible(false);
     } catch { setProfileError('Could not save. Try again.'); }
     finally { setSavingProfile(false); }
+  };
+
+  // ── Notifications ────────────────────────────────────
+  const requestNotifPermission = async () => {
+    if (!Device.isDevice) return false;
+    const { status: existing } = await Notifications.getPermissionsAsync();
+    if (existing === 'granted') return true;
+    const { status } = await Notifications.requestPermissionsAsync();
+    return status === 'granted';
+  };
+
+  const cancelNotif = async (key) => {
+    const id = notifIds[key];
+    if (id) {
+      await Notifications.cancelScheduledNotificationAsync(id).catch(() => {});
+      setNotifIds(prev => { const n = { ...prev }; delete n[key]; return n; });
+    }
+  };
+
+  const scheduleNotif = async (key, title, triggerConfig) => {
+    const granted = await requestNotifPermission();
+    if (!granted) return;
+    await cancelNotif(key);
+    let body = `You've spent $${fmtMoney(monthlySpend)} in the last 30 days across ${transactions.length} transactions.`;
+    try {
+      const res = await fetch(`${API_URL}/api/ai/notification-summary/${userIdRef.current}`);
+      if (res.ok) { const d = await res.json(); body = d.summary || body; }
+    } catch { /* use fallback body */ }
+    const id = await Notifications.scheduleNotificationAsync({
+      content: { title, body, sound: true },
+      trigger: triggerConfig,
+    });
+    setNotifIds(prev => ({ ...prev, [key]: id }));
+    AsyncStorage.setItem(`notifId_${key}`, id);
+  };
+
+  const toggleNotifOverall = async (val) => {
+    setNotifOverall(val);
+    AsyncStorage.setItem('notifOverall', String(val));
+    if (!val) {
+      ['daily', 'weekly', 'monthly'].forEach(k => cancelNotif(k));
+    }
+  };
+
+  const toggleNotifPeriod = async (period, val) => {
+    const setters = { daily: setNotifDaily, weekly: setNotifWeekly, monthly: setNotifMonthly };
+    setters[period](val);
+    AsyncStorage.setItem(`notif${period.charAt(0).toUpperCase() + period.slice(1)}`, String(val));
+    if (!val) { cancelNotif(period); return; }
+    const triggers = {
+      daily:   { hour: 9, minute: 0, repeats: true },
+      weekly:  { weekday: 2, hour: 9, minute: 0, repeats: true },
+      monthly: { day: 1, hour: 9, minute: 0, repeats: true },
+    };
+    const titles = {
+      daily:   '📊 Daily Spending Summary',
+      weekly:  '📈 Weekly Spending Summary',
+      monthly: '📅 Monthly Spending Report',
+    };
+    await scheduleNotif(period, titles[period], triggers[period]);
   };
 
   // ── Plaid ───────────────────────────────────────────
@@ -603,7 +704,7 @@ export default function App() {
         <View style={s.statsRow}>
           <View style={s.statCard}>
             <Text style={s.statLabel}>Monthly Spend</Text>
-            <Text style={s.statVal}>${fmtMoney(dashboardData?.monthly_spending || 0)}</Text>
+            <Text style={s.statVal}>${fmtMoney(monthlySpend)}</Text>
           </View>
           <View style={s.statCard}>
             <Text style={s.statLabel}>Transactions</Text>
@@ -690,20 +791,63 @@ export default function App() {
         </View>
 
         <View style={s.section}>
-          <Text style={s.sectionTitle}>Weekly Spending</Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <Text style={s.sectionTitle}>Spending Chart</Text>
+            <View style={{ flexDirection: 'row', backgroundColor: C.surface2, borderRadius: 10, borderWidth: 1, borderColor: C.border, overflow: 'hidden' }}>
+              {[['line', '↗'], ['bar', '▌▌'], ['pie', '◔']].map(([type, icon]) => (
+                <TouchableOpacity
+                  key={type}
+                  onPress={() => setChartType(type)}
+                  style={{ paddingHorizontal: 14, paddingVertical: 7, backgroundColor: chartType === type ? C.accent : 'transparent' }}
+                >
+                  <Text style={{ color: chartType === type ? '#fff' : C.textSub, fontSize: 13, fontWeight: '700' }}>{icon}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
           <View style={s.chartCard}>
-            <LineChart
-              data={{
-                labels: ['3 wks', '2 wks', 'Last wk', 'This wk'],
-                datasets: [{ data: weeklyData.map(v => Math.max(0.01, v)) }],
-              }}
-              width={SW - 64}
-              height={160}
-              chartConfig={CHART_CFG}
-              bezier
-              style={{ borderRadius: 10, marginLeft: -8 }}
-              withInnerLines={false}
-            />
+            {chartType === 'line' && (
+              <LineChart
+                data={{ labels: ['3 wks', '2 wks', 'Last wk', 'This wk'], datasets: [{ data: weeklyData.map(v => Math.max(0.01, v)) }] }}
+                width={SW - 64}
+                height={160}
+                chartConfig={CHART_CFG}
+                bezier
+                style={{ borderRadius: 10, marginLeft: -8 }}
+                withInnerLines={false}
+              />
+            )}
+            {chartType === 'bar' && (
+              <BarChart
+                data={{ labels: ['3 wks', '2 wks', 'Last wk', 'This wk'], datasets: [{ data: weeklyData.map(v => Math.max(0.01, v)) }] }}
+                width={SW - 64}
+                height={160}
+                chartConfig={CHART_CFG}
+                style={{ borderRadius: 10, marginLeft: -8 }}
+                withInnerLines={false}
+                showValuesOnTopOfBars={false}
+                yAxisLabel="$"
+                yAxisSuffix=""
+              />
+            )}
+            {chartType === 'pie' && catData && (
+              <PieChart
+                data={catData.map(([cat, amt], i) => ({
+                  name: cat.length > 10 ? cat.slice(0, 10) + '…' : cat,
+                  population: Math.round(amt * 100) / 100,
+                  color: CAT_COLORS[i % CAT_COLORS.length],
+                  legendFontColor: C.textSub,
+                  legendFontSize: 11,
+                }))}
+                width={SW - 64}
+                height={160}
+                chartConfig={CHART_CFG}
+                accessor="population"
+                backgroundColor="transparent"
+                paddingLeft="8"
+                absolute={false}
+              />
+            )}
           </View>
         </View>
 
@@ -895,6 +1039,47 @@ export default function App() {
             )}
           </View>
 
+          {/* Notifications */}
+          <View style={s.drawerGroup}>
+            <Text style={s.drawerGroupLabel}>Notifications</Text>
+            <View style={s.drawerRow}>
+              <Icon char="N" color={C.amber} size={32} />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={s.drawerRowText}>All Notifications</Text>
+                <Text style={s.drawerRowSub}>Master toggle for push alerts</Text>
+              </View>
+              <Switch value={notifOverall} onValueChange={toggleNotifOverall} trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff" />
+            </View>
+            {notifOverall && (
+              <>
+                <View style={[s.drawerRow, { paddingLeft: 12 }]}>
+                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.accent, marginRight: 10 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.drawerRowText}>Daily Newsletter</Text>
+                    <Text style={s.drawerRowSub}>AI spending summary every morning</Text>
+                  </View>
+                  <Switch value={notifDaily} onValueChange={v => toggleNotifPeriod('daily', v)} trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff" />
+                </View>
+                <View style={[s.drawerRow, { paddingLeft: 12 }]}>
+                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.blue, marginRight: 10 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.drawerRowText}>Weekly Newsletter</Text>
+                    <Text style={s.drawerRowSub}>Monday morning weekly recap</Text>
+                  </View>
+                  <Switch value={notifWeekly} onValueChange={v => toggleNotifPeriod('weekly', v)} trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff" />
+                </View>
+                <View style={[s.drawerRow, { paddingLeft: 12 }]}>
+                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.green, marginRight: 10 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.drawerRowText}>Monthly Newsletter</Text>
+                    <Text style={s.drawerRowSub}>Full month summary on the 1st</Text>
+                  </View>
+                  <Switch value={notifMonthly} onValueChange={v => toggleNotifPeriod('monthly', v)} trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff" />
+                </View>
+              </>
+            )}
+          </View>
+
           {/* Settings */}
           <View style={s.drawerGroup}>
             <Text style={s.drawerGroupLabel}>Settings</Text>
@@ -910,14 +1095,22 @@ export default function App() {
               <Text style={s.chevron}>›</Text>
             </TouchableOpacity>
             <View style={s.drawerRow}>
-              <Icon char="N" color={C.amber} size={32} />
-              <Text style={[s.drawerRowText, { flex: 1, marginLeft: 12 }]}>Notifications</Text>
-              <Switch value={notifs} onValueChange={setNotifs} trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff" />
-            </View>
-            <View style={s.drawerRow}>
               <Icon char="ID" color={C.green} size={32} />
               <Text style={[s.drawerRowText, { flex: 1, marginLeft: 12 }]}>Face ID / Biometrics</Text>
               <Switch value={biometrics} onValueChange={setBiometrics} trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff" />
+            </View>
+            <View style={s.drawerRow}>
+              <Icon char="◱" color={C.blue} size={32} />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={s.drawerRowText}>Android Home Widget</Text>
+                <Text style={s.drawerRowSub}>AI bubble on your home screen</Text>
+              </View>
+              <Switch
+                value={widgetEnabled}
+                onValueChange={v => { if (v) setWidgetInfoVisible(true); else setWidgetEnabled(false); }}
+                trackColor={{ false: C.border, true: C.accent }}
+                thumbColor="#fff"
+              />
             </View>
             <TouchableOpacity style={s.drawerRow}>
               <Icon char="P" color={C.textSub} size={32} />
@@ -1073,6 +1266,27 @@ export default function App() {
 
             <TouchableOpacity style={s.btn} onPress={() => setCustomizeVisible(false)}>
               <Text style={s.btnText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Widget Info Modal */}
+      <Modal visible={widgetInfoVisible} animationType="slide" transparent onRequestClose={() => setWidgetInfoVisible(false)}>
+        <View style={s.modalOverlay}>
+          <View style={s.modalCard}>
+            <Text style={s.modalTitle}>Android Home Widget</Text>
+            <View style={{ backgroundColor: C.bg, borderRadius: 14, padding: 16, marginBottom: 20, borderWidth: 1, borderColor: C.border }}>
+              <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700', marginBottom: 6 }}>◱  WealthPal AI Bubble</Text>
+              <Text style={{ color: C.textSub, fontSize: 13, lineHeight: 20 }}>
+                A floating AI chat bubble on your Android home screen with quick access to your account balance, recent transactions, and spending insights — powered by the same AI as the app.
+              </Text>
+            </View>
+            <Text style={{ color: C.textSub, fontSize: 13, lineHeight: 20, marginBottom: 24 }}>
+              This feature is available in the next app update. To get it, download the latest version of WealthPal AI from the Play Store once the update is live.
+            </Text>
+            <TouchableOpacity style={s.btn} onPress={() => { setWidgetInfoVisible(false); setWidgetEnabled(false); }}>
+              <Text style={s.btnText}>Got it</Text>
             </TouchableOpacity>
           </View>
         </View>

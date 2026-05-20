@@ -340,6 +340,35 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
 });
 
 // ============================================
+// NOTIFICATION SUMMARY ROUTE
+// ============================================
+
+app.get("/api/ai/notification-summary/:userId", async (req: Request, res: Response) => {
+  try {
+    const { userId } = req.params;
+    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+    const { data: txData } = await supabase
+      .from("transactions")
+      .select("merchant_name, amount, category, transaction_date")
+      .eq("user_id", userId)
+      .gte("transaction_date", cutoff)
+      .order("transaction_date", { ascending: false });
+
+    const total = (txData || []).reduce((s, t) => s + parseFloat(t.amount), 0);
+    const count = (txData || []).length;
+    const catMap: { [k: string]: number } = {};
+    (txData || []).forEach(t => { catMap[t.category] = (catMap[t.category] || 0) + parseFloat(t.amount); });
+    const topCat = Object.entries(catMap).sort(([, a], [, b]) => b - a)[0];
+
+    const prompt = `Generate a single short sentence (under 20 words) for a push notification spending summary. The user spent $${total.toFixed(2)} across ${count} transactions in the last 30 days. Top category: ${topCat ? `${topCat[0]} ($${topCat[1].toFixed(2)})` : "none"}. Be encouraging and specific.`;
+    const summary = await openaiService.chatWithAssistant(prompt, { monthly_income: 0, monthly_spending: total, top_categories: [], debt: [] });
+    res.json({ summary });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "Failed to generate summary" });
+  }
+});
+
+// ============================================
 // PROFILE ROUTES
 // ============================================
 
