@@ -27,16 +27,18 @@ app.get("/health", (req: Request, res: Response) => {
 
 app.post("/api/auth/signup", async (req: Request, res: Response) => {
   try {
-    const { email, password, fullName } = req.body;
+    const { email, password, fullName, firstName, lastName } = req.body;
     if (!email || !password) {
       return res.status(400).json({ error: "Email and password required" });
     }
-    const { user, error } = await auth.signupUser(email, password, fullName);
+    const fn = firstName || (fullName ? fullName.split(" ")[0] : "");
+    const ln = lastName || (fullName ? fullName.split(" ").slice(1).join(" ") : "");
+    const { user, error } = await auth.signupUser(email, password, fullName || `${fn} ${ln}`.trim());
     if (error) {
       return res.status(400).json({ error: (error as any).message || "Signup failed" });
     }
     if (user) {
-      await auth.createUserProfile(user.id, email, fullName);
+      await auth.createUserProfile(user.id, email, fn, ln);
     }
     res.json({ user, message: "Signup successful" });
   } catch (error) {
@@ -54,13 +56,19 @@ app.post("/api/auth/login", async (req: Request, res: Response) => {
     if (error) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
-    // Fetch full_name from users table and attach to response
-    let fullName = session?.user?.user_metadata?.full_name || null;
-    if (!fullName && session?.user?.id) {
+    let firstName = null, lastName = null;
+    if (session?.user?.id) {
       const { profile } = await auth.getUserProfile(session.user.id);
-      fullName = profile?.full_name || null;
+      firstName = profile?.["First Name"] || null;
+      lastName = profile?.["Last Name"] || null;
     }
-    res.json({ session, full_name: fullName, message: "Login successful" });
+    // Fallback to user_metadata if DB columns are empty
+    if (!firstName) {
+      const meta = session?.user?.user_metadata?.full_name || "";
+      firstName = meta.split(" ")[0] || null;
+      lastName = meta.split(" ").slice(1).join(" ") || null;
+    }
+    res.json({ session, first_name: firstName, last_name: lastName, message: "Login successful" });
   } catch (error) {
     res.status(500).json({ error: "Login failed" });
   }
@@ -203,6 +211,21 @@ app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) =
     const msg = error?.message || "Failed to sync transactions";
     console.error("Sync error:", msg);
     res.status(500).json({ error: msg });
+  }
+});
+
+app.patch("/api/transactions/:txId", async (req: Request, res: Response) => {
+  try {
+    const { txId } = req.params;
+    const { merchant_name, amount, category, transaction_date, description } = req.body;
+    const { error } = await supabase
+      .from("transactions")
+      .update({ merchant_name, amount, category, transaction_date, description, updated_at: new Date().toISOString() })
+      .eq("id", txId);
+    if (error) throw error;
+    res.json({ message: "Transaction updated" });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "Failed to update transaction" });
   }
 });
 
@@ -375,28 +398,140 @@ app.get("/api/ai/notification-summary/:userId", async (req: Request, res: Respon
 app.put("/api/auth/profile/:userId", async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
-    const { fullName, email } = req.body;
-    if (!userId || !fullName) {
-      return res.status(400).json({ error: "User ID and name required" });
+    const { firstName, lastName, email } = req.body;
+    if (!userId || !firstName) {
+      return res.status(400).json({ error: "User ID and first name required" });
     }
-    // First try UPDATE (row already exists)
     const { data: updated, error: updateError } = await supabase
       .from("users")
-      .update({ full_name: fullName })
+      .update({ "First Name": firstName, "Last Name": lastName || null })
       .eq("id", userId)
       .select();
     if (updateError) throw updateError;
-    // If no rows were updated (row doesn't exist yet), insert it
     if (!updated || updated.length === 0) {
       const { error: insertError } = await supabase
         .from("users")
-        .insert([{ id: userId, email: email || "", full_name: fullName }]);
+        .insert([{ id: userId, email: email || "", "First Name": firstName, "Last Name": lastName || null }]);
       if (insertError) throw insertError;
     }
     res.json({ message: "Profile updated" });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "Failed to update profile" });
   }
+});
+
+// ============================================
+// GOALS ROUTES
+// ============================================
+
+app.get("/api/goals/:userId", async (req: Request, res: Response) => {
+  try {
+    const { data, error } = await supabase.from("goals").select("*").eq("user_id", req.params.userId).order("created_at", { ascending: false });
+    if (error) throw error;
+    res.json({ goals: data || [] });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+app.post("/api/goals", async (req: Request, res: Response) => {
+  try {
+    const { user_id, type, title, target_amount, current_amount, category, deadline, notes } = req.body;
+    const { data, error } = await supabase.from("goals").insert([{ user_id, type, title, target_amount, current_amount: current_amount || 0, category, deadline, notes }]).select();
+    if (error) throw error;
+    res.json({ goal: data[0] });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+app.patch("/api/goals/:goalId", async (req: Request, res: Response) => {
+  try {
+    const fields = req.body;
+    const { error } = await supabase.from("goals").update({ ...fields, updated_at: new Date().toISOString() }).eq("id", req.params.goalId);
+    if (error) throw error;
+    res.json({ message: "Goal updated" });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+app.delete("/api/goals/:goalId", async (req: Request, res: Response) => {
+  try {
+    const { error } = await supabase.from("goals").delete().eq("id", req.params.goalId);
+    if (error) throw error;
+    res.json({ message: "Goal deleted" });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+// ============================================
+// GROUPS ROUTES
+// ============================================
+
+app.get("/api/groups/:userId", async (req: Request, res: Response) => {
+  try {
+    const { data, error } = await supabase.from("group_members").select("group_id, role, share_transactions, share_accounts, groups(id, name, created_by, created_at)").eq("user_id", req.params.userId);
+    if (error) throw error;
+    res.json({ groups: (data || []).map((r: any) => ({ ...r.groups, role: r.role, share_transactions: r.share_transactions, share_accounts: r.share_accounts })) });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+app.post("/api/groups", async (req: Request, res: Response) => {
+  try {
+    const { name, userId } = req.body;
+    const { data, error } = await supabase.from("groups").insert([{ name, created_by: userId }]).select();
+    if (error) throw error;
+    const group = data[0];
+    await supabase.from("group_members").insert([{ group_id: group.id, user_id: userId, email: req.body.email || "", role: "admin" }]);
+    res.json({ group });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+app.get("/api/groups/:groupId/detail", async (req: Request, res: Response) => {
+  try {
+    const [membersRes, goalsRes] = await Promise.all([
+      supabase.from("group_members").select("*").eq("group_id", req.params.groupId),
+      supabase.from("group_goals").select("*").eq("group_id", req.params.groupId),
+    ]);
+    res.json({ members: membersRes.data || [], goals: goalsRes.data || [] });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+app.post("/api/groups/:groupId/members", async (req: Request, res: Response) => {
+  try {
+    const { email, share_transactions, share_accounts } = req.body;
+    const { data: user } = await supabase.from("users").select("id").eq("email", email).single();
+    const { error } = await supabase.from("group_members").upsert([{ group_id: req.params.groupId, user_id: user?.id || null, email, share_transactions: share_transactions ?? false, share_accounts: share_accounts ?? false }]);
+    if (error) throw error;
+    res.json({ message: "Member added" });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+app.patch("/api/groups/:groupId/members/:email", async (req: Request, res: Response) => {
+  try {
+    const { share_transactions, share_accounts } = req.body;
+    const { error } = await supabase.from("group_members").update({ share_transactions, share_accounts }).eq("group_id", req.params.groupId).eq("email", req.params.email);
+    if (error) throw error;
+    res.json({ message: "Member updated" });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+app.delete("/api/groups/:groupId/members/:email", async (req: Request, res: Response) => {
+  try {
+    await supabase.from("group_members").delete().eq("group_id", req.params.groupId).eq("email", req.params.email);
+    res.json({ message: "Member removed" });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+app.post("/api/groups/:groupId/goals", async (req: Request, res: Response) => {
+  try {
+    const { title, target_amount, deadline, created_by } = req.body;
+    const { data, error } = await supabase.from("group_goals").insert([{ group_id: req.params.groupId, title, target_amount, current_amount: 0, deadline, created_by }]).select();
+    if (error) throw error;
+    res.json({ goal: data[0] });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+app.patch("/api/groups/:groupId/goals/:goalId", async (req: Request, res: Response) => {
+  try {
+    const { error } = await supabase.from("group_goals").update(req.body).eq("id", req.params.goalId);
+    if (error) throw error;
+    res.json({ message: "Goal updated" });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
 // ============================================

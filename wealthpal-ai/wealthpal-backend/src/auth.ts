@@ -30,11 +30,11 @@ export async function loginUser(email: string, password: string) {
   }
 }
 
-export async function createUserProfile(userId: string, email: string, fullName?: string) {
+export async function createUserProfile(userId: string, email: string, firstName?: string, lastName?: string) {
   try {
     const { data, error } = await supabase
       .from("users")
-      .insert([{ id: userId, email, full_name: fullName || null }])
+      .insert([{ id: userId, email, "First Name": firstName || null, "Last Name": lastName || null }])
       .select();
 
     if (error) throw error;
@@ -48,7 +48,7 @@ export async function getUserProfile(userId: string) {
   try {
     const { data, error } = await supabase
       .from("users")
-      .select("full_name, email")
+      .select('"First Name", "Last Name", email')
       .eq("id", userId)
       .single();
     if (error) throw error;

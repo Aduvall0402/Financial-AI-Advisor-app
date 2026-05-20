@@ -193,6 +193,36 @@ export default function App() {
   // Chart type for insights
   const [chartType, setChartType] = useState('line');
 
+  // Insights filters
+  const [insightsRange, setInsightsRange] = useState('30d');
+  const [selectedCategory, setSelectedCategory] = useState(null);
+
+  // Transaction edit
+  const [editTxVisible, setEditTxVisible] = useState(false);
+  const [editingTx, setEditingTx] = useState(null);
+  const [editTxFields, setEditTxFields] = useState({});
+  const [savingTx, setSavingTx] = useState(false);
+
+  // Goals
+  const [goals, setGoals] = useState([]);
+  const [goalsLoading, setGoalsLoading] = useState(false);
+  const [addGoalVisible, setAddGoalVisible] = useState(false);
+  const [addGoalType, setAddGoalType] = useState('savings');
+  const [newGoal, setNewGoal] = useState({});
+  const [savingGoal, setSavingGoal] = useState(false);
+
+  // Groups
+  const [groupMode, setGroupMode] = useState(false);
+  const [groupsVisible, setGroupsVisible] = useState(false);
+  const [groups, setGroups] = useState([]);
+  const [currentGroup, setCurrentGroup] = useState(null);
+  const [groupDetail, setGroupDetail] = useState({ members: [], goals: [] });
+  const [createGroupVisible, setCreateGroupVisible] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [addMemberEmail, setAddMemberEmail] = useState('');
+  const [addGroupGoalVisible, setAddGroupGoalVisible] = useState(false);
+  const [newGroupGoal, setNewGroupGoal] = useState({});
+
   // Edit profile
   const [editProfileVisible, setEditProfileVisible] = useState(false);
 
@@ -264,9 +294,7 @@ export default function App() {
       const data = await res.json();
       if (!res.ok) { setError(data.error || 'Login failed'); return; }
       const uid = data.session.user.id;
-      // Get name from login response (users table) or user_metadata
-      const name = data.full_name || data.session.user.user_metadata?.full_name || '';
-      const firstName = name ? name.split(' ')[0] : email.split('@')[0];
+      const firstName = data.first_name || data.session.user.user_metadata?.full_name?.split(' ')[0] || email.split('@')[0];
       setUserId(uid); userIdRef.current = uid;
       setDisplayName(firstName);
       AsyncStorage.setItem('displayName', firstName);
@@ -280,6 +308,8 @@ export default function App() {
       setDashboardLoading(false);
       fetchAccounts(uid);
       fetchTransactions(uid);
+      fetchGoals(uid);
+      fetchGroups(uid);
     } catch { setError('Could not connect to server'); }
     finally { setLoading(false); }
   };
@@ -295,7 +325,7 @@ export default function App() {
     try {
       const res = await fetch(`${API_URL}/api/auth/signup`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, fullName }),
+        body: JSON.stringify({ email, password, fullName, firstName: firstName.trim(), lastName: lastName.trim() }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error || 'Signup failed'); return; }
@@ -314,6 +344,8 @@ export default function App() {
       // ✅ ADDED THESE TWO LINES:
       fetchAccounts(uid);
       fetchTransactions(uid);
+      fetchGoals(uid);
+      fetchGroups(uid);
     } catch { setError('Could not connect to server'); }
     finally { setLoading(false); }
   };
@@ -402,7 +434,7 @@ export default function App() {
     try {
       const res = await fetch(`${API_URL}/api/auth/profile/${userIdRef.current}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fullName, email }),
+        body: JSON.stringify({ firstName: editFirst.trim(), lastName: editLast.trim(), email }),
       });
       if (!res.ok) throw new Error('Failed to save');
       setDisplayName(editFirst.trim());
@@ -531,18 +563,60 @@ export default function App() {
     } finally { setLoadingChat(false); }
   };
 
+  // ── Goals / Groups fetch ─────────────────────────────
+  const fetchGoals = async (uid) => {
+    const id = uid || userIdRef.current;
+    if (!id) return;
+    setGoalsLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/goals/${id}`);
+      const d = await res.json();
+      setGoals(d.goals || []);
+    } catch {}
+    finally { setGoalsLoading(false); }
+  };
+
+  const fetchGroups = async (uid) => {
+    const id = uid || userIdRef.current;
+    if (!id) return;
+    try {
+      const res = await fetch(`${API_URL}/api/groups/${id}`);
+      const d = await res.json();
+      setGroups(d.groups || []);
+    } catch {}
+  };
+
+  const fetchGroupDetail = async (groupId) => {
+    try {
+      const res = await fetch(`${API_URL}/api/groups/${groupId}/detail`);
+      const d = await res.json();
+      setGroupDetail(d);
+    } catch {}
+  };
+
   // ── Insight helpers ─────────────────────────────────
+  const getFilteredTx = () => {
+    const ranges = { '7d': 7, '30d': 30, '3m': 90, '6m': 180, 'all': 99999 };
+    const days = ranges[insightsRange] || 30;
+    const cutoff = Date.now() - days * 86400000;
+    return transactions.filter(tx => new Date(tx.transaction_date).getTime() >= cutoff);
+  };
+
   const getCatData = () => {
-    if (!transactions.length) return null;
+    const txs = getFilteredTx();
+    if (!txs.length) return null;
     const m = {};
-    transactions.forEach(tx => { const c = tx.category || 'Other'; m[c] = (m[c] || 0) + parseFloat(tx.amount || 0); });
+    txs.forEach(tx => { const c = tx.category || 'Other'; m[c] = (m[c] || 0) + parseFloat(tx.amount || 0); });
     return Object.entries(m).sort(([, a], [, b]) => b - a).slice(0, 5);
   };
 
   const getWeeklyData = () => {
+    const txs = selectedCategory
+      ? getFilteredTx().filter(tx => tx.category === selectedCategory)
+      : getFilteredTx();
     const weeks = [0, 0, 0, 0];
     const now = Date.now();
-    transactions.forEach(tx => {
+    txs.forEach(tx => {
       const days = Math.floor((now - new Date(tx.transaction_date || tx.date)) / 86400000);
       const w = Math.min(3, Math.floor(days / 7));
       weeks[3 - w] += parseFloat(tx.amount || 0);
@@ -724,24 +798,6 @@ export default function App() {
           </TouchableOpacity>
         )}
 
-        {/* Top spending */}
-        {catData && catData.length > 0 && (
-          <View style={s.section}>
-            <Text style={s.sectionTitle}>Top Spending</Text>
-            {catData.map(([cat, amt], i) => (
-              <View key={cat} style={s.catRow}>
-                <View style={s.catInfo}>
-                  <Text style={s.catName}>{cat}</Text>
-                  <Text style={s.catAmt}>${fmtMoney(amt)}</Text>
-                </View>
-                <View style={s.barBg}>
-                  <View style={[s.bar, { width: `${(amt / catData[0][1]) * 100}%`, backgroundColor: CAT_COLORS[i] }]} />
-                </View>
-              </View>
-            ))}
-          </View>
-        )}
-
         {/* Connect bank prompt */}
         {!linkedAccount && !accountsError && (
           <View style={s.connectCard}>
@@ -762,10 +818,11 @@ export default function App() {
   // INSIGHTS TAB
   // ════════════════════════════════════════════════════
   const renderInsights = () => {
+    const filteredTx = getFilteredTx();
     const catData = getCatData();
     const weeklyData = getWeeklyData();
-    const total = transactions.reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
-    const avg = transactions.length ? total / transactions.length : 0;
+    const total = filteredTx.reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+    const avg = filteredTx.length ? total / filteredTx.length : 0;
 
     if (!transactions.length) {
       return (
@@ -779,6 +836,19 @@ export default function App() {
 
     return (
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}>
+        {/* Date range filter */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+          {[['7d','7D'],['30d','30D'],['3m','3M'],['6m','6M'],['all','All']].map(([key, label]) => (
+            <TouchableOpacity
+              key={key}
+              onPress={() => { setInsightsRange(key); setSelectedCategory(null); }}
+              style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, marginRight: 8, backgroundColor: insightsRange === key ? C.accent : C.surface, borderWidth: 1, borderColor: insightsRange === key ? C.accent : C.border }}
+            >
+              <Text style={{ color: insightsRange === key ? '#fff' : C.textSub, fontSize: 13, fontWeight: '600' }}>{label}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
         <View style={s.statsRow}>
           <View style={s.statCard}>
             <Text style={s.statLabel}>Total Spent</Text>
@@ -791,8 +861,15 @@ export default function App() {
         </View>
 
         <View style={s.section}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-            <Text style={s.sectionTitle}>Spending Chart</Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <View>
+              <Text style={s.sectionTitle}>Spending Chart</Text>
+              {selectedCategory && (
+                <TouchableOpacity onPress={() => setSelectedCategory(null)} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+                  <Text style={{ color: C.accent, fontSize: 11, fontWeight: '600' }}>● {selectedCategory}  ✕ clear</Text>
+                </TouchableOpacity>
+              )}
+            </View>
             <View style={{ flexDirection: 'row', backgroundColor: C.surface2, borderRadius: 10, borderWidth: 1, borderColor: C.border, overflow: 'hidden' }}>
               {[['line', '↗'], ['bar', '▌▌'], ['pie', '◔']].map(([type, icon]) => (
                 <TouchableOpacity
@@ -809,43 +886,23 @@ export default function App() {
             {chartType === 'line' && (
               <LineChart
                 data={{ labels: ['3 wks', '2 wks', 'Last wk', 'This wk'], datasets: [{ data: weeklyData.map(v => Math.max(0.01, v)) }] }}
-                width={SW - 64}
-                height={160}
-                chartConfig={CHART_CFG}
-                bezier
-                style={{ borderRadius: 10, marginLeft: -8 }}
-                withInnerLines={false}
+                width={SW - 64} height={160} chartConfig={CHART_CFG} bezier
+                style={{ borderRadius: 10, marginLeft: -8 }} withInnerLines={false}
               />
             )}
             {chartType === 'bar' && (
               <BarChart
                 data={{ labels: ['3 wks', '2 wks', 'Last wk', 'This wk'], datasets: [{ data: weeklyData.map(v => Math.max(0.01, v)) }] }}
-                width={SW - 64}
-                height={160}
-                chartConfig={CHART_CFG}
-                style={{ borderRadius: 10, marginLeft: -8 }}
-                withInnerLines={false}
-                showValuesOnTopOfBars={false}
-                yAxisLabel="$"
-                yAxisSuffix=""
+                width={SW - 64} height={160} chartConfig={CHART_CFG}
+                style={{ borderRadius: 10, marginLeft: -8 }} withInnerLines={false}
+                showValuesOnTopOfBars={false} yAxisLabel="$" yAxisSuffix=""
               />
             )}
             {chartType === 'pie' && catData && (
               <PieChart
-                data={catData.map(([cat, amt], i) => ({
-                  name: cat.length > 10 ? cat.slice(0, 10) + '…' : cat,
-                  population: Math.round(amt * 100) / 100,
-                  color: CAT_COLORS[i % CAT_COLORS.length],
-                  legendFontColor: C.textSub,
-                  legendFontSize: 11,
-                }))}
-                width={SW - 64}
-                height={160}
-                chartConfig={CHART_CFG}
-                accessor="population"
-                backgroundColor="transparent"
-                paddingLeft="8"
-                absolute={false}
+                data={catData.map(([cat, amt], i) => ({ name: cat.length > 10 ? cat.slice(0, 10) + '…' : cat, population: Math.round(amt * 100) / 100, color: CAT_COLORS[i % CAT_COLORS.length], legendFontColor: C.textSub, legendFontSize: 11 }))}
+                width={SW - 64} height={160} chartConfig={CHART_CFG} accessor="population"
+                backgroundColor="transparent" paddingLeft="8" absolute={false}
               />
             )}
           </View>
@@ -853,15 +910,22 @@ export default function App() {
 
         {catData && (
           <View style={s.section}>
-            <Text style={s.sectionTitle}>Spending by Category</Text>
+            <Text style={[s.sectionTitle, { marginBottom: 4 }]}>Spending by Category</Text>
+            <Text style={{ color: C.textMuted, fontSize: 11, marginBottom: 14 }}>Tap a category to filter chart</Text>
             {catData.map(([cat, amt], i) => {
               const pct = total > 0 ? Math.round((amt / total) * 100) : 0;
+              const isSelected = selectedCategory === cat;
               return (
-                <View key={cat} style={s.insightCard}>
+                <TouchableOpacity
+                  key={cat}
+                  onPress={() => chartType !== 'pie' ? setSelectedCategory(isSelected ? null : cat) : null}
+                  activeOpacity={chartType !== 'pie' ? 0.7 : 1}
+                  style={[s.insightCard, isSelected && { borderColor: CAT_COLORS[i], borderWidth: 2 }]}
+                >
                   <View style={[s.insightDot, { backgroundColor: CAT_COLORS[i] }]} />
                   <View style={{ flex: 1 }}>
                     <View style={s.catInfo}>
-                      <Text style={s.catName}>{cat}</Text>
+                      <Text style={[s.catName, isSelected && { color: CAT_COLORS[i] }]}>{cat}</Text>
                       <Text style={s.catAmt}>${fmtMoney(amt)}</Text>
                     </View>
                     <View style={s.barBg}>
@@ -869,7 +933,7 @@ export default function App() {
                     </View>
                   </View>
                   <Text style={[s.pct, { color: CAT_COLORS[i] }]}>{pct}%</Text>
-                </View>
+                </TouchableOpacity>
               );
             })}
           </View>
@@ -879,9 +943,7 @@ export default function App() {
           <View style={[s.highlightCard, { borderColor: CAT_COLORS[0] }]}>
             <Text style={s.highlightLabel}>Biggest Category</Text>
             <Text style={s.highlightValue}>{catData[0][0]}</Text>
-            <Text style={s.highlightSub}>
-              ${fmtMoney(catData[0][1])} · {Math.round((catData[0][1] / total) * 100)}% of spending
-            </Text>
+            <Text style={s.highlightSub}>${fmtMoney(catData[0][1])} · {Math.round((catData[0][1] / total) * 100)}% of spending</Text>
           </View>
         )}
 
@@ -928,18 +990,25 @@ export default function App() {
           contentContainerStyle={{ padding: 16, paddingTop: 4 }}
           showsVerticalScrollIndicator={false}
           renderItem={({ item }) => (
-            <View style={s.txItem}>
+            <TouchableOpacity
+              style={s.txItem}
+              onPress={() => {
+                setEditingTx(item);
+                setEditTxFields({ merchant_name: item.merchant_name, amount: String(item.amount), category: item.category, transaction_date: item.transaction_date, description: item.description || '' });
+                setEditTxVisible(true);
+              }}
+              activeOpacity={0.75}
+            >
               <CatIcon category={item.category} />
               <View style={{ flex: 1 }}>
-                <Text style={s.txMerchant} numberOfLines={1}>
-                  {item.merchant_name || item.description || 'Unknown'}
-                </Text>
-                <Text style={s.txMeta}>
-                  {fmtDate(item.transaction_date)} · {item.category || 'Other'}
-                </Text>
+                <Text style={s.txMerchant} numberOfLines={1}>{item.merchant_name || item.description || 'Unknown'}</Text>
+                <Text style={s.txMeta}>{fmtDate(item.transaction_date)} · {item.category || 'Other'}</Text>
               </View>
-              <Text style={s.txAmt}>-${fmtMoney(item.amount)}</Text>
-            </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={s.txAmt}>-${fmtMoney(item.amount)}</Text>
+                <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 2 }}>tap to edit</Text>
+              </View>
+            </TouchableOpacity>
           )}
         />
       )}
@@ -947,6 +1016,225 @@ export default function App() {
   );
 
   // ════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════
+  // GOALS TAB
+  // ════════════════════════════════════════════════════
+  const renderGoals = () => {
+    const GOAL_TYPES = [
+      { key: 'debt_payoff', label: 'Debt Payoff', icon: '⬇', color: C.red, desc: 'Pay off debts strategically' },
+      { key: 'savings', label: 'Savings', icon: '★', color: C.green, desc: 'Build toward a savings target' },
+      { key: 'spending_behavior', label: 'Spending Behavior', icon: '◎', color: C.amber, desc: 'Control category spending' },
+      { key: 'streak', label: 'Budget Streak', icon: '🔥', color: C.accent, desc: 'Stay under budget daily' },
+    ];
+    const byType = (type) => goals.filter(g => g.type === type);
+    const GoalCard = ({ goal }) => {
+      const pct = goal.target_amount > 0 ? Math.min(100, Math.round((goal.current_amount / goal.target_amount) * 100)) : 0;
+      const typeColor = GOAL_TYPES.find(t => t.key === goal.type)?.color || C.accent;
+      return (
+        <View style={[s.insightCard, { flexDirection: 'column', alignItems: 'stretch', gap: 8 }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={{ color: C.text, fontSize: 14, fontWeight: '600', flex: 1 }} numberOfLines={1}>{goal.title}</Text>
+            {goal.is_completed && <Text style={{ color: C.green, fontSize: 11, fontWeight: '700' }}>✓ Done</Text>}
+          </View>
+          {goal.target_amount > 0 && (
+            <>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <Text style={{ color: C.textSub, fontSize: 12 }}>${fmtMoney(goal.current_amount)} / ${fmtMoney(goal.target_amount)}</Text>
+                <Text style={{ color: typeColor, fontSize: 12, fontWeight: '700' }}>{pct}%</Text>
+              </View>
+              <View style={s.barBg}><View style={[s.bar, { width: `${pct}%`, backgroundColor: typeColor }]} /></View>
+            </>
+          )}
+          {goal.type === 'streak' && (
+            <View style={{ flexDirection: 'row', gap: 16 }}>
+              <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700' }}>🔥 {goal.streak_count || 0} day streak</Text>
+              <Text style={{ color: C.textSub, fontSize: 13 }}>Best: {goal.streak_best || 0}</Text>
+            </View>
+          )}
+          {goal.deadline && <Text style={{ color: C.textMuted, fontSize: 11 }}>Target: {fmtDate(goal.deadline)}</Text>}
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 2 }}>
+            <TouchableOpacity
+              style={{ flex: 1, backgroundColor: C.surface2, borderRadius: 8, paddingVertical: 6, alignItems: 'center' }}
+              onPress={async () => {
+                const newAmt = goal.current_amount + 1;
+                await fetch(`${API_URL}/api/goals/${goal.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current_amount: newAmt, is_completed: newAmt >= goal.target_amount }) });
+                fetchGoals();
+              }}
+            >
+              <Text style={{ color: C.accent, fontSize: 12, fontWeight: '600' }}>+ Update</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={{ backgroundColor: '#1a0808', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 6, alignItems: 'center' }}
+              onPress={async () => { await fetch(`${API_URL}/api/goals/${goal.id}`, { method: 'DELETE' }); fetchGoals(); }}
+            >
+              <Text style={{ color: C.red, fontSize: 12, fontWeight: '600' }}>Delete</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      );
+    };
+    return (
+      <ScrollView style={s.tab} showsVerticalScrollIndicator={false}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, marginTop: 4 }}>
+          <Text style={{ color: C.text, fontSize: 20, fontWeight: '700' }}>My Goals</Text>
+          <TouchableOpacity style={s.syncBtn} onPress={() => { setNewGoal({}); setAddGoalType('savings'); setAddGoalVisible(true); }}>
+            <Text style={s.syncText}>+ New Goal</Text>
+          </TouchableOpacity>
+        </View>
+        {goalsLoading && <ActivityIndicator color={C.accent} style={{ marginTop: 40 }} />}
+        {!goalsLoading && goals.length === 0 && (
+          <View style={[s.connectCard, { alignItems: 'center', paddingVertical: 40 }]}>
+            <Icon char="★" color={C.accent} size={52} radius={16} />
+            <Text style={[s.emptyTitle, { marginTop: 16 }]}>No goals yet</Text>
+            <Text style={[s.emptyText, { marginBottom: 20 }]}>Set debt payoff, savings, spending, or streak goals to stay on track.</Text>
+            <TouchableOpacity style={s.btn} onPress={() => { setNewGoal({}); setAddGoalVisible(true); }}>
+              <Text style={s.btnText}>Create First Goal</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        {GOAL_TYPES.map(({ key, label, icon, color }) => byType(key).length > 0 && (
+          <View key={key} style={s.section}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 8 }}>
+              <Icon char={icon} color={color} size={28} radius={8} />
+              <Text style={s.sectionTitle}>{label}</Text>
+            </View>
+            {byType(key).map(g => <GoalCard key={g.id} goal={g} />)}
+          </View>
+        ))}
+        <View style={{ height: 24 }} />
+      </ScrollView>
+    );
+  };
+
+  // ════════════════════════════════════════════════════
+  // GROUPS SCREEN
+  // ════════════════════════════════════════════════════
+  const renderGroupsScreen = () => (
+    <View style={{ flex: 1, backgroundColor: C.bg }}>
+      <View style={[s.header, { backgroundColor: C.surface }]}>
+        <View>
+          <Text style={s.headerGreet}>Group Mode</Text>
+          <Text style={s.headerName}>{currentGroup ? currentGroup.name : 'My Groups'}</Text>
+        </View>
+        <TouchableOpacity onPress={() => setGroupMode(false)} style={{ backgroundColor: C.accent, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 }}>
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>✕ Exit</Text>
+        </TouchableOpacity>
+      </View>
+      {!currentGroup ? (
+        <ScrollView style={{ flex: 1, padding: 16 }}>
+          <TouchableOpacity style={[s.btn, { marginBottom: 20 }]} onPress={() => setCreateGroupVisible(true)}>
+            <Text style={s.btnText}>+ Create New Group</Text>
+          </TouchableOpacity>
+          {groups.length === 0 && (
+            <View style={[s.connectCard, { alignItems: 'center', paddingVertical: 32 }]}>
+              <Icon char="◈" color={C.accent} size={52} radius={16} />
+              <Text style={[s.emptyTitle, { marginTop: 16 }]}>No groups yet</Text>
+              <Text style={s.emptyText}>Create a group to share goals and financial insights with friends or family.</Text>
+            </View>
+          )}
+          {groups.map(g => (
+            <TouchableOpacity key={g.id} style={s.txItem} onPress={() => { setCurrentGroup(g); fetchGroupDetail(g.id); }}>
+              <Icon char={g.name[0].toUpperCase()} color={C.accent} size={42} radius={12} />
+              <View style={{ flex: 1 }}>
+                <Text style={s.txMerchant}>{g.name}</Text>
+                <Text style={s.txMeta}>{g.role === 'admin' ? 'Admin' : 'Member'}</Text>
+              </View>
+              <Text style={s.chevron}>›</Text>
+            </TouchableOpacity>
+          ))}
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      ) : (
+        <ScrollView style={{ flex: 1, padding: 16 }}>
+          <TouchableOpacity onPress={() => setCurrentGroup(null)} style={{ marginBottom: 16 }}>
+            <Text style={{ color: C.accent, fontSize: 14, fontWeight: '600' }}>‹ All Groups</Text>
+          </TouchableOpacity>
+          {/* Members */}
+          <View style={s.section}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={s.sectionTitle}>Members</Text>
+              <TouchableOpacity style={s.syncBtn} onPress={() => setAddMemberEmail('')}>
+                <Text style={s.syncText}>+ Invite</Text>
+              </TouchableOpacity>
+            </View>
+            {groupDetail.members.map(m => (
+              <View key={m.id} style={s.txItem}>
+                <Icon char={(m.email?.[0] || '?').toUpperCase()} color={C.blue} size={42} radius={12} />
+                <View style={{ flex: 1 }}>
+                  <Text style={s.txMerchant} numberOfLines={1}>{m.email}</Text>
+                  <Text style={s.txMeta}>{m.role}</Text>
+                </View>
+                <View style={{ gap: 4 }}>
+                  {m.share_transactions && <Text style={{ color: C.green, fontSize: 10 }}>Txns ✓</Text>}
+                  {m.share_accounts && <Text style={{ color: C.green, fontSize: 10 }}>Accts ✓</Text>}
+                </View>
+              </View>
+            ))}
+            {/* Invite row */}
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+              <TextInput
+                style={[s.input, { flex: 1, marginBottom: 0 }]}
+                placeholder="Email to invite…"
+                placeholderTextColor={C.textMuted}
+                value={addMemberEmail}
+                onChangeText={setAddMemberEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+              <TouchableOpacity
+                style={{ backgroundColor: C.accent, borderRadius: 14, paddingHorizontal: 16, justifyContent: 'center' }}
+                onPress={async () => {
+                  if (!addMemberEmail.trim()) return;
+                  await fetch(`${API_URL}/api/groups/${currentGroup.id}/members`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: addMemberEmail.trim() }) });
+                  setAddMemberEmail('');
+                  fetchGroupDetail(currentGroup.id);
+                }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700' }}>Add</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+          {/* Group Goals */}
+          <View style={s.section}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={s.sectionTitle}>Group Goals</Text>
+              <TouchableOpacity style={s.syncBtn} onPress={() => { setNewGroupGoal({}); setAddGroupGoalVisible(true); }}>
+                <Text style={s.syncText}>+ Goal</Text>
+              </TouchableOpacity>
+            </View>
+            {groupDetail.goals.length === 0 && <Text style={{ color: C.textSub, fontSize: 13 }}>No group goals yet.</Text>}
+            {groupDetail.goals.map(g => {
+              const pct = g.target_amount > 0 ? Math.min(100, Math.round((g.current_amount / g.target_amount) * 100)) : 0;
+              return (
+                <View key={g.id} style={[s.insightCard, { flexDirection: 'column', gap: 8 }]}>
+                  <Text style={{ color: C.text, fontWeight: '600' }}>{g.title}</Text>
+                  {g.target_amount > 0 && (
+                    <>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                        <Text style={{ color: C.textSub, fontSize: 12 }}>${fmtMoney(g.current_amount)} / ${fmtMoney(g.target_amount)}</Text>
+                        <Text style={{ color: C.accent, fontSize: 12, fontWeight: '700' }}>{pct}%</Text>
+                      </View>
+                      <View style={s.barBg}><View style={[s.bar, { width: `${pct}%`, backgroundColor: C.accent }]} /></View>
+                    </>
+                  )}
+                  {g.deadline && <Text style={{ color: C.textMuted, fontSize: 11 }}>By {fmtDate(g.deadline)}</Text>}
+                </View>
+              );
+            })}
+          </View>
+          {/* Privacy */}
+          <View style={s.section}>
+            <Text style={s.sectionTitle}>My Privacy Settings</Text>
+            <Text style={{ color: C.textSub, fontSize: 13, lineHeight: 20 }}>
+              Control what group members can see. Toggle sharing per-member using the member list above. Your personal data is only shared when you explicitly allow it.
+            </Text>
+          </View>
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      )}
+    </View>
+  );
+
   // CHAT TAB
   // ════════════════════════════════════════════════════
   const renderChat = () => (
@@ -1192,34 +1480,51 @@ export default function App() {
           <Text style={s.headerGreet}>Welcome back,</Text>
           <Text style={s.headerName}>{displayName || 'User'}</Text>
         </View>
-        <TouchableOpacity style={s.menuBtn} onPress={openDrawer}>
-          <View style={s.menuLine} />
-          <View style={[s.menuLine, { width: 18 }]} />
-          <View style={[s.menuLine, { width: 22 }]} />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <TouchableOpacity
+            onPress={() => { setGroupMode(true); fetchGroups(); }}
+            style={{ backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 6 }}
+          >
+            <Text style={{ color: C.textSub, fontSize: 15 }}>◈</Text>
+            <Text style={{ color: C.textSub, fontSize: 12, fontWeight: '600' }}>Groups</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={s.menuBtn} onPress={openDrawer}>
+            <View style={s.menuLine} />
+            <View style={[s.menuLine, { width: 18 }]} />
+            <View style={[s.menuLine, { width: 22 }]} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={{ flex: 1 }}>
-        {activeTab === 'dashboard' && renderDashboard()}
-        {activeTab === 'insights' && renderInsights()}
-        {activeTab === 'transactions' && renderTransactions()}
-        {activeTab === 'chat' && renderChat()}
+        {groupMode ? renderGroupsScreen() : (
+          <>
+            {activeTab === 'dashboard' && renderDashboard()}
+            {activeTab === 'insights' && renderInsights()}
+            {activeTab === 'transactions' && renderTransactions()}
+            {activeTab === 'goals' && renderGoals()}
+            {activeTab === 'chat' && renderChat()}
+          </>
+        )}
       </View>
 
-      <View style={s.bottomNav}>
-        {[
-          { id: 'dashboard', label: 'Home', icon: '⌂' },
-          { id: 'insights', label: 'Insights', icon: '◈' },
-          { id: 'transactions', label: 'Transactions', icon: '≡' },
-          { id: 'chat', label: 'AI Chat', icon: '✦' },
-        ].map(tab => (
-          <TouchableOpacity key={tab.id} style={s.navTab} onPress={() => setActiveTab(tab.id)}>
-            <Text style={[s.navIcon, activeTab === tab.id && s.navIconOn]}>{tab.icon}</Text>
-            <Text style={[s.navLabel, activeTab === tab.id && s.navLabelOn]}>{tab.label}</Text>
-            {activeTab === tab.id && <View style={s.navDot} />}
-          </TouchableOpacity>
-        ))}
-      </View>
+      {!groupMode && (
+        <View style={s.bottomNav}>
+          {[
+            { id: 'dashboard', label: 'Home', icon: '⌂' },
+            { id: 'insights', label: 'Insights', icon: '◈' },
+            { id: 'transactions', label: 'Txns', icon: '≡' },
+            { id: 'goals', label: 'Goals', icon: '★' },
+            { id: 'chat', label: 'AI Chat', icon: '✦' },
+          ].map(tab => (
+            <TouchableOpacity key={tab.id} style={s.navTab} onPress={() => setActiveTab(tab.id)}>
+              <Text style={[s.navIcon, activeTab === tab.id && s.navIconOn]}>{tab.icon}</Text>
+              <Text style={[s.navLabel, activeTab === tab.id && s.navLabelOn]}>{tab.label}</Text>
+              {activeTab === tab.id && <View style={s.navDot} />}
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
 
       {drawerOpen && renderDrawer()}
 
@@ -1325,6 +1630,154 @@ export default function App() {
           </View>
         </View>
       </Modal>
+      {/* Transaction Edit Modal */}
+      <Modal visible={editTxVisible} animationType="slide" transparent onRequestClose={() => setEditTxVisible(false)}>
+        <View style={s.modalOverlay}>
+          <View style={s.modalCard}>
+            <Text style={s.modalTitle}>Edit Transaction</Text>
+            <Text style={s.label}>Merchant / Name</Text>
+            <TextInput style={s.input} value={editTxFields.merchant_name} onChangeText={v => setEditTxFields(p => ({...p, merchant_name: v}))} placeholderTextColor={C.textMuted} />
+            <Text style={s.label}>Amount ($)</Text>
+            <TextInput style={s.input} value={editTxFields.amount} onChangeText={v => setEditTxFields(p => ({...p, amount: v}))} keyboardType="decimal-pad" placeholderTextColor={C.textMuted} />
+            <Text style={s.label}>Category</Text>
+            <TextInput style={s.input} value={editTxFields.category} onChangeText={v => setEditTxFields(p => ({...p, category: v}))} placeholderTextColor={C.textMuted} />
+            <Text style={s.label}>Date (YYYY-MM-DD)</Text>
+            <TextInput style={s.input} value={editTxFields.transaction_date} onChangeText={v => setEditTxFields(p => ({...p, transaction_date: v}))} placeholderTextColor={C.textMuted} />
+            <Text style={s.label}>Description</Text>
+            <TextInput style={s.input} value={editTxFields.description} onChangeText={v => setEditTxFields(p => ({...p, description: v}))} placeholderTextColor={C.textMuted} />
+            <TouchableOpacity
+              style={[s.btn, savingTx && s.btnOff]}
+              disabled={savingTx}
+              onPress={async () => {
+                setSavingTx(true);
+                try {
+                  await fetch(`${API_URL}/api/transactions/${editingTx.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...editTxFields, amount: parseFloat(editTxFields.amount) }) });
+                  setEditTxVisible(false);
+                  fetchTransactions();
+                } catch {}
+                finally { setSavingTx(false); }
+              }}
+            >
+              {savingTx ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Save Changes</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity style={s.linkRow} onPress={() => setEditTxVisible(false)}><Text style={s.linkText}>Cancel</Text></TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Add Goal Modal */}
+      <Modal visible={addGoalVisible} animationType="slide" transparent onRequestClose={() => setAddGoalVisible(false)}>
+        <View style={s.modalOverlay}>
+          <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end' }}>
+            <View style={s.modalCard}>
+              <Text style={s.modalTitle}>New Goal</Text>
+              <Text style={s.label}>Goal Type</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 18 }}>
+                {[['savings','★ Savings'],['debt_payoff','⬇ Debt Payoff'],['spending_behavior','◎ Spending'],['streak','🔥 Streak']].map(([k, l]) => (
+                  <TouchableOpacity key={k} onPress={() => setAddGoalType(k)} style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, marginRight: 8, backgroundColor: addGoalType === k ? C.accent : C.surface, borderWidth: 1, borderColor: addGoalType === k ? C.accent : C.border }}>
+                    <Text style={{ color: addGoalType === k ? '#fff' : C.textSub, fontSize: 13, fontWeight: '600' }}>{l}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              <Text style={s.label}>Title</Text>
+              <TextInput style={s.input} placeholder={addGoalType === 'debt_payoff' ? 'e.g. Pay off car loan' : addGoalType === 'savings' ? 'e.g. Emergency fund' : addGoalType === 'spending_behavior' ? 'e.g. Reduce dining out' : 'e.g. Under budget streak'} placeholderTextColor={C.textMuted} value={newGoal.title || ''} onChangeText={v => setNewGoal(p => ({...p, title: v}))} />
+              {addGoalType !== 'streak' && (
+                <>
+                  <Text style={s.label}>Target Amount ($)</Text>
+                  <TextInput style={s.input} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={C.textMuted} value={newGoal.target_amount || ''} onChangeText={v => setNewGoal(p => ({...p, target_amount: v}))} />
+                  <Text style={s.label}>Current Amount ($)</Text>
+                  <TextInput style={s.input} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={C.textMuted} value={newGoal.current_amount || ''} onChangeText={v => setNewGoal(p => ({...p, current_amount: v}))} />
+                </>
+              )}
+              {addGoalType === 'spending_behavior' && (
+                <>
+                  <Text style={s.label}>Category</Text>
+                  <TextInput style={s.input} placeholder="e.g. Food and Drink" placeholderTextColor={C.textMuted} value={newGoal.category || ''} onChangeText={v => setNewGoal(p => ({...p, category: v}))} />
+                </>
+              )}
+              <Text style={s.label}>Target Date (optional)</Text>
+              <TextInput style={s.input} placeholder="YYYY-MM-DD" placeholderTextColor={C.textMuted} value={newGoal.deadline || ''} onChangeText={v => setNewGoal(p => ({...p, deadline: v}))} />
+              <TouchableOpacity
+                style={[s.btn, savingGoal && s.btnOff]}
+                disabled={savingGoal || !newGoal.title?.trim()}
+                onPress={async () => {
+                  setSavingGoal(true);
+                  try {
+                    await fetch(`${API_URL}/api/goals`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, type: addGoalType, ...newGoal, target_amount: parseFloat(newGoal.target_amount) || null, current_amount: parseFloat(newGoal.current_amount) || 0 }) });
+                    setAddGoalVisible(false);
+                    setNewGoal({});
+                    fetchGoals();
+                  } catch {}
+                  finally { setSavingGoal(false); }
+                }}
+              >
+                {savingGoal ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Create Goal</Text>}
+              </TouchableOpacity>
+              <TouchableOpacity style={s.linkRow} onPress={() => setAddGoalVisible(false)}><Text style={s.linkText}>Cancel</Text></TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* Create Group Modal */}
+      <Modal visible={createGroupVisible} animationType="slide" transparent onRequestClose={() => setCreateGroupVisible(false)}>
+        <View style={s.modalOverlay}>
+          <View style={s.modalCard}>
+            <Text style={s.modalTitle}>Create Group</Text>
+            <Text style={s.label}>Group Name</Text>
+            <TextInput style={s.input} placeholder="e.g. Family Budget, Roommates" placeholderTextColor={C.textMuted} value={newGroupName} onChangeText={setNewGroupName} />
+            <TouchableOpacity
+              style={[s.btn, !newGroupName.trim() && s.btnOff]}
+              disabled={!newGroupName.trim()}
+              onPress={async () => {
+                try {
+                  const res = await fetch(`${API_URL}/api/groups`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newGroupName.trim(), userId, email }) });
+                  const d = await res.json();
+                  setCreateGroupVisible(false);
+                  setNewGroupName('');
+                  await fetchGroups();
+                  setCurrentGroup(d.group);
+                  fetchGroupDetail(d.group.id);
+                } catch {}
+              }}
+            >
+              <Text style={s.btnText}>Create Group</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.linkRow} onPress={() => setCreateGroupVisible(false)}><Text style={s.linkText}>Cancel</Text></TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Add Group Goal Modal */}
+      <Modal visible={addGroupGoalVisible} animationType="slide" transparent onRequestClose={() => setAddGroupGoalVisible(false)}>
+        <View style={s.modalOverlay}>
+          <View style={s.modalCard}>
+            <Text style={s.modalTitle}>New Group Goal</Text>
+            <Text style={s.label}>Title</Text>
+            <TextInput style={s.input} placeholder="e.g. Save for vacation" placeholderTextColor={C.textMuted} value={newGroupGoal.title || ''} onChangeText={v => setNewGroupGoal(p => ({...p, title: v}))} />
+            <Text style={s.label}>Target Amount ($)</Text>
+            <TextInput style={s.input} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={C.textMuted} value={newGroupGoal.target_amount || ''} onChangeText={v => setNewGroupGoal(p => ({...p, target_amount: v}))} />
+            <Text style={s.label}>Target Date (optional)</Text>
+            <TextInput style={s.input} placeholder="YYYY-MM-DD" placeholderTextColor={C.textMuted} value={newGroupGoal.deadline || ''} onChangeText={v => setNewGroupGoal(p => ({...p, deadline: v}))} />
+            <TouchableOpacity
+              style={[s.btn, !newGroupGoal.title?.trim() && s.btnOff]}
+              disabled={!newGroupGoal.title?.trim()}
+              onPress={async () => {
+                try {
+                  await fetch(`${API_URL}/api/groups/${currentGroup.id}/goals`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...newGroupGoal, target_amount: parseFloat(newGroupGoal.target_amount) || null, created_by: userId }) });
+                  setAddGroupGoalVisible(false);
+                  setNewGroupGoal({});
+                  fetchGroupDetail(currentGroup.id);
+                } catch {}
+              }}
+            >
+              <Text style={s.btnText}>Create Goal</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.linkRow} onPress={() => setAddGroupGoalVisible(false)}><Text style={s.linkText}>Cancel</Text></TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
     </SafeAreaView>
   );
 }
