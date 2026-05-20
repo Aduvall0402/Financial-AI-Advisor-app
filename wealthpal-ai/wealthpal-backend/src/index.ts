@@ -180,13 +180,22 @@ app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) =
           account_id: accountId,
           plaid_transaction_id: tx.transaction_id,
           merchant_name: tx.merchant_name || tx.name || "Unknown",
+          merchant_category_code: tx.payment_channel || null,
           amount: Math.abs(tx.amount),
+          currency_code: tx.iso_currency_code || tx.unofficial_currency_code || "USD",
           category: (tx.personal_finance_category?.primary || (tx.category as any)?.[0] || "Other"),
+          category_confidence: tx.personal_finance_category_icon_url ? null : null,
+          is_pending: tx.pending ?? false,
           transaction_date: tx.date,
+          posted_date: tx.authorized_date || null,
           description: tx.name,
         }]);
-      if (!error) synced++;
-      else { failed++; if (failed <= 3) console.error("Insert error:", JSON.stringify(error)); }
+      if (error) {
+        failed++;
+        if (failed <= 3) console.error("Insert error for tx", tx.transaction_id, JSON.stringify(error));
+      } else {
+        synced++;
+      }
     }
     console.log(`Synced ${synced}/${transactions.length} transactions for user ${userId} (${failed} failed)`);
     res.json({ synced, total: transactions.length });

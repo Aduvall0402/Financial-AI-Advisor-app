@@ -334,6 +334,7 @@ export default function App() {
         setSyncError(data.error || 'Sync failed');
       } else {
         if (data.total === 0) setSyncError('Plaid returned 0 transactions. Try reconnecting your bank.');
+        else if (data.synced === 0 && data.total > 0) setSyncError(`Failed to save transactions (0/${data.total} saved). Check server logs.`);
         else setSyncError('');
         await fetchTransactions();
       }
