@@ -1529,8 +1529,6 @@ export default function App() {
   // ════════════════════════════════════════════════════
   // MORE TAB
   // ════════════════════════════════════════════════════
-  const [moreSection, setMoreSection] = useState(null); // null = menu, 'goals','groups','budget','networth','creditscore'
-
   const renderMore = () => {
     if (moreSection === 'goals') return renderGoalsSection();
     if (moreSection === 'groups') return renderGroupsSection();
@@ -1824,8 +1822,6 @@ export default function App() {
       <View style={{ height: 24 }} />
     </ScrollView>
   );
-
-  const [groupShareLoading, setGroupShareLoading] = useState(false);
 
   const renderGroupsSection = () => (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
