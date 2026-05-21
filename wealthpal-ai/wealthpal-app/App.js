@@ -18,12 +18,11 @@ const { width: SW } = Dimensions.get('window');
 const API_URL = 'https://financial-ai-advisor-app-production.up.railway.app';
 
 function deriveSurfaces(bg) {
-  // Parse hex and brighten for surface layers
   const n = parseInt(bg.replace('#', ''), 16);
   const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-  const lift1 = (v) => Math.min(255, v + 20);
-  const lift2 = (v) => Math.min(255, v + 35);
-  const lift3 = (v) => Math.min(255, v + 55);
+  const lift1 = (v) => Math.min(255, v + 22);
+  const lift2 = (v) => Math.min(255, v + 38);
+  const lift3 = (v) => Math.min(255, v + 72);
   const toHex = (r, g, b) => '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
   return {
     surface: toHex(lift1(r), lift1(g), lift1(b)),
@@ -37,8 +36,8 @@ const BASE = {
   red: '#ef4444',
   amber: '#f59e0b',
   text: '#eef2ff',
-  textSub: '#7b93b8',
-  textMuted: '#354e70',
+  textSub: '#9bb5d0',
+  textMuted: '#5a7a9e',
 };
 
 // Primary = background dark color, Secondary = accent/highlight color
@@ -51,8 +50,20 @@ const BG_OPTIONS = [
   { hex: '#1a0a2e', label: 'Deep Purple' },
   { hex: '#0c1a0c', label: 'Forest' },
   { hex: '#1a0c0c', label: 'Crimson Dark' },
+  // Lighter options
+  { hex: '#1e2d3d', label: 'Steel Blue' },
+  { hex: '#1f2937', label: 'Cool Gray' },
+  { hex: '#232b3a', label: 'Denim' },
+  { hex: '#1e1b2e', label: 'Velvet' },
+  { hex: '#1a2520', label: 'Pine' },
+  { hex: '#2d1f1f', label: 'Burgundy' },
+  { hex: '#263340', label: 'Arctic' },
+  { hex: '#2a2418', label: 'Mocha' },
 ];
-const ACCENT_OPTIONS = ['#7c3aed','#3b82f6','#10b981','#ef4444','#f59e0b','#ec4899','#06b6d4','#f97316'];
+const ACCENT_OPTIONS = [
+  '#7c3aed','#3b82f6','#10b981','#ef4444','#f59e0b','#ec4899','#06b6d4','#f97316',
+  '#a855f7','#60a5fa','#34d399','#fb7185','#fbbf24','#f472b6','#22d3ee','#fb923c',
+];
 
 function hexToRgb(hex) {
   const n = parseInt(hex.replace('#', ''), 16);
@@ -213,24 +224,26 @@ export default function App() {
       .reduce((sum, tx) => sum + parseFloat(tx.amount || 0), 0);
   }, [transactions]);
 
-  const sortedTransactions = useMemo(() => {
-    const txs = [...transactions];
-    switch (txSortBy) {
-      case 'date_asc':    return txs.sort((a, b) => new Date(a.transaction_date) - new Date(b.transaction_date));
-      case 'amount_desc': return txs.sort((a, b) => parseFloat(b.amount) - parseFloat(a.amount));
-      case 'amount_asc':  return txs.sort((a, b) => parseFloat(a.amount) - parseFloat(b.amount));
-      case 'merchant':    return txs.sort((a, b) => (a.merchant_name || '').localeCompare(b.merchant_name || ''));
-      case 'category':    return txs.sort((a, b) => (a.category || '').localeCompare(b.category || ''));
-      default:            return txs.sort((a, b) => new Date(b.transaction_date) - new Date(a.transaction_date));
-    }
-  }, [transactions, txSortBy]);
 
   // Notifications
   const [notifOverall, setNotifOverall] = useState(false);
   const [notifDaily, setNotifDaily] = useState(false);
   const [notifWeekly, setNotifWeekly] = useState(false);
   const [notifMonthly, setNotifMonthly] = useState(false);
+  const [notifBudget, setNotifBudget] = useState(false);
   const [notifIds, setNotifIds] = useState({});
+
+  // Tutorial
+  const [tutorialVisible, setTutorialVisible] = useState(false);
+  const [tutorialStep, setTutorialStep] = useState(0);
+  const TUTORIAL_STEPS = [
+    { icon: '⌂', color: '#7c3aed', title: 'Welcome to WealthPal AI', body: 'Your smart financial companion. We\'ll walk you through the key features to get you started.' },
+    { icon: 'B', color: '#3b82f6', title: 'Connect Your Bank', body: 'Tap the ⚙ gear icon in the top right and select "Connect Bank" to securely link your accounts via Plaid.' },
+    { icon: '≡', color: '#10b981', title: 'View Transactions', body: 'The Txns tab shows all your transactions. Use Sort to organize by date, amount, or category. Tap any transaction to edit it.' },
+    { icon: '◈', color: '#f59e0b', title: 'Get Insights', body: 'The Insights tab shows spending charts and breakdowns by category. Tap categories to filter the chart.' },
+    { icon: '✦', color: '#ec4899', title: 'Ask the AI', body: 'The AI tab is your personal finance advisor. Ask anything — "How much did I spend last week?" or "Where can I cut back?"' },
+    { icon: '☰', color: '#06b6d4', title: 'More Features', body: 'The More tab has Goals, Groups, Budget, Net Worth, and Credit Score. Set budgets and goals to stay on track!' },
+  ];
 
   // Settings
   const [biometrics, setBiometrics] = useState(false);
@@ -288,11 +301,25 @@ export default function App() {
   const [newBudgetCat, setNewBudgetCat] = useState('');
   const [newBudgetLimit, setNewBudgetLimit] = useState('');
   const [newBudgetPeriod, setNewBudgetPeriod] = useState('monthly');
+  const [newBudgetPaycycleStart, setNewBudgetPaycycleStart] = useState('');
+  const [newBudgetPaycycleFreq, setNewBudgetPaycycleFreq] = useState('biweekly');
   const [savingBudget, setSavingBudget] = useState(false);
 
   // Transactions sort
   const [txSortBy, setTxSortBy] = useState('date_desc');
   const [txSortDropdownVisible, setTxSortDropdownVisible] = useState(false);
+
+  const sortedTransactions = useMemo(() => {
+    const txs = [...transactions];
+    switch (txSortBy) {
+      case 'date_asc':    return txs.sort((a, b) => new Date(a.transaction_date) - new Date(b.transaction_date));
+      case 'amount_desc': return txs.sort((a, b) => parseFloat(b.amount) - parseFloat(a.amount));
+      case 'amount_asc':  return txs.sort((a, b) => parseFloat(a.amount) - parseFloat(b.amount));
+      case 'merchant':    return txs.sort((a, b) => (a.merchant_name || '').localeCompare(b.merchant_name || ''));
+      case 'category':    return txs.sort((a, b) => (a.category || '').localeCompare(b.category || ''));
+      default:            return txs.sort((a, b) => new Date(b.transaction_date) - new Date(a.transaction_date));
+    }
+  }, [transactions, txSortBy]);
 
   // Insights dropdown
   const [insightsDropdownVisible, setInsightsDropdownVisible] = useState(false);
@@ -304,7 +331,7 @@ export default function App() {
   useEffect(() => {
     AsyncStorage.multiGet([
       'themeBg', 'themeAccent', 'displayName',
-      'notifOverall', 'notifDaily', 'notifWeekly', 'notifMonthly',
+      'notifOverall', 'notifDaily', 'notifWeekly', 'notifMonthly', 'notifBudget',
     ]).then(pairs => {
       const m = Object.fromEntries(pairs.map(([k, v]) => [k, v]));
       if (m.themeBg) setThemeBg(m.themeBg);
@@ -314,6 +341,7 @@ export default function App() {
       if (m.notifDaily !== null) setNotifDaily(m.notifDaily === 'true');
       if (m.notifWeekly !== null) setNotifWeekly(m.notifWeekly === 'true');
       if (m.notifMonthly !== null) setNotifMonthly(m.notifMonthly === 'true');
+      if (m.notifBudget !== null) setNotifBudget(m.notifBudget === 'true');
     });
   }, []);
 
@@ -409,12 +437,13 @@ export default function App() {
       } catch { setDashboardData({ monthly_spending: 0, top_categories: [] }); }
       setScreen('dashboard');
       setDashboardLoading(false);
-      // ✅ ADDED THESE TWO LINES:
       fetchAccounts(uid);
       fetchTransactions(uid);
       fetchGoals(uid);
       fetchGroups(uid);
       fetchBudgets(uid);
+      // Show tutorial for new users
+      setTimeout(() => { setTutorialStep(0); setTutorialVisible(true); }, 600);
     } catch { setError('Could not connect to server'); }
     finally { setLoading(false); }
   };
@@ -546,6 +575,39 @@ export default function App() {
     });
     setNotifIds(prev => ({ ...prev, [key]: id }));
     AsyncStorage.setItem(`notifId_${key}`, id);
+  };
+
+  const checkBudgetAlerts = () => {
+    budgets.forEach(b => {
+      const start = getPeriodStart(b.period || 'monthly', b.paycycle_start, b.paycycle_freq);
+      const spent = transactions
+        .filter(tx => (tx.transaction_date || '') >= start && tx.category === b.category)
+        .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+      const limit = parseFloat(b.monthly_limit || 0);
+      const pct = limit > 0 ? (spent / limit) * 100 : 0;
+      const catLabel = PLAID_CATEGORIES.find(c => c.key === b.category)?.label || b.category;
+      if (pct >= 90) {
+        Notifications.scheduleNotificationAsync({
+          content: {
+            title: pct >= 100 ? `Budget Exceeded: ${catLabel}` : `Budget Alert: ${catLabel}`,
+            body: pct >= 100
+              ? `You've spent $${fmtMoney(spent)} — $${fmtMoney(spent - limit)} over your $${fmtMoney(limit)} limit.`
+              : `You've used ${Math.round(pct)}% of your $${fmtMoney(limit)} budget ($${fmtMoney(spent)} spent).`,
+            sound: true,
+          },
+          trigger: null,
+        }).catch(() => {});
+      }
+    });
+  };
+
+  const toggleNotifBudget = async (val) => {
+    setNotifBudget(val);
+    AsyncStorage.setItem('notifBudget', String(val));
+    if (val) {
+      const granted = await requestNotifPermission();
+      if (granted) checkBudgetAlerts();
+    }
   };
 
   const toggleNotifOverall = async (val) => {
@@ -718,10 +780,19 @@ export default function App() {
     fetchGoals();
   };
 
-  const getPeriodStart = (period) => {
+  const getPeriodStart = (period, paycycleStart, paycycleFreq) => {
     const now = new Date();
     if (period === 'weekly') { const d = new Date(now); d.setDate(d.getDate() - 6); return d.toISOString().split('T')[0]; }
     if (period === 'biweekly') { const d = new Date(now); d.setDate(d.getDate() - 13); return d.toISOString().split('T')[0]; }
+    if (period === 'paycycle' && paycycleStart) {
+      const freqDays = paycycleFreq === 'weekly' ? 7 : paycycleFreq === 'biweekly' ? 14 : 30;
+      const anchor = new Date(paycycleStart);
+      const msPerCycle = freqDays * 86400000;
+      const elapsed = now.getTime() - anchor.getTime();
+      const cycleOffset = elapsed % msPerCycle;
+      const cycleStart = new Date(now.getTime() - cycleOffset);
+      return cycleStart.toISOString().split('T')[0];
+    }
     return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]; // monthly
   };
 
@@ -988,43 +1059,11 @@ export default function App() {
           </View>
         )}
 
-        {/* Quick-action prompts */}
+        {/* Recommendations */}
         {linkedAccount && (
           <View style={s.section}>
-            <Text style={s.sectionTitle}>Quick Actions</Text>
-            {goals.length === 0 && (
-              <TouchableOpacity
-                style={[s.quickCard, { borderColor: C.accent }]}
-                onPress={() => setActiveTab('goals')}
-                activeOpacity={0.8}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                  <Icon char="★" color={C.accent} size={40} radius={12} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>Set Your First Goal</Text>
-                    <Text style={{ color: C.textSub, fontSize: 12 }}>Track savings, debt payoff, spending habits, and more.</Text>
-                  </View>
-                  <Text style={{ color: C.accent, fontSize: 20 }}>›</Text>
-                </View>
-              </TouchableOpacity>
-            )}
-            {budgets.length === 0 && (
-              <TouchableOpacity
-                style={[s.quickCard, { borderColor: C.blue }]}
-                onPress={() => setActiveTab('budget')}
-                activeOpacity={0.8}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                  <Icon char="◎" color={C.blue} size={40} radius={12} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>Create a Budget</Text>
-                    <Text style={{ color: C.textSub, fontSize: 12 }}>Set spending limits by category to stay on track.</Text>
-                  </View>
-                  <Text style={{ color: C.blue, fontSize: 20 }}>›</Text>
-                </View>
-              </TouchableOpacity>
-            )}
-            {transactions.length === 0 && linkedAccount && (
+            <Text style={s.sectionTitle}>Recommendations</Text>
+            {transactions.length === 0 && (
               <TouchableOpacity
                 style={[s.quickCard, { borderColor: C.green }]}
                 onPress={syncTransactions}
@@ -1040,22 +1079,75 @@ export default function App() {
                 </View>
               </TouchableOpacity>
             )}
-            {goals.length > 0 && budgets.length > 0 && transactions.length > 0 && (
+            {goals.length === 0 && (
               <TouchableOpacity
                 style={[s.quickCard, { borderColor: C.accent }]}
-                onPress={() => setActiveTab('chat')}
+                onPress={() => { setActiveTab('more'); }}
                 activeOpacity={0.8}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                  <Icon char="✦" color={C.accent} size={40} radius={12} />
+                  <Icon char="★" color={C.accent} size={40} radius={12} />
                   <View style={{ flex: 1 }}>
-                    <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>Ask WealthPal AI</Text>
-                    <Text style={{ color: C.textSub, fontSize: 12 }}>Get personalized advice based on your real spending data.</Text>
+                    <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>Set Your First Goal</Text>
+                    <Text style={{ color: C.textSub, fontSize: 12 }}>Track savings, debt payoff, spending habits, and more.</Text>
                   </View>
                   <Text style={{ color: C.accent, fontSize: 20 }}>›</Text>
                 </View>
               </TouchableOpacity>
             )}
+            {budgets.length === 0 && (
+              <TouchableOpacity
+                style={[s.quickCard, { borderColor: C.blue }]}
+                onPress={() => { setActiveTab('more'); }}
+                activeOpacity={0.8}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                  <Icon char="◎" color={C.blue} size={40} radius={12} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>Create a Budget</Text>
+                    <Text style={{ color: C.textSub, fontSize: 12 }}>Set spending limits by category and period to stay on track.</Text>
+                  </View>
+                  <Text style={{ color: C.blue, fontSize: 20 }}>›</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+            {(() => {
+              const overBudget = budgets.filter(b => {
+                const start = getPeriodStart(b.period || 'monthly');
+                const spent = transactions.filter(tx => (tx.transaction_date || '') >= start && tx.category === b.category).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+                return spent > parseFloat(b.monthly_limit || 0);
+              });
+              return overBudget.length > 0 ? (
+                <TouchableOpacity
+                  style={[s.quickCard, { borderColor: C.red }]}
+                  onPress={() => { setActiveTab('more'); }}
+                  activeOpacity={0.8}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                    <Icon char="!" color={C.red} size={40} radius={12} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>{overBudget.length} Budget{overBudget.length > 1 ? 's' : ''} Over Limit</Text>
+                      <Text style={{ color: C.textSub, fontSize: 12 }}>{overBudget.map(b => b.category.replace(/_/g, ' ')).join(', ')} — review your spending.</Text>
+                    </View>
+                    <Text style={{ color: C.red, fontSize: 20 }}>›</Text>
+                  </View>
+                </TouchableOpacity>
+              ) : null;
+            })()}
+            <TouchableOpacity
+              style={[s.quickCard, { borderColor: C.accent }]}
+              onPress={() => setActiveTab('chat')}
+              activeOpacity={0.8}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <Icon char="✦" color={C.accent} size={40} radius={12} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>Ask WealthPal AI</Text>
+                  <Text style={{ color: C.textSub, fontSize: 12 }}>Get personalized advice based on your real spending data.</Text>
+                </View>
+                <Text style={{ color: C.accent, fontSize: 20 }}>›</Text>
+              </View>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -1074,6 +1166,13 @@ export default function App() {
     const chartData = chartRawData.map(v => Math.max(0.01, v));
     const total = filteredTx.reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
     const avg = filteredTx.length ? total / filteredTx.length : 0;
+    const maxTx = filteredTx.reduce((m, tx) => parseFloat(tx.amount) > parseFloat(m?.amount || 0) ? tx : m, null);
+    const merchantCount = {};
+    filteredTx.forEach(tx => { const m = tx.merchant_name || 'Unknown'; merchantCount[m] = (merchantCount[m] || 0) + 1; });
+    const topMerchant = Object.entries(merchantCount).sort(([,a],[,b]) => b - a)[0];
+    const dailyAvg = filteredTx.length && insightsRange !== 'all'
+      ? total / ({ '7d': 7, '30d': 30, '3m': 90, '6m': 180 }[insightsRange] || 30)
+      : null;
 
     if (!transactions.length) {
       return (
@@ -1099,24 +1198,55 @@ export default function App() {
           <Text style={{ color: C.textSub, fontSize: 18, lineHeight: 20 }}>▾</Text>
         </TouchableOpacity>
 
-        <View style={s.statsRow}>
-          <View style={s.statCard}>
+        {/* Stats grid */}
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 20 }}>
+          <View style={[s.statCard, { flex: 1, minWidth: '44%' }]}>
             <Text style={s.statLabel}>Total Spent</Text>
             <Text style={s.statVal}>${fmtMoney(total)}</Text>
           </View>
-          <View style={s.statCard}>
+          <View style={[s.statCard, { flex: 1, minWidth: '44%' }]}>
+            <Text style={s.statLabel}>Transactions</Text>
+            <Text style={s.statVal}>{filteredTx.length}</Text>
+          </View>
+          <View style={[s.statCard, { flex: 1, minWidth: '44%' }]}>
             <Text style={s.statLabel}>Avg Transaction</Text>
             <Text style={s.statVal}>${fmtMoney(avg)}</Text>
           </View>
+          {dailyAvg !== null && (
+            <View style={[s.statCard, { flex: 1, minWidth: '44%' }]}>
+              <Text style={s.statLabel}>Daily Average</Text>
+              <Text style={s.statVal}>${fmtMoney(dailyAvg)}</Text>
+            </View>
+          )}
         </View>
 
+        {/* Highlights row */}
+        {(maxTx || topMerchant) && (
+          <View style={{ flexDirection: 'row', gap: 10, marginBottom: 20 }}>
+            {maxTx && (
+              <View style={[s.insightCard, { flex: 1, flexDirection: 'column', gap: 4 }]}>
+                <Text style={{ color: C.textSub, fontSize: 11, fontWeight: '600' }}>LARGEST PURCHASE</Text>
+                <Text style={{ color: C.text, fontSize: 13, fontWeight: '700' }} numberOfLines={1}>{maxTx.merchant_name || 'Unknown'}</Text>
+                <Text style={{ color: C.red, fontSize: 15, fontWeight: '800' }}>${fmtMoney(maxTx.amount)}</Text>
+              </View>
+            )}
+            {topMerchant && (
+              <View style={[s.insightCard, { flex: 1, flexDirection: 'column', gap: 4 }]}>
+                <Text style={{ color: C.textSub, fontSize: 11, fontWeight: '600' }}>MOST FREQUENT</Text>
+                <Text style={{ color: C.text, fontSize: 13, fontWeight: '700' }} numberOfLines={1}>{topMerchant[0]}</Text>
+                <Text style={{ color: C.accent, fontSize: 15, fontWeight: '800' }}>{topMerchant[1]}x visits</Text>
+              </View>
+            )}
+          </View>
+        )}
+
         <View style={s.section}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
             <View>
               <Text style={s.sectionTitle}>Spending Chart</Text>
               {selectedCategory && (
-                <TouchableOpacity onPress={() => setSelectedCategory(null)} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
-                  <Text style={{ color: C.accent, fontSize: 11, fontWeight: '600' }}>● {selectedCategory}  ✕ clear</Text>
+                <TouchableOpacity onPress={() => setSelectedCategory(null)}>
+                  <Text style={{ color: C.accent, fontSize: 11, fontWeight: '600', marginTop: 2 }}>● {selectedCategory.replace(/_/g,' ')}  ✕ clear</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -1125,7 +1255,7 @@ export default function App() {
                 <TouchableOpacity
                   key={type}
                   onPress={() => setChartType(type)}
-                  style={{ paddingHorizontal: 14, paddingVertical: 7, backgroundColor: chartType === type ? C.accent : 'transparent' }}
+                  style={{ paddingHorizontal: 13, paddingVertical: 7, backgroundColor: chartType === type ? C.accent : 'transparent' }}
                 >
                   <Text style={{ color: chartType === type ? '#fff' : C.textSub, fontSize: 13, fontWeight: '700' }}>{icon}</Text>
                 </TouchableOpacity>
@@ -1173,28 +1303,32 @@ export default function App() {
         {catData && (
           <View style={s.section}>
             <Text style={[s.sectionTitle, { marginBottom: 4 }]}>Spending by Category</Text>
-            <Text style={{ color: C.textMuted, fontSize: 11, marginBottom: 14 }}>Tap a category to filter chart</Text>
+            <Text style={{ color: C.textMuted, fontSize: 11, marginBottom: 14 }}>
+              {chartType !== 'pie' ? 'Tap a category to filter the chart above' : 'Switch to line or bar chart to filter by category'}
+            </Text>
             {catData.map(([cat, amt], i) => {
               const pct = total > 0 ? Math.round((amt / total) * 100) : 0;
+              const catTxCount = filteredTx.filter(tx => tx.category === cat).length;
               const isSelected = selectedCategory === cat;
               return (
                 <TouchableOpacity
                   key={cat}
                   onPress={() => chartType !== 'pie' ? setSelectedCategory(isSelected ? null : cat) : null}
                   activeOpacity={chartType !== 'pie' ? 0.7 : 1}
-                  style={[s.insightCard, isSelected && { borderColor: CAT_COLORS[i], borderWidth: 2 }]}
+                  style={[s.insightCard, isSelected && { borderColor: CAT_COLORS[i % CAT_COLORS.length], borderWidth: 2 }]}
                 >
-                  <View style={[s.insightDot, { backgroundColor: CAT_COLORS[i] }]} />
+                  <View style={[s.insightDot, { backgroundColor: CAT_COLORS[i % CAT_COLORS.length], width: 12, height: 12, borderRadius: 6 }]} />
                   <View style={{ flex: 1 }}>
                     <View style={s.catInfo}>
-                      <Text style={[s.catName, isSelected && { color: CAT_COLORS[i] }]}>{cat}</Text>
+                      <Text style={[s.catName, isSelected && { color: CAT_COLORS[i % CAT_COLORS.length] }]}>{cat.replace(/_/g,' ')}</Text>
                       <Text style={s.catAmt}>${fmtMoney(amt)}</Text>
                     </View>
                     <View style={s.barBg}>
-                      <View style={[s.bar, { width: `${pct}%`, backgroundColor: CAT_COLORS[i] }]} />
+                      <View style={[s.bar, { width: `${pct}%`, backgroundColor: CAT_COLORS[i % CAT_COLORS.length] }]} />
                     </View>
+                    <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 4 }}>{catTxCount} transaction{catTxCount !== 1 ? 's' : ''} · avg ${fmtMoney(amt / (catTxCount || 1))}</Text>
                   </View>
-                  <Text style={[s.pct, { color: CAT_COLORS[i] }]}>{pct}%</Text>
+                  <Text style={[s.pct, { color: CAT_COLORS[i % CAT_COLORS.length] }]}>{pct}%</Text>
                 </TouchableOpacity>
               );
             })}
@@ -1202,10 +1336,17 @@ export default function App() {
         )}
 
         {catData && catData[0] && (
-          <View style={[s.highlightCard, { borderColor: CAT_COLORS[0] }]}>
-            <Text style={s.highlightLabel}>Biggest Category</Text>
-            <Text style={s.highlightValue}>{catData[0][0]}</Text>
-            <Text style={s.highlightSub}>${fmtMoney(catData[0][1])} · {Math.round((catData[0][1] / total) * 100)}% of spending</Text>
+          <View style={[s.highlightCard, { borderColor: CAT_COLORS[0], backgroundColor: C.surface }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+              <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: CAT_COLORS[0], justifyContent: 'center', alignItems: 'center' }}>
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>1</Text>
+              </View>
+              <View>
+                <Text style={s.highlightLabel}>Biggest Spending Category</Text>
+                <Text style={s.highlightValue}>{catData[0][0].replace(/_/g,' ')}</Text>
+              </View>
+            </View>
+            <Text style={s.highlightSub}>${fmtMoney(catData[0][1])} spent · {Math.round((catData[0][1] / total) * 100)}% of total · {filteredTx.filter(tx => tx.category === catData[0][0]).length} transactions</Text>
           </View>
         )}
 
@@ -1380,6 +1521,535 @@ export default function App() {
       </ScrollView>
     );
   };
+
+  // ════════════════════════════════════════════════════
+  // MORE TAB
+  // ════════════════════════════════════════════════════
+  const [moreSection, setMoreSection] = useState(null); // null = menu, 'goals','groups','budget','networth','creditscore'
+
+  const renderMore = () => {
+    if (moreSection === 'goals') return renderGoalsSection();
+    if (moreSection === 'groups') return renderGroupsSection();
+    if (moreSection === 'budget') return renderBudgetSection();
+    if (moreSection === 'networth') return renderNetWorth();
+    if (moreSection === 'creditscore') return renderCreditScore();
+
+    const items = [
+      { id: 'goals', label: 'Goals', icon: '★', color: C.accent, desc: 'Track savings, debt payoff & streaks' },
+      { id: 'groups', label: 'Groups', icon: '◈', color: C.blue, desc: 'Shared budgets & group goals' },
+      { id: 'budget', label: 'Budget', icon: '◎', color: C.green, desc: 'Spending limits by category' },
+      { id: 'networth', label: 'Net Worth', icon: '▲', color: C.amber, desc: 'Assets minus liabilities' },
+      { id: 'creditscore', label: 'Credit Score', icon: 'C', color: '#06b6d4', desc: 'Monitor your credit health' },
+    ];
+    return (
+      <ScrollView style={s.tab} showsVerticalScrollIndicator={false}>
+        <Text style={{ color: C.text, fontSize: 22, fontWeight: '800', marginBottom: 20, marginTop: 4 }}>More</Text>
+        {items.map(item => (
+          <TouchableOpacity
+            key={item.id}
+            style={[s.txItem, { paddingVertical: 18 }]}
+            onPress={() => { if (item.id === 'groups') { fetchGroups(); } setMoreSection(item.id); }}
+            activeOpacity={0.75}
+          >
+            <Icon char={item.icon} color={item.color} size={46} radius={14} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: C.text, fontSize: 16, fontWeight: '700', marginBottom: 3 }}>{item.label}</Text>
+              <Text style={{ color: C.textSub, fontSize: 12 }}>{item.desc}</Text>
+            </View>
+            <Text style={{ color: C.textMuted, fontSize: 22 }}>›</Text>
+          </TouchableOpacity>
+        ))}
+        <View style={{ height: 24 }} />
+      </ScrollView>
+    );
+  };
+
+  const renderGoalsSection = () => {
+    const GOAL_TYPES = [
+      { key: 'debt_payoff', label: 'Debt Payoff', icon: '⬇', color: C.red, desc: 'Pay off debts strategically' },
+      { key: 'savings', label: 'Savings', icon: '★', color: C.green, desc: 'Build toward a savings target' },
+      { key: 'spending_behavior', label: 'Spending Behavior', icon: '◎', color: C.amber, desc: 'Control category spending' },
+      { key: 'streak', label: 'Budget Streak', icon: '🔥', color: C.accent, desc: 'Stay under budget daily' },
+    ];
+    const byType = (type) => goals.filter(g => g.type === type);
+    const GoalCard = ({ goal }) => {
+      const pct = goal.target_amount > 0 ? Math.min(100, Math.round((goal.current_amount / goal.target_amount) * 100)) : 0;
+      const typeColor = GOAL_TYPES.find(t => t.key === goal.type)?.color || C.accent;
+      return (
+        <View style={[s.insightCard, { flexDirection: 'column', alignItems: 'stretch', gap: 8 }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={{ color: C.text, fontSize: 14, fontWeight: '600', flex: 1 }} numberOfLines={1}>{goal.title}</Text>
+            <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+              {goal.update_mode === 'auto' && <Text style={{ color: C.accent, fontSize: 10, fontWeight: '700', backgroundColor: C.surface2, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>AUTO</Text>}
+              {goal.is_completed && <Text style={{ color: C.green, fontSize: 11, fontWeight: '700' }}>✓ Done</Text>}
+            </View>
+          </View>
+          {goal.target_amount > 0 && (
+            <>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <Text style={{ color: C.textSub, fontSize: 12 }}>${fmtMoney(goal.current_amount)} / ${fmtMoney(goal.target_amount)}</Text>
+                <Text style={{ color: typeColor, fontSize: 12, fontWeight: '700' }}>{pct}%</Text>
+              </View>
+              <View style={s.barBg}><View style={[s.bar, { width: `${pct}%`, backgroundColor: typeColor }]} /></View>
+            </>
+          )}
+          {goal.type === 'streak' && (
+            <View style={{ flexDirection: 'row', gap: 16 }}>
+              <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700' }}>🔥 {goal.streak_count || 0} day streak</Text>
+              <Text style={{ color: C.textSub, fontSize: 13 }}>Best: {goal.streak_best || 0}</Text>
+            </View>
+          )}
+          {goal.deadline && <Text style={{ color: C.textMuted, fontSize: 11 }}>Target: {fmtDate(goal.deadline)}</Text>}
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 2 }}>
+            <TouchableOpacity style={{ flex: 1, backgroundColor: C.surface2, borderRadius: 8, paddingVertical: 6, alignItems: 'center' }}
+              onPress={async () => {
+                const newAmt = goal.current_amount + 1;
+                await fetch(`${API_URL}/api/goals/${goal.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current_amount: newAmt, is_completed: newAmt >= goal.target_amount }) });
+                fetchGoals();
+              }}>
+              <Text style={{ color: C.accent, fontSize: 12, fontWeight: '600' }}>+ Update</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={{ backgroundColor: '#1a0808', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 6, alignItems: 'center' }}
+              onPress={async () => { await fetch(`${API_URL}/api/goals/${goal.id}`, { method: 'DELETE' }); fetchGoals(); }}>
+              <Text style={{ color: C.red, fontSize: 12, fontWeight: '600' }}>Delete</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      );
+    };
+    return (
+      <ScrollView style={s.tab} showsVerticalScrollIndicator={false}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16, marginTop: 4, gap: 10 }}>
+          <TouchableOpacity onPress={() => setMoreSection(null)}>
+            <Text style={{ color: C.accent, fontSize: 14, fontWeight: '600' }}>‹ More</Text>
+          </TouchableOpacity>
+          <Text style={{ color: C.text, fontSize: 20, fontWeight: '700', flex: 1 }}>My Goals</Text>
+          <TouchableOpacity style={s.syncBtn} onPress={() => { setNewGoal({}); setAddGoalType('savings'); setAddGoalUpdateMode('manual'); setAddGoalVisible(true); }}>
+            <Text style={s.syncText}>+ New Goal</Text>
+          </TouchableOpacity>
+        </View>
+        {goalsLoading && <ActivityIndicator color={C.accent} style={{ marginTop: 40 }} />}
+        {!goalsLoading && goals.length === 0 && (
+          <View style={[s.connectCard, { alignItems: 'center', paddingVertical: 40 }]}>
+            <Icon char="★" color={C.accent} size={52} radius={16} />
+            <Text style={[s.emptyTitle, { marginTop: 16 }]}>No goals yet</Text>
+            <Text style={[s.emptyText, { marginBottom: 20 }]}>Set debt payoff, savings, spending, or streak goals to stay on track.</Text>
+            <TouchableOpacity style={s.btn} onPress={() => { setNewGoal({}); setAddGoalUpdateMode('manual'); setAddGoalVisible(true); }}>
+              <Text style={s.btnText}>Create First Goal</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        {GOAL_TYPES.map(({ key, label, icon, color }) => byType(key).length > 0 && (
+          <View key={key} style={s.section}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 8 }}>
+              <Icon char={icon} color={color} size={28} radius={8} />
+              <Text style={s.sectionTitle}>{label}</Text>
+            </View>
+            {byType(key).map(g => <GoalCard key={g.id} goal={g} />)}
+          </View>
+        ))}
+        <View style={{ height: 24 }} />
+      </ScrollView>
+    );
+  };
+
+  const renderBudgetSection = () => {
+    const getBudgetSpend2 = (budget) => {
+      const start = getPeriodStart(budget.period || 'monthly', budget.paycycle_start, budget.paycycle_freq);
+      return transactions
+        .filter(tx => (tx.transaction_date || '') >= start && tx.category === budget.category)
+        .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+    };
+    const totalBudgeted = budgets.reduce((s, b) => s + parseFloat(b.monthly_limit || 0), 0);
+    const totalSpent = budgets.reduce((s, b) => s + getBudgetSpend2(b), 0);
+
+    return (
+      <ScrollView style={s.tab} showsVerticalScrollIndicator={false}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16, marginTop: 4, gap: 10 }}>
+          <TouchableOpacity onPress={() => setMoreSection(null)}>
+            <Text style={{ color: C.accent, fontSize: 14, fontWeight: '600' }}>‹ More</Text>
+          </TouchableOpacity>
+          <Text style={{ color: C.text, fontSize: 20, fontWeight: '700', flex: 1 }}>Budget</Text>
+          <TouchableOpacity style={s.syncBtn} onPress={() => { setEditingBudget(null); setNewBudgetCat(''); setNewBudgetLimit(''); setNewBudgetPeriod('monthly'); setAddBudgetVisible(true); }}>
+            <Text style={s.syncText}>+ Add</Text>
+          </TouchableOpacity>
+        </View>
+        {budgets.length > 0 && (
+          <View style={s.statsRow}>
+            <View style={s.statCard}>
+              <Text style={s.statLabel}>Total Budgeted</Text>
+              <Text style={s.statVal}>${fmtMoney(totalBudgeted)}</Text>
+            </View>
+            <View style={s.statCard}>
+              <Text style={s.statLabel}>Spent This Period</Text>
+              <Text style={[s.statVal, { color: totalSpent > totalBudgeted ? C.red : C.green }]}>${fmtMoney(totalSpent)}</Text>
+            </View>
+          </View>
+        )}
+        {budgets.length === 0 ? (
+          <View style={[s.connectCard, { alignItems: 'center', paddingVertical: 40 }]}>
+            <Icon char="$" color={C.accent} size={52} radius={16} />
+            <Text style={[s.emptyTitle, { marginTop: 16 }]}>No budgets yet</Text>
+            <Text style={[s.emptyText, { marginBottom: 20 }]}>Set spending limits by category to track where your money goes.</Text>
+            <TouchableOpacity style={s.btn} onPress={() => { setEditingBudget(null); setNewBudgetCat(''); setNewBudgetLimit(''); setAddBudgetVisible(true); }}>
+              <Text style={s.btnText}>Create First Budget</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          budgets.map(b => {
+            const spent = getBudgetSpend2(b);
+            const limit = parseFloat(b.monthly_limit || 0);
+            const pct = limit > 0 ? Math.min(100, Math.round((spent / limit) * 100)) : 0;
+            const barColor = pct >= 100 ? C.red : pct >= 75 ? C.amber : C.green;
+            const paycycleFreqLabel2 = b.paycycle_freq === 'weekly' ? 'Weekly' : b.paycycle_freq === 'biweekly' ? 'Biweekly' : 'Monthly';
+            const periodLabel2 = b.period === 'paycycle'
+              ? `Paycycle (${paycycleFreqLabel2}${b.paycycle_start ? ', from ' + b.paycycle_start : ''})`
+              : { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly' }[b.period || 'monthly'];
+            const catLabel = PLAID_CATEGORIES.find(c => c.key === b.category)?.label || b.category;
+            return (
+              <View key={b.id} style={[s.insightCard, { flexDirection: 'column', alignItems: 'stretch', gap: 10 }]}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: C.text, fontSize: 14, fontWeight: '600' }}>{catLabel}</Text>
+                    <Text style={{ color: C.textMuted, fontSize: 11, marginTop: 1 }}>{periodLabel2}</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', gap: 12 }}>
+                    <TouchableOpacity onPress={() => { setEditingBudget(b); setNewBudgetCat(b.category); setNewBudgetLimit(String(b.monthly_limit)); setNewBudgetPeriod(b.period || 'monthly'); setNewBudgetPaycycleStart(b.paycycle_start || ''); setNewBudgetPaycycleFreq(b.paycycle_freq || 'biweekly'); setAddBudgetVisible(true); }}>
+                      <Text style={{ color: C.accent, fontSize: 12, fontWeight: '600' }}>Edit</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={async () => { await fetch(`${API_URL}/api/budgets/${b.id}`, { method: 'DELETE' }); fetchBudgets(); }}>
+                      <Text style={{ color: C.red, fontSize: 12, fontWeight: '600' }}>Delete</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <Text style={{ color: C.textSub, fontSize: 12 }}>${fmtMoney(spent)} spent</Text>
+                  <Text style={{ color: barColor, fontSize: 12, fontWeight: '700' }}>{pct}% of ${fmtMoney(limit)}</Text>
+                </View>
+                <View style={s.barBg}><View style={[s.bar, { width: `${pct}%`, backgroundColor: barColor }]} /></View>
+                {pct >= 100 && <Text style={{ color: C.red, fontSize: 11, fontWeight: '600' }}>Over budget by ${fmtMoney(spent - limit)}</Text>}
+                {pct >= 75 && pct < 100 && <Text style={{ color: C.amber, fontSize: 11, fontWeight: '600' }}>Approaching limit — ${fmtMoney(limit - spent)} remaining</Text>}
+              </View>
+            );
+          })
+        )}
+        <View style={{ height: 24 }} />
+      </ScrollView>
+    );
+  };
+
+  const renderNetWorth = () => {
+    const totalAssets = accounts.reduce((s, a) => {
+      const t = (a.type || '').toLowerCase();
+      if (t === 'depository' || t === 'investment') return s + (a.balances?.current || 0);
+      return s;
+    }, 0);
+    const totalLiabilities = accounts.reduce((s, a) => {
+      const t = (a.type || '').toLowerCase();
+      if (t === 'credit' || t === 'loan') return s + Math.abs(a.balances?.current || 0);
+      return s;
+    }, 0);
+    const netWorth = totalAssets - totalLiabilities;
+    return (
+      <ScrollView style={s.tab} showsVerticalScrollIndicator={false}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 20, marginTop: 4, gap: 10 }}>
+          <TouchableOpacity onPress={() => setMoreSection(null)}>
+            <Text style={{ color: C.accent, fontSize: 14, fontWeight: '600' }}>‹ More</Text>
+          </TouchableOpacity>
+          <Text style={{ color: C.text, fontSize: 20, fontWeight: '700' }}>Net Worth</Text>
+        </View>
+        <View style={[s.balanceCard, { backgroundColor: netWorth >= 0 ? C.green : C.red }]}>
+          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, marginBottom: 6 }}>Net Worth</Text>
+          <Text style={{ color: '#fff', fontSize: 40, fontWeight: '800', marginBottom: 8 }}>${fmtMoney(Math.abs(netWorth))}</Text>
+          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>{netWorth >= 0 ? 'Positive net worth' : 'Negative net worth'}</Text>
+        </View>
+        <View style={s.statsRow}>
+          <View style={s.statCard}>
+            <Text style={s.statLabel}>Total Assets</Text>
+            <Text style={[s.statVal, { color: C.green }]}>${fmtMoney(totalAssets)}</Text>
+          </View>
+          <View style={s.statCard}>
+            <Text style={s.statLabel}>Total Liabilities</Text>
+            <Text style={[s.statVal, { color: C.red }]}>${fmtMoney(totalLiabilities)}</Text>
+          </View>
+        </View>
+        {accounts.length > 0 ? (
+          <View style={s.section}>
+            <Text style={s.sectionTitle}>Accounts</Text>
+            {accounts.map(acc => {
+              const isLiability = ['credit','loan'].includes((acc.type || '').toLowerCase());
+              return (
+                <View key={acc.account_id} style={[s.txItem, { flexDirection: 'row' }]}>
+                  <Icon char={acc.type?.[0]?.toUpperCase() || 'A'} color={isLiability ? C.red : C.green} size={42} radius={12} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.txMerchant}>{acc.name}</Text>
+                    <Text style={s.txMeta}>{acc.subtype} · {acc.type}</Text>
+                  </View>
+                  <Text style={{ color: isLiability ? C.red : C.green, fontSize: 15, fontWeight: '700' }}>
+                    {isLiability ? '-' : ''}${fmtMoney(acc.balances?.current || 0)}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+        ) : (
+          <View style={[s.connectCard, { alignItems: 'center', paddingVertical: 32 }]}>
+            <Text style={s.emptyTitle}>No accounts linked</Text>
+            <Text style={s.emptyText}>Connect your bank to see your net worth breakdown.</Text>
+          </View>
+        )}
+        <View style={{ height: 24 }} />
+      </ScrollView>
+    );
+  };
+
+  const renderCreditScore = () => (
+    <ScrollView style={s.tab} showsVerticalScrollIndicator={false}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 20, marginTop: 4, gap: 10 }}>
+        <TouchableOpacity onPress={() => setMoreSection(null)}>
+          <Text style={{ color: C.accent, fontSize: 14, fontWeight: '600' }}>‹ More</Text>
+        </TouchableOpacity>
+        <Text style={{ color: C.text, fontSize: 20, fontWeight: '700' }}>Credit Score</Text>
+      </View>
+      <View style={[s.connectCard, { alignItems: 'center', paddingVertical: 48 }]}>
+        <Icon char="C" color="#06b6d4" size={64} radius={20} />
+        <Text style={[s.emptyTitle, { marginTop: 20 }]}>Coming Soon</Text>
+        <Text style={[s.emptyText, { marginBottom: 8 }]}>Credit score monitoring will be available in a future update. We'll notify you when it's ready.</Text>
+        <Text style={{ color: C.textMuted, fontSize: 12, textAlign: 'center' }}>WealthPal AI · Powered by secure credit bureau data</Text>
+      </View>
+      <View style={{ height: 24 }} />
+    </ScrollView>
+  );
+
+  const [groupShareLoading, setGroupShareLoading] = useState(false);
+
+  const renderGroupsSection = () => (
+    <View style={{ flex: 1, backgroundColor: C.bg }}>
+      {!currentGroup ? (
+        <ScrollView style={{ flex: 1, paddingHorizontal: 16 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16, marginTop: 8, gap: 10 }}>
+            <TouchableOpacity onPress={() => setMoreSection(null)}>
+              <Text style={{ color: C.accent, fontSize: 14, fontWeight: '600' }}>‹ More</Text>
+            </TouchableOpacity>
+            <Text style={{ color: C.text, fontSize: 20, fontWeight: '700', flex: 1 }}>Groups</Text>
+            <TouchableOpacity style={s.syncBtn} onPress={() => setCreateGroupVisible(true)}>
+              <Text style={s.syncText}>+ Create</Text>
+            </TouchableOpacity>
+          </View>
+          {groups.length === 0 && (
+            <View style={[s.connectCard, { alignItems: 'center', paddingVertical: 32 }]}>
+              <Icon char="◈" color={C.accent} size={52} radius={16} />
+              <Text style={[s.emptyTitle, { marginTop: 16 }]}>No groups yet</Text>
+              <Text style={s.emptyText}>Create a group to share goals and financial insights with friends or family.</Text>
+            </View>
+          )}
+          {groups.map(g => (
+            <TouchableOpacity key={g.id} style={s.txItem} onPress={() => { setCurrentGroup(g); fetchGroupDetail(g.id); }} activeOpacity={0.75}>
+              <View style={{ width: 46, height: 46, borderRadius: 14, backgroundColor: C.accent, justifyContent: 'center', alignItems: 'center' }}>
+                <Text style={{ color: '#fff', fontSize: 20, fontWeight: '800' }}>{g.name[0].toUpperCase()}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={s.txMerchant}>{g.name}</Text>
+                <Text style={s.txMeta}>{g.role === 'admin' ? 'Admin' : 'Member'} · {(groupDetail?.members?.length || 0)} members</Text>
+              </View>
+              <Text style={s.chevron}>›</Text>
+            </TouchableOpacity>
+          ))}
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      ) : (
+        <ScrollView style={{ flex: 1, paddingHorizontal: 16 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16, marginTop: 8, gap: 10 }}>
+            <TouchableOpacity onPress={() => { setCurrentGroup(null); setGroupSharedTx([]); }}>
+              <Text style={{ color: C.accent, fontSize: 14, fontWeight: '600' }}>‹ Groups</Text>
+            </TouchableOpacity>
+            <Text style={{ color: C.text, fontSize: 18, fontWeight: '700', flex: 1 }}>{currentGroup.name}</Text>
+          </View>
+
+          {/* ── Group Feed ── */}
+          <View style={s.section}>
+            <Text style={s.sectionTitle}>Group Feed</Text>
+            {groupSharedTx.length === 0 ? (
+              <View style={[s.connectCard, { paddingVertical: 20, alignItems: 'center' }]}>
+                <Text style={{ color: C.textSub, fontSize: 13, textAlign: 'center' }}>
+                  No shared activity yet. Members can share their transactions below.
+                </Text>
+              </View>
+            ) : (
+              groupSharedTx.slice(0, 15).map((tx, i) => (
+                <View key={i} style={[s.txItem, { paddingVertical: 12 }]}>
+                  <CatIcon category={tx.category} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.txMerchant} numberOfLines={1}>{tx.merchant_name || 'Unknown'}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                      <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: C.blue, justifyContent: 'center', alignItems: 'center' }}>
+                        <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>{(tx.member_email?.[0] || '?').toUpperCase()}</Text>
+                      </View>
+                      <Text style={s.txMeta}>{tx.member_email?.split('@')[0]} · {fmtDate(tx.transaction_date)}</Text>
+                    </View>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={s.txAmt}>-${fmtMoney(tx.amount)}</Text>
+                    <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 1 }}>{(tx.category || 'Other').replace(/_/g, ' ')}</Text>
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
+
+          {/* ── Member Balances (if shared) ── */}
+          {groupDetail.members.some(m => m.share_accounts) && (
+            <View style={s.section}>
+              <Text style={s.sectionTitle}>Member Balances</Text>
+              {groupDetail.members.filter(m => m.share_accounts).map(m => (
+                <View key={m.id} style={[s.txItem]}>
+                  <View style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: C.blue, justifyContent: 'center', alignItems: 'center' }}>
+                    <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>{(m.email?.[0] || '?').toUpperCase()}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.txMerchant}>{m.email?.split('@')[0]}</Text>
+                    <Text style={s.txMeta}>Sharing balances</Text>
+                  </View>
+                  <Text style={{ color: C.green, fontSize: 14, fontWeight: '700' }}>Visible</Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {/* ── My Sharing Settings ── */}
+          {groupDetail.members.filter(m => m.email === email).map(m => (
+            <View key={m.id} style={s.section}>
+              <Text style={s.sectionTitle}>My Sharing</Text>
+              <View style={[s.insightCard, { flexDirection: 'column', gap: 14 }]}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: C.text, fontSize: 14, fontWeight: '600' }}>Share Transactions</Text>
+                    <Text style={{ color: C.textSub, fontSize: 12, marginTop: 2 }}>Show the group your transactions</Text>
+                  </View>
+                  {groupShareLoading ? <ActivityIndicator size="small" color={C.accent} /> : (
+                    <Switch
+                      value={!!m.share_transactions}
+                      onValueChange={async (v) => {
+                        setGroupShareLoading(true);
+                        await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, {
+                          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ share_transactions: v, share_accounts: !!m.share_accounts }),
+                        });
+                        await fetchGroupDetail(currentGroup.id);
+                        setGroupShareLoading(false);
+                      }}
+                      trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff"
+                    />
+                  )}
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: C.text, fontSize: 14, fontWeight: '600' }}>Share Account Balances</Text>
+                    <Text style={{ color: C.textSub, fontSize: 12, marginTop: 2 }}>Show the group your balances</Text>
+                  </View>
+                  {groupShareLoading ? <ActivityIndicator size="small" color={C.accent} /> : (
+                    <Switch
+                      value={!!m.share_accounts}
+                      onValueChange={async (v) => {
+                        setGroupShareLoading(true);
+                        await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, {
+                          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ share_transactions: !!m.share_transactions, share_accounts: v }),
+                        });
+                        await fetchGroupDetail(currentGroup.id);
+                        setGroupShareLoading(false);
+                      }}
+                      trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff"
+                    />
+                  )}
+                </View>
+              </View>
+            </View>
+          ))}
+
+          {/* ── Members ── */}
+          <View style={s.section}>
+            <Text style={[s.sectionTitle, { marginBottom: 12 }]}>Members ({groupDetail.members.length})</Text>
+            {groupDetail.members.map(m => (
+              <View key={m.id} style={[s.txItem, { paddingVertical: 12 }]}>
+                <View style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: m.email === email ? C.accent : C.surface2, justifyContent: 'center', alignItems: 'center' }}>
+                  <Text style={{ color: m.email === email ? '#fff' : C.textSub, fontSize: 16, fontWeight: '700' }}>{(m.email?.[0] || '?').toUpperCase()}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.txMerchant}>{m.email === email ? 'You' : m.email?.split('@')[0]}</Text>
+                  <View style={{ flexDirection: 'row', gap: 6, marginTop: 3 }}>
+                    <Text style={{ color: C.textMuted, fontSize: 11, backgroundColor: C.surface2, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>{m.role}</Text>
+                    {m.share_transactions && <Text style={{ color: C.green, fontSize: 11, backgroundColor: 'rgba(16,185,129,0.12)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>Txns</Text>}
+                    {m.share_accounts && <Text style={{ color: C.blue, fontSize: 11, backgroundColor: 'rgba(59,130,246,0.12)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>Balance</Text>}
+                  </View>
+                </View>
+                {m.email !== email && (
+                  <TouchableOpacity onPress={async () => {
+                    await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, { method: 'DELETE' });
+                    fetchGroupDetail(currentGroup.id);
+                  }}>
+                    <Text style={{ color: C.red, fontSize: 12, fontWeight: '600' }}>Remove</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ))}
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+              <TextInput
+                style={[s.input, { flex: 1, marginBottom: 0 }]}
+                placeholder="Invite by email…"
+                placeholderTextColor={C.textMuted}
+                value={addMemberEmail}
+                onChangeText={setAddMemberEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+              <TouchableOpacity
+                style={{ backgroundColor: C.accent, borderRadius: 14, paddingHorizontal: 16, justifyContent: 'center' }}
+                onPress={async () => {
+                  if (!addMemberEmail.trim()) return;
+                  await fetch(`${API_URL}/api/groups/${currentGroup.id}/members`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: addMemberEmail.trim() }) });
+                  setAddMemberEmail('');
+                  fetchGroupDetail(currentGroup.id);
+                }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700' }}>Invite</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* ── Group Goals ── */}
+          <View style={s.section}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={s.sectionTitle}>Group Goals</Text>
+              <TouchableOpacity style={s.syncBtn} onPress={() => { setNewGroupGoal({}); setAddGroupGoalVisible(true); }}>
+                <Text style={s.syncText}>+ Goal</Text>
+              </TouchableOpacity>
+            </View>
+            {groupDetail.goals.length === 0 && <Text style={{ color: C.textSub, fontSize: 13, marginBottom: 8 }}>No group goals yet.</Text>}
+            {groupDetail.goals.map(g => {
+              const pct = g.target_amount > 0 ? Math.min(100, Math.round((g.current_amount / g.target_amount) * 100)) : 0;
+              return (
+                <View key={g.id} style={[s.insightCard, { flexDirection: 'column', gap: 8 }]}>
+                  <Text style={{ color: C.text, fontWeight: '600', fontSize: 14 }}>{g.title}</Text>
+                  {g.target_amount > 0 && (
+                    <>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                        <Text style={{ color: C.textSub, fontSize: 12 }}>${fmtMoney(g.current_amount)} / ${fmtMoney(g.target_amount)}</Text>
+                        <Text style={{ color: C.accent, fontSize: 12, fontWeight: '700' }}>{pct}%</Text>
+                      </View>
+                      <View style={s.barBg}><View style={[s.bar, { width: `${pct}%`, backgroundColor: C.accent }]} /></View>
+                    </>
+                  )}
+                  {g.deadline && <Text style={{ color: C.textMuted, fontSize: 11 }}>By {fmtDate(g.deadline)}</Text>}
+                </View>
+              );
+            })}
+          </View>
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      )}
+    </View>
+  );
 
   // ════════════════════════════════════════════════════
   // GROUPS SCREEN
@@ -1586,7 +2256,7 @@ export default function App() {
   // ════════════════════════════════════════════════════
   const renderBudget = () => {
     const getBudgetSpend = (budget) => {
-      const start = getPeriodStart(budget.period || 'monthly');
+      const start = getPeriodStart(budget.period || 'monthly', budget.paycycle_start, budget.paycycle_freq);
       return transactions
         .filter(tx => (tx.transaction_date || '') >= start && tx.category === budget.category)
         .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
@@ -1631,7 +2301,10 @@ export default function App() {
             const limit = parseFloat(b.monthly_limit || 0);
             const pct = limit > 0 ? Math.min(100, Math.round((spent / limit) * 100)) : 0;
             const barColor = pct >= 100 ? C.red : pct >= 75 ? C.amber : C.green;
-            const periodLabel = { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly' }[b.period || 'monthly'];
+            const paycycleFreqLabel = b.paycycle_freq === 'weekly' ? 'Weekly' : b.paycycle_freq === 'biweekly' ? 'Biweekly' : 'Monthly';
+            const periodLabel = b.period === 'paycycle'
+              ? `Paycycle (${paycycleFreqLabel}${b.paycycle_start ? ', from ' + b.paycycle_start : ''})`
+              : { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly' }[b.period || 'monthly'];
             const catLabel = PLAID_CATEGORIES.find(c => c.key === b.category)?.label || b.category;
             return (
               <View key={b.id} style={[s.insightCard, { flexDirection: 'column', alignItems: 'stretch', gap: 10 }]}>
@@ -1781,6 +2454,14 @@ export default function App() {
             {notifOverall && (
               <>
                 <View style={[s.drawerRow, { paddingLeft: 12 }]}>
+                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.red, marginRight: 10 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.drawerRowText}>Budget Alerts</Text>
+                    <Text style={s.drawerRowSub}>Notify when 90%+ of budget used</Text>
+                  </View>
+                  <Switch value={notifBudget} onValueChange={toggleNotifBudget} trackColor={{ false: C.border, true: C.red }} thumbColor="#fff" />
+                </View>
+                <View style={[s.drawerRow, { paddingLeft: 12 }]}>
                   <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.accent, marginRight: 10 }} />
                   <View style={{ flex: 1 }}>
                     <Text style={s.drawerRowText}>Daily Newsletter</Text>
@@ -1920,53 +2601,34 @@ export default function App() {
           <Text style={s.headerGreet}>Welcome back,</Text>
           <Text style={s.headerName}>{displayName || 'User'}</Text>
         </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <TouchableOpacity
-            onPress={() => { setGroupMode(true); fetchGroups(); }}
-            style={{ backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 6 }}
-          >
-            <Text style={{ color: C.textSub, fontSize: 15 }}>◈</Text>
-            <Text style={{ color: C.textSub, fontSize: 12, fontWeight: '600' }}>Groups</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={s.menuBtn} onPress={openDrawer}>
-            <View style={s.menuLine} />
-            <View style={[s.menuLine, { width: 18 }]} />
-            <View style={[s.menuLine, { width: 22 }]} />
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity style={s.menuBtn} onPress={openDrawer}>
+          <Text style={{ fontSize: 26, color: C.textSub }}>⚙</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={{ flex: 1 }}>
-        {groupMode ? renderGroupsScreen() : (
-          <>
-            {activeTab === 'dashboard' && renderDashboard()}
-            {activeTab === 'insights' && renderInsights()}
-            {activeTab === 'transactions' && renderTransactions()}
-            {activeTab === 'goals' && renderGoals()}
-            {activeTab === 'budget' && renderBudget()}
-            {activeTab === 'chat' && renderChat()}
-          </>
-        )}
+        {activeTab === 'dashboard' && renderDashboard()}
+        {activeTab === 'insights' && renderInsights()}
+        {activeTab === 'transactions' && renderTransactions()}
+        {activeTab === 'chat' && renderChat()}
+        {activeTab === 'more' && renderMore()}
       </View>
 
-      {!groupMode && (
-        <View style={s.bottomNav}>
-          {[
-            { id: 'dashboard', label: 'Home', icon: '⌂' },
-            { id: 'insights', label: 'Insights', icon: '◈' },
-            { id: 'transactions', label: 'Txns', icon: '≡' },
-            { id: 'goals', label: 'Goals', icon: '★' },
-            { id: 'budget', label: 'Budget', icon: '◎' },
-            { id: 'chat', label: 'AI', icon: '✦' },
-          ].map(tab => (
-            <TouchableOpacity key={tab.id} style={s.navTab} onPress={() => setActiveTab(tab.id)}>
-              <Text style={[s.navIcon, activeTab === tab.id && s.navIconOn]}>{tab.icon}</Text>
-              <Text style={[s.navLabel, activeTab === tab.id && s.navLabelOn]}>{tab.label}</Text>
-              {activeTab === tab.id && <View style={s.navDot} />}
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
+      <View style={s.bottomNav}>
+        {[
+          { id: 'dashboard', label: 'Home', icon: '⌂' },
+          { id: 'insights', label: 'Insights', icon: '◈' },
+          { id: 'transactions', label: 'Txns', icon: '≡' },
+          { id: 'chat', label: 'AI', icon: '✦' },
+          { id: 'more', label: 'More', icon: '☰' },
+        ].map(tab => (
+          <TouchableOpacity key={tab.id} style={s.navTab} onPress={() => { if (tab.id !== 'more') setMoreSection(null); setActiveTab(tab.id); }}>
+            <Text style={[s.navIcon, activeTab === tab.id && s.navIconOn]}>{tab.icon}</Text>
+            <Text style={[s.navLabel, activeTab === tab.id && s.navLabelOn]}>{tab.label}</Text>
+            {activeTab === tab.id && <View style={s.navDot} />}
+          </TouchableOpacity>
+        ))}
+      </View>
 
       {drawerOpen && renderDrawer()}
 
@@ -2247,17 +2909,40 @@ export default function App() {
 
               {/* Budget period */}
               <Text style={s.label}>Budget Period</Text>
-              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 18 }}>
-                {[['weekly','Weekly'],['biweekly','Biweekly'],['monthly','Monthly']].map(([k, l]) => (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                {[['weekly','Weekly'],['biweekly','Biweekly'],['monthly','Monthly'],['paycycle','Paycycle']].map(([k, l]) => (
                   <TouchableOpacity
                     key={k}
                     onPress={() => setNewBudgetPeriod(k)}
-                    style={{ flex: 1, paddingVertical: 10, borderRadius: 12, alignItems: 'center', backgroundColor: newBudgetPeriod === k ? C.accent : C.surface, borderWidth: 1, borderColor: newBudgetPeriod === k ? C.accent : C.border }}
+                    style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, alignItems: 'center', backgroundColor: newBudgetPeriod === k ? C.accent : C.surface, borderWidth: 1, borderColor: newBudgetPeriod === k ? C.accent : C.border }}
                   >
                     <Text style={{ color: newBudgetPeriod === k ? '#fff' : C.textSub, fontWeight: '600', fontSize: 12 }}>{l}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
+              {newBudgetPeriod === 'paycycle' && (
+                <View style={{ backgroundColor: C.bg, borderRadius: 12, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: C.border }}>
+                  <Text style={[s.label, { marginBottom: 8 }]}>Pay Frequency</Text>
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+                    {[['weekly','Weekly'],['biweekly','Every 2 Wks'],['monthly','Monthly']].map(([k, l]) => (
+                      <TouchableOpacity key={k} onPress={() => setNewBudgetPaycycleFreq(k)}
+                        style={{ flex: 1, paddingVertical: 8, borderRadius: 10, alignItems: 'center', backgroundColor: newBudgetPaycycleFreq === k ? C.accent : C.surface2, borderWidth: 1, borderColor: newBudgetPaycycleFreq === k ? C.accent : C.border }}>
+                        <Text style={{ color: newBudgetPaycycleFreq === k ? '#fff' : C.textSub, fontWeight: '600', fontSize: 11 }}>{l}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <Text style={[s.label, { marginBottom: 8 }]}>Next Payday (YYYY-MM-DD)</Text>
+                  <TextInput
+                    style={[s.input, { marginBottom: 0 }]}
+                    placeholder="e.g. 2025-06-01"
+                    placeholderTextColor={C.textMuted}
+                    value={newBudgetPaycycleStart}
+                    onChangeText={setNewBudgetPaycycleStart}
+                  />
+                  <Text style={{ color: C.textMuted, fontSize: 11, marginTop: 6 }}>Your budget resets each paycycle starting from this date.</Text>
+                </View>
+              )}
+              <View style={{ marginBottom: 6 }} />
 
               {/* Limit */}
               <Text style={s.label}>Spending Limit ($)</Text>
@@ -2276,10 +2961,13 @@ export default function App() {
                 onPress={async () => {
                   setSavingBudget(true);
                   try {
+                    const paycycleData = newBudgetPeriod === 'paycycle'
+                      ? { paycycle_start: newBudgetPaycycleStart || null, paycycle_freq: newBudgetPaycycleFreq }
+                      : {};
                     if (editingBudget) {
-                      await fetch(`${API_URL}/api/budgets/${editingBudget.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ monthly_limit: parseFloat(newBudgetLimit), period: newBudgetPeriod }) });
+                      await fetch(`${API_URL}/api/budgets/${editingBudget.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ monthly_limit: parseFloat(newBudgetLimit), period: newBudgetPeriod, ...paycycleData }) });
                     } else {
-                      await fetch(`${API_URL}/api/budgets`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, category: newBudgetCat.trim(), monthly_limit: parseFloat(newBudgetLimit), period: newBudgetPeriod }) });
+                      await fetch(`${API_URL}/api/budgets`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, category: newBudgetCat.trim(), monthly_limit: parseFloat(newBudgetLimit), period: newBudgetPeriod, ...paycycleData }) });
                     }
                     setAddBudgetVisible(false);
                     setEditingBudget(null);
@@ -2290,7 +2978,7 @@ export default function App() {
               >
                 {savingBudget ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>{editingBudget ? 'Save Changes' : 'Create Budget'}</Text>}
               </TouchableOpacity>
-              <TouchableOpacity style={s.linkRow} onPress={() => { setAddBudgetVisible(false); setEditingBudget(null); }}>
+              <TouchableOpacity style={s.linkRow} onPress={() => { setAddBudgetVisible(false); setEditingBudget(null); setNewBudgetPaycycleStart(''); setNewBudgetPaycycleFreq('biweekly'); }}>
                 <Text style={s.linkText}>Cancel</Text>
               </TouchableOpacity>
             </View>
@@ -2348,6 +3036,44 @@ export default function App() {
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
+      </Modal>
+
+      {/* New User Tutorial Modal */}
+      <Modal visible={tutorialVisible} animationType="fade" transparent onRequestClose={() => setTutorialVisible(false)}>
+        <View style={[s.modalOverlay, { justifyContent: 'center', paddingHorizontal: 24 }]}>
+          <View style={[s.modalCard, { borderRadius: 24, paddingBottom: 28 }]}>
+            {/* Step indicators */}
+            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 6, marginBottom: 24 }}>
+              {TUTORIAL_STEPS.map((_, i) => (
+                <View key={i} style={{ width: i === tutorialStep ? 20 : 6, height: 6, borderRadius: 3, backgroundColor: i === tutorialStep ? C.accent : C.border }} />
+              ))}
+            </View>
+            {/* Icon */}
+            <View style={{ alignItems: 'center', marginBottom: 20 }}>
+              <View style={{ width: 72, height: 72, borderRadius: 22, backgroundColor: TUTORIAL_STEPS[tutorialStep]?.color, justifyContent: 'center', alignItems: 'center', shadowColor: TUTORIAL_STEPS[tutorialStep]?.color, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 16, elevation: 10 }}>
+                <Text style={{ color: '#fff', fontSize: 30, fontWeight: '800' }}>{TUTORIAL_STEPS[tutorialStep]?.icon}</Text>
+              </View>
+            </View>
+            <Text style={{ color: C.text, fontSize: 20, fontWeight: '800', textAlign: 'center', marginBottom: 12 }}>{TUTORIAL_STEPS[tutorialStep]?.title}</Text>
+            <Text style={{ color: C.textSub, fontSize: 14, textAlign: 'center', lineHeight: 22, marginBottom: 28 }}>{TUTORIAL_STEPS[tutorialStep]?.body}</Text>
+            {/* Buttons */}
+            <TouchableOpacity
+              style={s.btn}
+              onPress={() => {
+                if (tutorialStep < TUTORIAL_STEPS.length - 1) {
+                  setTutorialStep(t => t + 1);
+                } else {
+                  setTutorialVisible(false);
+                }
+              }}
+            >
+              <Text style={s.btnText}>{tutorialStep < TUTORIAL_STEPS.length - 1 ? 'Next →' : 'Get Started!'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[s.linkRow, { paddingVertical: 6 }]} onPress={() => setTutorialVisible(false)}>
+              <Text style={[s.linkText, { fontSize: 12 }]}>Skip tutorial</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
 
       {/* Transaction Sort Dropdown Modal */}
@@ -2481,7 +3207,7 @@ const makeStyles = (C) => StyleSheet.create({
   sendBtnOff: { backgroundColor: C.textMuted },
   sendBtnText: { color: '#fff', fontSize: 22, fontWeight: 'bold', lineHeight: 26 },
 
-  bottomNav: { flexDirection: 'row', backgroundColor: C.surface, borderTopWidth: 1, borderTopColor: C.border, paddingBottom: 28, paddingTop: 10 },
+  bottomNav: { flexDirection: 'row', backgroundColor: C.surface, borderTopWidth: 1, borderTopColor: C.border, paddingBottom: 14, paddingTop: 10 },
   navTab: { flex: 1, alignItems: 'center', paddingVertical: 4 },
   navIcon: { fontSize: 20, color: C.textMuted, marginBottom: 3 },
   navIconOn: { color: C.accent },

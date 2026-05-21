@@ -114,10 +114,15 @@ export async function chatWithAssistant(
     monthly_income: number;
     monthly_spending: number;
     weekly_spending?: number;
+    spending_windows?: { [key: string]: number };
     top_categories: Array<{ name: string; amount: number }>;
     debt: Array<{ name: string; balance: number; interest: number }>;
     accounts?: Array<{ name: string; type: string; subtype: string; balance: number }>;
     recent_transactions?: Array<{ merchant: string; amount: number; category: string; date: string }>;
+    goals_section?: string;
+    budgets_section?: string;
+    total_transactions?: number;
+    today?: string;
   }
 ) {
   const accountsSection = financialSummary.accounts?.length
@@ -128,32 +133,45 @@ export async function chatWithAssistant(
     ? financialSummary.recent_transactions.map(t => `  - ${t.date}: ${t.merchant} — $${t.amount.toFixed(2)} (${t.category})`).join("\n")
     : "  - No recent transactions";
 
-  const today = new Date().toISOString().split("T")[0];
-  const sevenDaysAgo = new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-  const thirtyDaysAgo = new Date(Date.now() - 29 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-  const systemPrompt = `You are WealthPal AI, a friendly and knowledgeable personal finance assistant. You have full visibility into this user's real financial data — use it to give specific, personalized advice.
+  const today = financialSummary.today || new Date().toISOString().split("T")[0];
+  const sw = financialSummary.spending_windows || {};
 
-USER'S FINANCIAL SNAPSHOT:
-Today's date: ${today}
-Last 7 days = ${sevenDaysAgo} through ${today}. Spending in that window: $${(financialSummary.weekly_spending || 0).toFixed(2)}
-Last 30 days = ${thirtyDaysAgo} through ${today}. Spending in that window: $${financialSummary.monthly_spending.toFixed(2)}
-Top Spending Categories (last 30 days):
+  const spendingWindowsSection = Object.keys(sw).length > 0
+    ? Object.entries(sw).map(([window, amt]) => `  - Last ${window}: $${(amt as number).toFixed(2)}`).join("\n")
+    : `  - Last 7 days: $${(financialSummary.weekly_spending || 0).toFixed(2)}\n  - Last 30 days: $${financialSummary.monthly_spending.toFixed(2)}`;
+
+  const systemPrompt = `You are WealthPal AI, a friendly and knowledgeable personal finance assistant. You have FULL ACCESS to this user's complete financial data pulled directly from their bank via Plaid. Answer any question about their finances with precise numbers from this data.
+
+TODAY: ${today}
+
+PRE-COMPUTED SPENDING BY TIME WINDOW (use these exact numbers when asked about any time period):
+${spendingWindowsSection}
+
+TOP SPENDING CATEGORIES (last 30 days):
 ${financialSummary.top_categories.map(c => `  - ${c.name}: $${c.amount.toFixed(2)}`).join("\n") || "  - None yet"}
-Debts: ${financialSummary.debt.length > 0 ? financialSummary.debt.map(d => `${d.name} ($${d.balance} @ ${d.interest}%)`).join(", ") : "None"}
 
 LINKED BANK ACCOUNTS:
 ${accountsSection}
 
-RECENT TRANSACTIONS (up to 100, newest first):
+GOALS:
+${financialSummary.goals_section || "  - None set"}
+
+ACTIVE BUDGETS:
+${financialSummary.budgets_section || "  - None set"}
+
+DEBTS: ${financialSummary.debt.length > 0 ? financialSummary.debt.map(d => `${d.name} ($${d.balance} @ ${d.interest}%)`).join(", ") : "None"}
+
+ALL TRANSACTIONS (${financialSummary.total_transactions || 0} total, up to 150 shown newest first):
 ${recentTxSection}
 
-INSTRUCTIONS:
-- "Last 7 days" always means the 7-day window shown above. Use the transaction dates to filter correctly — do NOT use monthly total when asked about weekly or shorter periods
-- Reference their actual numbers and transactions when relevant
+CRITICAL INSTRUCTIONS:
+- You have the COMPLETE transaction history above — ALWAYS use exact numbers from the data
+- For any time period question (9 days, 2 weeks, etc.), filter the transaction list by date and sum — do NOT say you lack data
+- The pre-computed spending windows above give you quick answers for 7, 9, 14, 30, 60, 90 day totals
+- Reference specific merchant names, amounts, and dates from the data when relevant
 - Be conversational, concise, and encouraging
-- Give actionable advice specific to their situation
-- If asked about a specific transaction or merchant, look it up in their data above
-- Ask clarifying questions when needed`;
+- Give actionable advice tailored to their real spending patterns
+- If asked about the future (budgets, projections), base it on their actual historical patterns`;
 
   try {
     const response = await openai.chat.completions.create({

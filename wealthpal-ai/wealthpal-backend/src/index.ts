@@ -295,34 +295,43 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "User ID and message required" });
     }
 
-    // Fetch all transactions for spending summary
-    const monthlyCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-    const weeklyCutoff = new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]; // 6 days back = 7 days total (today + 6)
-    const { data: txData } = await supabase
-      .from("transactions")
-      .select("*")
-      .eq("user_id", userId)
-      .gte("transaction_date", monthlyCutoff);
+    const today = new Date();
+    const todayStr = today.toISOString().split("T")[0];
 
-    const monthly_spending = txData?.reduce((sum, t) => sum + t.amount, 0) || 0;
-    const weekly_spending = (txData || []).filter(t => t.transaction_date >= weeklyCutoff).reduce((sum, t) => sum + t.amount, 0);
+    // Fetch ALL transactions for this user — no date cutoff
+    const { data: allTx } = await supabase
+      .from("transactions")
+      .select("merchant_name, amount, category, transaction_date, description")
+      .eq("user_id", userId)
+      .order("transaction_date", { ascending: false });
+
+    const txList = allTx || [];
+
+    // Pre-compute spending windows so AI has exact numbers for any time period
+    const windowSpend = (days: number) => {
+      const cutoff = new Date(today.getTime() - days * 86400000).toISOString().split("T")[0];
+      return txList.filter(t => t.transaction_date >= cutoff).reduce((s, t) => s + parseFloat(t.amount), 0);
+    };
+
+    const spending_7d  = windowSpend(7);
+    const spending_9d  = windowSpend(9);
+    const spending_14d = windowSpend(14);
+    const spending_30d = windowSpend(30);
+    const spending_60d = windowSpend(60);
+    const spending_90d = windowSpend(90);
+
+    // Category breakdown for 30d
     const categoryMap: { [key: string]: number } = {};
-    txData?.forEach((t) => { categoryMap[t.category] = (categoryMap[t.category] || 0) + t.amount; });
+    txList.filter(t => t.transaction_date >= new Date(today.getTime() - 30 * 86400000).toISOString().split("T")[0])
+      .forEach(t => { categoryMap[t.category] = (categoryMap[t.category] || 0) + parseFloat(t.amount); });
     const top_categories = Object.entries(categoryMap)
       .map(([name, amount]) => ({ name, amount }))
       .sort((a, b) => b.amount - a.amount)
-      .slice(0, 5);
+      .slice(0, 8);
 
-    // Fetch recent transactions for AI context (up to 100)
-    const { data: recentTx } = await supabase
-      .from("transactions")
-      .select("merchant_name, amount, category, transaction_date")
-      .eq("user_id", userId)
-      .order("transaction_date", { ascending: false })
-      .limit(100);
-
-    const recent_transactions = (recentTx || []).map(t => ({
-      merchant: t.merchant_name || "Unknown",
+    // Most recent 150 transactions for AI reference
+    const recent_transactions = txList.slice(0, 150).map(t => ({
+      merchant: t.merchant_name || t.description || "Unknown",
       amount: parseFloat(t.amount),
       category: t.category || "Other",
       date: t.transaction_date,
@@ -346,19 +355,41 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
           balance: a.balances.current || 0,
         }));
       }
-    } catch { /* no linked account, continue without */ }
+    } catch { /* no linked account */ }
 
-    // Fetch debts
+    // Fetch debts, goals, budgets for full context
     const { data: debts } = await supabase.from("debts").select("*").eq("user_id", userId);
-    const debt = (debts || []).map((d) => ({ name: d.debt_name, balance: d.current_balance, interest: d.interest_rate }));
+    const debt = (debts || []).map((d: any) => ({ name: d.debt_name, balance: d.current_balance, interest: d.interest_rate }));
 
-    const summary = { monthly_income: 0, monthly_spending, weekly_spending, top_categories, debt, accounts, recent_transactions };
-    const response = await openaiService.chatWithAssistant(message, summary);
+    const { data: goalsData } = await supabase.from("goals").select("type,title,target_amount,current_amount,deadline").eq("user_id", userId);
+    const { data: budgetsData } = await supabase.from("budgets").select("category,monthly_limit,period").eq("user_id", userId);
 
-    await supabase.from("chat_messages").insert([
-      { user_id: userId, role: "user", content: message },
-      { user_id: userId, role: "assistant", content: response },
-    ]);
+    const goalsSection = (goalsData || []).map((g: any) => `  - ${g.type}: "${g.title}" — $${g.current_amount || 0}/$${g.target_amount || 0}${g.deadline ? ' by ' + g.deadline : ''}`).join("\n") || "  - None";
+    const budgetsSection = (budgetsData || []).map((b: any) => `  - ${b.category} (${b.period}): limit $${b.monthly_limit}`).join("\n") || "  - None";
+
+    const summary = {
+      monthly_income: 0,
+      monthly_spending: spending_30d,
+      weekly_spending: spending_7d,
+      spending_windows: { "7d": spending_7d, "9d": spending_9d, "14d": spending_14d, "30d": spending_30d, "60d": spending_60d, "90d": spending_90d },
+      top_categories,
+      debt,
+      accounts,
+      recent_transactions,
+      goals_section: goalsSection,
+      budgets_section: budgetsSection,
+      total_transactions: txList.length,
+      today: todayStr,
+    };
+
+    const response = await openaiService.chatWithAssistant(message, summary as any);
+
+    try {
+      await supabase.from("chat_messages").insert([
+        { user_id: userId, role: "user", content: message },
+        { user_id: userId, role: "assistant", content: response },
+      ]);
+    } catch { /* best-effort log, don't fail chat */ }
     res.json({ response });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "Failed to process chat" });
