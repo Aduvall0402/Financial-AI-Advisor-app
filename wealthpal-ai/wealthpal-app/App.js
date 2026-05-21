@@ -215,6 +215,16 @@ export default function App() {
     propsForDots: { r: '4', strokeWidth: '2', stroke: C.accent },
     propsForBackgroundLines: { stroke: C.border },
   }), [C]);
+
+  const niceChartMax = (vals) => {
+    const mx = Math.max(...vals.filter(v => v > 0 && isFinite(v)));
+    if (!mx || !isFinite(mx)) return 10;
+    const mag = Math.pow(10, Math.floor(Math.log10(mx)));
+    const n = mx / mag;
+    const nice = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+    return nice * mag;
+  };
+  const fmtYLabel = (v) => { const n = Math.round(Number(v)); return '$' + (n >= 1000 ? Math.round(n / 1000) + 'k' : n); };
   const s = useMemo(() => makeStyles(C), [C]);
 
   const monthlySpend = useMemo(() => {
@@ -304,6 +314,8 @@ export default function App() {
   const [newBudgetPaycycleStart, setNewBudgetPaycycleStart] = useState('');
   const [newBudgetPaycycleFreq, setNewBudgetPaycycleFreq] = useState('biweekly');
   const [savingBudget, setSavingBudget] = useState(false);
+  const [customCategories, setCustomCategories] = useState([]);
+  const [newCatInput, setNewCatInput] = useState('');
 
   // Transactions sort
   const [txSortBy, setTxSortBy] = useState('date_desc');
@@ -316,6 +328,7 @@ export default function App() {
   // More tab sub-section + group share loading — MUST be declared here (before any early returns)
   const [moreSection, setMoreSection] = useState(null);
   const [groupShareLoading, setGroupShareLoading] = useState(false);
+  const [groupSettingsOpen, setGroupSettingsOpen] = useState(false);
 
   const sortedTransactions = useMemo(() => {
     const txs = txFilterCategory === 'all'
@@ -348,6 +361,7 @@ export default function App() {
 
   // ── Theme + persisted prefs ──────────────────────────
   useEffect(() => {
+    AsyncStorage.getItem('customCategories').then(v => { if (v) { try { setCustomCategories(JSON.parse(v)); } catch {} } });
     AsyncStorage.multiGet([
       'themeBg', 'themeAccent', 'displayName',
       'notifOverall', 'notifDaily', 'notifWeekly', 'notifMonthly', 'notifBudget',
@@ -716,7 +730,7 @@ export default function App() {
     setChatMessages(p => [...p, { id: Date.now().toString(), role: 'user', text: msg }]);
     setChatInput(''); setLoadingChat(true);
     // Send device's local date so server uses the user's actual calendar day
-    const localToday = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local TZ
+    const _d = new Date(); const localToday = `${_d.getFullYear()}-${String(_d.getMonth()+1).padStart(2,'0')}-${String(_d.getDate()).padStart(2,'0')}`;
     try {
       const res = await fetch(`${API_URL}/api/ai/chat`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1020,33 +1034,35 @@ export default function App() {
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshAll} tintColor={C.accent} />}
       >
-        {/* Balance card */}
+        {/* Balance card — compact, dark */}
         <View style={s.balanceCard}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <View style={{ flex: 1 }}>
-              <Text style={s.balanceLabel}>{selectedAccount ? selectedAccount.name : 'Total Balance'}</Text>
+              <Text style={s.balanceLabel}>{selectedAccount ? selectedAccount.name.toUpperCase() : 'TOTAL BALANCE'}</Text>
               <Text style={s.balanceAmt}>${fmtMoney(selectedAccount?.balances?.current || 0)}</Text>
-              <Text style={s.balanceSub}>{selectedAccount ? `${selectedAccount.subtype} · ${selectedAccount.type}` : 'Connect a bank to get started'}</Text>
+              {selectedAccount && <Text style={s.balanceSub}>{selectedAccount.subtype} · {selectedAccount.type}</Text>}
             </View>
             {(loadingAccounts || loadingTx) && (
-              <ActivityIndicator color="rgba(255,255,255,0.7)" size="small" style={{ marginTop: 4 }} />
+              <ActivityIndicator color={C.accent} size="small" style={{ marginTop: 4 }} />
             )}
           </View>
         </View>
 
-        {/* Account selector */}
+        {/* Account pills — compact horizontal selector */}
         {accounts.length > 1 && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14, marginTop: -4 }}>
             {accounts.map(acc => (
               <TouchableOpacity
                 key={acc.account_id}
-                style={[s.chip, selectedAccount?.account_id === acc.account_id && s.chipActive]}
+                style={[s.acctPill, selectedAccount?.account_id === acc.account_id && s.acctPillActive]}
                 onPress={() => setSelectedAccount(acc)}
               >
-                <Text style={[s.chipTitle, selectedAccount?.account_id === acc.account_id && s.chipTitleActive]}>{acc.name}</Text>
-                <Text style={[s.chipSub, selectedAccount?.account_id === acc.account_id && { color: 'rgba(255,255,255,0.65)' }]}>${fmtMoney(acc.balances?.current || 0)}</Text>
+                <Text style={[s.acctPillText, selectedAccount?.account_id === acc.account_id && { color: '#fff' }]}>
+                  {acc.name} · ${fmtMoney(acc.balances?.current || 0)}
+                </Text>
               </TouchableOpacity>
             ))}
+            <View style={{ width: 8 }} />
           </ScrollView>
         )}
 
@@ -1063,12 +1079,12 @@ export default function App() {
 
         {/* Stats row */}
         <View style={s.statsRow}>
-          <View style={[s.statCard, { borderLeftWidth: 3, borderLeftColor: C.accent }]}>
+          <View style={s.statCard}>
             <Text style={s.statLabel}>30-Day Spend</Text>
             <Text style={s.statVal}>${fmtMoney(monthlySpend)}</Text>
             <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 4 }}>Last 30 days</Text>
           </View>
-          <View style={[s.statCard, { borderLeftWidth: 3, borderLeftColor: C.blue }]}>
+          <View style={s.statCard}>
             <Text style={s.statLabel}>7-Day Spend</Text>
             <Text style={s.statVal}>${fmtMoney(weekSpend)}</Text>
             <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 4 }}>Last 7 days</Text>
@@ -1331,25 +1347,35 @@ export default function App() {
                 Total: ${fmtMoney(chartData.reduce((s, v) => s + (v === 0.01 ? 0 : v), 0))}
               </Text>
             )}
-            {chartType === 'line' && (
-              <LineChart
-                data={{ labels: chartLabels, datasets: [{ data: chartData }] }}
-                width={SW - 64} height={200} bezier
-                chartConfig={{ ...CHART_CFG, decimalPlaces: 0 }}
-                formatYLabel={(v) => '$' + (Number(v) >= 1000 ? (Number(v)/1000).toFixed(1)+'k' : v)}
-                style={{ borderRadius: 10, marginLeft: -16 }} withInnerLines={false} withDots
-                yAxisLabel="" yAxisSuffix=""
-              />
-            )}
-            {chartType === 'bar' && (
-              <BarChart
-                data={{ labels: chartLabels, datasets: [{ data: chartData }] }}
-                width={SW - 64} height={200}
-                chartConfig={{ ...CHART_CFG, decimalPlaces: 0, formatYLabel: (v) => '$' + (Number(v) >= 1000 ? (Number(v)/1000).toFixed(1)+'k' : v) }}
-                style={{ borderRadius: 10, marginLeft: -16 }} withInnerLines={false}
-                fromZero yAxisLabel="" yAxisSuffix=""
-              />
-            )}
+            {chartType === 'line' && (() => {
+              const lm = niceChartMax(chartData);
+              return (
+                <LineChart
+                  data={{ labels: chartLabels, datasets: [
+                    { data: chartData },
+                    { data: chartData.map(() => lm), withDots: false, color: () => 'rgba(0,0,0,0)' },
+                  ]}}
+                  width={SW - 64} height={200} bezier
+                  chartConfig={{ ...CHART_CFG, decimalPlaces: 0 }}
+                  formatYLabel={fmtYLabel}
+                  style={{ borderRadius: 10, marginLeft: -16 }} withInnerLines={false} withDots
+                  yAxisLabel="" yAxisSuffix="" segments={4}
+                />
+              );
+            })()}
+            {chartType === 'bar' && (() => {
+              const lm = niceChartMax(chartData);
+              return (
+                <BarChart
+                  data={{ labels: chartLabels, datasets: [{ data: chartData }] }}
+                  width={SW - 64} height={200}
+                  chartConfig={{ ...CHART_CFG, decimalPlaces: 0 }}
+                  formatYLabel={fmtYLabel}
+                  style={{ borderRadius: 10, marginLeft: -16 }} withInnerLines={false}
+                  fromZero yAxisLabel="" yAxisSuffix="" segments={4}
+                />
+              );
+            })()}
             {chartType === 'pie' && catData && (
               <PieChart
                 data={catData.map(([cat, amt], i) => ({
@@ -1996,11 +2022,126 @@ export default function App() {
       ) : (
         <ScrollView style={{ flex: 1, paddingHorizontal: 16 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16, marginTop: 8, gap: 10 }}>
-            <TouchableOpacity onPress={() => { setCurrentGroup(null); setGroupSharedTx([]); }}>
+            <TouchableOpacity onPress={() => { setCurrentGroup(null); setGroupSharedTx([]); setGroupSettingsOpen(false); }}>
               <Text style={{ color: C.accent, fontSize: 14, fontWeight: '600' }}>‹ Groups</Text>
             </TouchableOpacity>
             <Text style={{ color: C.text, fontSize: 18, fontWeight: '700', flex: 1 }}>{currentGroup.name}</Text>
+            <TouchableOpacity
+              onPress={() => setGroupSettingsOpen(o => !o)}
+              style={{ backgroundColor: groupSettingsOpen ? C.accent : C.surface, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: groupSettingsOpen ? C.accent : C.border }}
+            >
+              <Text style={{ color: groupSettingsOpen ? '#fff' : C.textSub, fontSize: 13, fontWeight: '700' }}>⚙ Settings</Text>
+            </TouchableOpacity>
           </View>
+
+          {/* ── Group Settings Panel ── */}
+          {groupSettingsOpen && (
+            <View style={[s.section, { backgroundColor: C.surface, borderRadius: 16, borderWidth: 1, borderColor: C.border, padding: 16, marginBottom: 20 }]}>
+              {/* My Sharing */}
+              {groupDetail.members.filter(m => m.email === email).map(m => (
+                <View key={m.id}>
+                  <Text style={[s.sectionTitle, { marginBottom: 10 }]}>My Sharing</Text>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: C.text, fontSize: 13, fontWeight: '600' }}>Share Transactions</Text>
+                      <Text style={{ color: C.textMuted, fontSize: 11, marginTop: 2 }}>Show the group your transactions</Text>
+                    </View>
+                    {groupShareLoading ? <ActivityIndicator size="small" color={C.accent} /> : (
+                      <Switch value={!!m.share_transactions} onValueChange={async (v) => {
+                        setGroupShareLoading(true);
+                        await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ share_transactions: v, share_accounts: !!m.share_accounts }) });
+                        await fetchGroupDetail(currentGroup.id);
+                        setGroupShareLoading(false);
+                      }} trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff" />
+                    )}
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: C.text, fontSize: 13, fontWeight: '600' }}>Share Account Balances</Text>
+                      <Text style={{ color: C.textMuted, fontSize: 11, marginTop: 2 }}>Show the group your balances</Text>
+                    </View>
+                    {groupShareLoading ? <ActivityIndicator size="small" color={C.accent} /> : (
+                      <Switch value={!!m.share_accounts} onValueChange={async (v) => {
+                        setGroupShareLoading(true);
+                        await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ share_transactions: !!m.share_transactions, share_accounts: v }) });
+                        await fetchGroupDetail(currentGroup.id);
+                        setGroupShareLoading(false);
+                      }} trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff" />
+                    )}
+                  </View>
+                </View>
+              ))}
+
+              {/* Members */}
+              <Text style={[s.sectionTitle, { marginBottom: 10 }]}>Members ({groupDetail.members.length})</Text>
+              {groupDetail.members.map(m => (
+                <View key={m.id} style={[s.txItem, { paddingVertical: 10 }]}>
+                  <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: m.email === email ? C.accent : C.surface2, justifyContent: 'center', alignItems: 'center' }}>
+                    <Text style={{ color: m.email === email ? '#fff' : C.textSub, fontSize: 14, fontWeight: '700' }}>{(m.email?.[0] || '?').toUpperCase()}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.txMerchant}>{m.email === email ? 'You' : m.email?.split('@')[0]}</Text>
+                    <View style={{ flexDirection: 'row', gap: 5, marginTop: 2 }}>
+                      <Text style={{ color: C.textMuted, fontSize: 10, backgroundColor: C.surface2, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>{m.role}</Text>
+                      {m.share_transactions && <Text style={{ color: C.green, fontSize: 10, backgroundColor: 'rgba(16,185,129,0.12)', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>Txns</Text>}
+                      {m.share_accounts && <Text style={{ color: C.blue, fontSize: 10, backgroundColor: 'rgba(59,130,246,0.12)', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 }}>Balance</Text>}
+                    </View>
+                  </View>
+                  {m.email !== email && (
+                    <TouchableOpacity onPress={async () => { await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, { method: 'DELETE' }); fetchGroupDetail(currentGroup.id); }}>
+                      <Text style={{ color: C.red, fontSize: 11, fontWeight: '600' }}>Remove</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))}
+
+              {/* Invite */}
+              <Text style={[s.label, { marginTop: 10 }]}>Invite by Email</Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TextInput
+                  style={[s.input, { flex: 1, marginBottom: 0 }]}
+                  placeholder="email@example.com"
+                  placeholderTextColor={C.textMuted}
+                  value={addMemberEmail}
+                  onChangeText={setAddMemberEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                />
+                <TouchableOpacity
+                  style={{ backgroundColor: C.accent, borderRadius: 14, paddingHorizontal: 16, justifyContent: 'center' }}
+                  onPress={async () => {
+                    if (!addMemberEmail.trim()) return;
+                    await fetch(`${API_URL}/api/groups/${currentGroup.id}/members`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: addMemberEmail.trim() }) });
+                    setAddMemberEmail('');
+                    fetchGroupDetail(currentGroup.id);
+                  }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '700' }}>Invite</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* ── Member Balances (if shared) ── */}
+          {groupDetail.members.some(m => m.share_accounts && m.total_balance != null) && (
+            <View style={s.section}>
+              <Text style={s.sectionTitle}>Member Balances</Text>
+              {groupDetail.members.filter(m => m.share_accounts).map(m => (
+                <View key={m.id} style={[s.txItem]}>
+                  <View style={{ width: 38, height: 38, borderRadius: 10, backgroundColor: C.blue, justifyContent: 'center', alignItems: 'center' }}>
+                    <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{(m.email?.[0] || '?').toUpperCase()}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.txMerchant}>{m.email?.split('@')[0]}</Text>
+                    <Text style={s.txMeta}>Sharing balances</Text>
+                  </View>
+                  <Text style={{ color: C.green, fontSize: 15, fontWeight: '700' }}>
+                    {m.total_balance != null ? `$${fmtMoney(m.total_balance)}` : '—'}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
 
           {/* ── Group Feed ── */}
           <View style={s.section}>
@@ -2044,126 +2185,6 @@ export default function App() {
                 </View>
               ));
             })()}
-          </View>
-
-          {/* ── Member Balances (if shared) ── */}
-          {groupDetail.members.some(m => m.share_accounts) && (
-            <View style={s.section}>
-              <Text style={s.sectionTitle}>Member Balances</Text>
-              {groupDetail.members.filter(m => m.share_accounts).map(m => (
-                <View key={m.id} style={[s.txItem]}>
-                  <View style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: C.blue, justifyContent: 'center', alignItems: 'center' }}>
-                    <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>{(m.email?.[0] || '?').toUpperCase()}</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.txMerchant}>{m.email?.split('@')[0]}</Text>
-                    <Text style={s.txMeta}>Sharing balances</Text>
-                  </View>
-                  <Text style={{ color: C.green, fontSize: 14, fontWeight: '700' }}>Visible</Text>
-                </View>
-              ))}
-            </View>
-          )}
-
-          {/* ── My Sharing Settings ── */}
-          {groupDetail.members.filter(m => m.email === email).map(m => (
-            <View key={m.id} style={s.section}>
-              <Text style={s.sectionTitle}>My Sharing</Text>
-              <View style={[s.insightCard, { flexDirection: 'column', gap: 14 }]}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ color: C.text, fontSize: 14, fontWeight: '600' }}>Share Transactions</Text>
-                    <Text style={{ color: C.textSub, fontSize: 12, marginTop: 2 }}>Show the group your transactions</Text>
-                  </View>
-                  {groupShareLoading ? <ActivityIndicator size="small" color={C.accent} /> : (
-                    <Switch
-                      value={!!m.share_transactions}
-                      onValueChange={async (v) => {
-                        setGroupShareLoading(true);
-                        await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, {
-                          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ share_transactions: v, share_accounts: !!m.share_accounts }),
-                        });
-                        await fetchGroupDetail(currentGroup.id);
-                        setGroupShareLoading(false);
-                      }}
-                      trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff"
-                    />
-                  )}
-                </View>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ color: C.text, fontSize: 14, fontWeight: '600' }}>Share Account Balances</Text>
-                    <Text style={{ color: C.textSub, fontSize: 12, marginTop: 2 }}>Show the group your balances</Text>
-                  </View>
-                  {groupShareLoading ? <ActivityIndicator size="small" color={C.accent} /> : (
-                    <Switch
-                      value={!!m.share_accounts}
-                      onValueChange={async (v) => {
-                        setGroupShareLoading(true);
-                        await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, {
-                          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ share_transactions: !!m.share_transactions, share_accounts: v }),
-                        });
-                        await fetchGroupDetail(currentGroup.id);
-                        setGroupShareLoading(false);
-                      }}
-                      trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff"
-                    />
-                  )}
-                </View>
-              </View>
-            </View>
-          ))}
-
-          {/* ── Members ── */}
-          <View style={s.section}>
-            <Text style={[s.sectionTitle, { marginBottom: 12 }]}>Members ({groupDetail.members.length})</Text>
-            {groupDetail.members.map(m => (
-              <View key={m.id} style={[s.txItem, { paddingVertical: 12 }]}>
-                <View style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: m.email === email ? C.accent : C.surface2, justifyContent: 'center', alignItems: 'center' }}>
-                  <Text style={{ color: m.email === email ? '#fff' : C.textSub, fontSize: 16, fontWeight: '700' }}>{(m.email?.[0] || '?').toUpperCase()}</Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={s.txMerchant}>{m.email === email ? 'You' : m.email?.split('@')[0]}</Text>
-                  <View style={{ flexDirection: 'row', gap: 6, marginTop: 3 }}>
-                    <Text style={{ color: C.textMuted, fontSize: 11, backgroundColor: C.surface2, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>{m.role}</Text>
-                    {m.share_transactions && <Text style={{ color: C.green, fontSize: 11, backgroundColor: 'rgba(16,185,129,0.12)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>Txns</Text>}
-                    {m.share_accounts && <Text style={{ color: C.blue, fontSize: 11, backgroundColor: 'rgba(59,130,246,0.12)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>Balance</Text>}
-                  </View>
-                </View>
-                {m.email !== email && (
-                  <TouchableOpacity onPress={async () => {
-                    await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, { method: 'DELETE' });
-                    fetchGroupDetail(currentGroup.id);
-                  }}>
-                    <Text style={{ color: C.red, fontSize: 12, fontWeight: '600' }}>Remove</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            ))}
-            <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
-              <TextInput
-                style={[s.input, { flex: 1, marginBottom: 0 }]}
-                placeholder="Invite by email…"
-                placeholderTextColor={C.textMuted}
-                value={addMemberEmail}
-                onChangeText={setAddMemberEmail}
-                keyboardType="email-address"
-                autoCapitalize="none"
-              />
-              <TouchableOpacity
-                style={{ backgroundColor: C.accent, borderRadius: 14, paddingHorizontal: 16, justifyContent: 'center' }}
-                onPress={async () => {
-                  if (!addMemberEmail.trim()) return;
-                  await fetch(`${API_URL}/api/groups/${currentGroup.id}/members`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: addMemberEmail.trim() }) });
-                  setAddMemberEmail('');
-                  fetchGroupDetail(currentGroup.id);
-                }}
-              >
-                <Text style={{ color: '#fff', fontWeight: '700' }}>Invite</Text>
-              </TouchableOpacity>
-            </View>
           </View>
 
           {/* ── Group Goals ── */}
@@ -3092,8 +3113,8 @@ export default function App() {
               {!editingBudget && (
                 <>
                   <Text style={s.label}>Category</Text>
-                  <ScrollView style={{ maxHeight: 180, marginBottom: 18 }} showsVerticalScrollIndicator={false}>
-                    {PLAID_CATEGORIES.map(cat => (
+                  <ScrollView style={{ maxHeight: 180, marginBottom: 10 }} showsVerticalScrollIndicator={false}>
+                    {[...PLAID_CATEGORIES, ...customCategories.map(c => ({ key: c, label: c, icon: '★' }))].map(cat => (
                       <TouchableOpacity
                         key={cat.key}
                         onPress={() => setNewBudgetCat(cat.key)}
@@ -3107,6 +3128,29 @@ export default function App() {
                       </TouchableOpacity>
                     ))}
                   </ScrollView>
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+                    <TextInput
+                      style={[s.input, { flex: 1, marginBottom: 0 }]}
+                      placeholder="+ New category name…"
+                      placeholderTextColor={C.textMuted}
+                      value={newCatInput}
+                      onChangeText={setNewCatInput}
+                    />
+                    <TouchableOpacity
+                      style={{ backgroundColor: C.accent, borderRadius: 12, paddingHorizontal: 14, justifyContent: 'center' }}
+                      onPress={() => {
+                        const cat = newCatInput.trim();
+                        if (!cat) return;
+                        const updated = [...customCategories.filter(c => c !== cat), cat];
+                        setCustomCategories(updated);
+                        AsyncStorage.setItem('customCategories', JSON.stringify(updated));
+                        setNewBudgetCat(cat);
+                        setNewCatInput('');
+                      }}
+                    >
+                      <Text style={{ color: '#fff', fontWeight: '700' }}>Add</Text>
+                    </TouchableOpacity>
+                  </View>
                 </>
               )}
               {editingBudget && (
@@ -3232,7 +3276,7 @@ export default function App() {
             <Text style={s.modalTitle}>New Group Budget</Text>
             <Text style={s.label}>Category</Text>
             <ScrollView style={{ maxHeight: 140, marginBottom: 14, borderWidth: 1, borderColor: C.border, borderRadius: 10 }} showsVerticalScrollIndicator={false}>
-              {PLAID_CATEGORIES.map(c => (
+              {[...PLAID_CATEGORIES, ...customCategories.map(c => ({ key: c, label: c, icon: '★' }))].map(c => (
                 <TouchableOpacity key={c.key} onPress={() => setNewGroupBudgetCat(c.key)} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 11, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: C.border }}>
                   <Text style={{ color: newGroupBudgetCat === c.key ? C.accent : C.text, fontSize: 14 }}>{c.icon} {c.label}</Text>
                   {newGroupBudgetCat === c.key && <Text style={{ color: C.accent }}>✓</Text>}
@@ -3478,16 +3522,14 @@ const makeStyles = (C) => StyleSheet.create({
   menuBtn: { padding: 8, alignItems: 'flex-end', justifyContent: 'center', gap: 5 },
   menuLine: { height: 2, width: 24, backgroundColor: C.text, borderRadius: 2 },
 
-  balanceCard: { borderRadius: 22, padding: 24, marginBottom: 20, marginTop: 8, backgroundColor: C.accent, shadowColor: C.accent, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 18, elevation: 10 },
-  balanceLabel: { color: 'rgba(255,255,255,0.65)', fontSize: 13, marginBottom: 8 },
-  balanceAmt: { fontSize: 42, fontWeight: 'bold', color: '#fff', marginBottom: 10 },
-  balanceSub: { color: 'rgba(255,255,255,0.65)', fontSize: 13 },
+  balanceCard: { borderRadius: 18, paddingHorizontal: 20, paddingVertical: 18, marginBottom: 12, marginTop: 8, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
+  balanceLabel: { color: C.textSub, fontSize: 11, fontWeight: '700', marginBottom: 6, letterSpacing: 0.6 },
+  balanceAmt: { fontSize: 36, fontWeight: '800', color: C.text, marginBottom: 4 },
+  balanceSub: { color: C.textMuted, fontSize: 12 },
 
-  chip: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 12, marginRight: 10, minWidth: 120 },
-  chipActive: { backgroundColor: C.accent, borderColor: C.accent },
-  chipTitle: { color: C.textSub, fontSize: 13, fontWeight: '600', marginBottom: 3 },
-  chipTitleActive: { color: '#fff' },
-  chipSub: { color: C.textMuted, fontSize: 12 },
+  acctPill: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 20, paddingHorizontal: 13, paddingVertical: 7, marginRight: 8 },
+  acctPillActive: { backgroundColor: C.accent, borderColor: C.accent },
+  acctPillText: { color: C.textSub, fontSize: 12, fontWeight: '600' },
 
   statsRow: { flexDirection: 'row', gap: 12, marginBottom: 20 },
   statCard: { flex: 1, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 16, padding: 16 },

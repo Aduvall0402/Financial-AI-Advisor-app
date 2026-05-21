@@ -295,9 +295,10 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "User ID and message required" });
     }
 
-    // Use the client's local date if sent; fall back to UTC server date
-    const todayStr: string = req.body.today || new Date().toISOString().split("T")[0];
-    const todayDate = new Date(todayStr + "T00:00:00Z"); // treat as UTC midnight for arithmetic
+    // Use the client's local date if sent and valid; fall back to UTC server date
+    const rawToday: string = req.body.today || "";
+    const todayStr: string = /^\d{4}-\d{2}-\d{2}$/.test(rawToday) ? rawToday : new Date().toISOString().split("T")[0];
+    const todayDate = new Date(todayStr + "T00:00:00Z");
 
     // Fetch ALL transactions for this user — no date cutoff
     const { data: allTx } = await supabase
@@ -514,7 +515,19 @@ app.get("/api/groups/:groupId/detail", async (req: Request, res: Response) => {
       supabase.from("group_members").select("*").eq("group_id", req.params.groupId),
       supabase.from("group_goals").select("*").eq("group_id", req.params.groupId),
     ]);
-    res.json({ members: membersRes.data || [], goals: goalsRes.data || [] });
+    const members = membersRes.data || [];
+    // Fetch Plaid balances for members who share accounts
+    const membersWithBalances = await Promise.all(members.map(async (m: any) => {
+      if (!m.share_accounts || !m.user_id) return m;
+      try {
+        const { data: acctData } = await supabase.from("accounts").select("plaid_access_token").eq("user_id", m.user_id).order("created_at", { ascending: false }).limit(1);
+        if (!acctData?.length || !acctData[0]?.plaid_access_token) return m;
+        const plaidAccts = await plaidService.getAccounts(acctData[0].plaid_access_token);
+        const totalBalance = plaidAccts.reduce((s: number, a: any) => s + (a.balances?.current || 0), 0);
+        return { ...m, total_balance: totalBalance };
+      } catch { return m; }
+    }));
+    res.json({ members: membersWithBalances, goals: goalsRes.data || [] });
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
