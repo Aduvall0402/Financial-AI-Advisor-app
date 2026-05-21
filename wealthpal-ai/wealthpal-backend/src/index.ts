@@ -323,7 +323,7 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
 
     // Category breakdown for 30d
     const categoryMap: { [key: string]: number } = {};
-    txList.filter(t => t.transaction_date >= new Date(today.getTime() - 30 * 86400000).toISOString().split("T")[0])
+    txList.filter(t => t.transaction_date >= new Date(todayDate.getTime() - 30 * 86400000).toISOString().split("T")[0])
       .forEach(t => { categoryMap[t.category] = (categoryMap[t.category] || 0) + parseFloat(t.amount); });
     const top_categories = Object.entries(categoryMap)
       .map(([name, amount]) => ({ name, amount }))
