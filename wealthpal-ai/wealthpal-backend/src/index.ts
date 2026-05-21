@@ -295,8 +295,9 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "User ID and message required" });
     }
 
-    const today = new Date();
-    const todayStr = today.toISOString().split("T")[0];
+    // Use the client's local date if sent; fall back to UTC server date
+    const todayStr: string = req.body.today || new Date().toISOString().split("T")[0];
+    const todayDate = new Date(todayStr + "T00:00:00Z"); // treat as UTC midnight for arithmetic
 
     // Fetch ALL transactions for this user — no date cutoff
     const { data: allTx } = await supabase
@@ -307,9 +308,9 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
 
     const txList = allTx || [];
 
-    // Pre-compute spending windows so AI has exact numbers for any time period
+    // Pre-compute spending windows — use (days-1) so "last N days" includes today as day 1
     const windowSpend = (days: number) => {
-      const cutoff = new Date(today.getTime() - days * 86400000).toISOString().split("T")[0];
+      const cutoff = new Date(todayDate.getTime() - (days - 1) * 86400000).toISOString().split("T")[0];
       return txList.filter(t => t.transaction_date >= cutoff).reduce((s, t) => s + parseFloat(t.amount), 0);
     };
 

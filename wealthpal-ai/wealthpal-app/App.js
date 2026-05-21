@@ -308,13 +308,19 @@ export default function App() {
   // Transactions sort
   const [txSortBy, setTxSortBy] = useState('date_desc');
   const [txSortDropdownVisible, setTxSortDropdownVisible] = useState(false);
+  const [txFilterCategory, setTxFilterCategory] = useState('all');
+  const [txFilterDropdownVisible, setTxFilterDropdownVisible] = useState(false);
+  const [insightsCatFilter, setInsightsCatFilter] = useState('all');
+  const [insightsCatDropdownVisible, setInsightsCatDropdownVisible] = useState(false);
 
   // More tab sub-section + group share loading — MUST be declared here (before any early returns)
   const [moreSection, setMoreSection] = useState(null);
   const [groupShareLoading, setGroupShareLoading] = useState(false);
 
   const sortedTransactions = useMemo(() => {
-    const txs = [...transactions];
+    const txs = txFilterCategory === 'all'
+      ? [...transactions]
+      : transactions.filter(tx => tx.category === txFilterCategory);
     switch (txSortBy) {
       case 'date_asc':    return txs.sort((a, b) => new Date(a.transaction_date) - new Date(b.transaction_date));
       case 'amount_desc': return txs.sort((a, b) => parseFloat(b.amount) - parseFloat(a.amount));
@@ -323,7 +329,7 @@ export default function App() {
       case 'category':    return txs.sort((a, b) => (a.category || '').localeCompare(b.category || ''));
       default:            return txs.sort((a, b) => new Date(b.transaction_date) - new Date(a.transaction_date));
     }
-  }, [transactions, txSortBy]);
+  }, [transactions, txSortBy, txFilterCategory]);
 
   // Insights dropdown
   const [insightsDropdownVisible, setInsightsDropdownVisible] = useState(false);
@@ -687,10 +693,12 @@ export default function App() {
     const msg = chatInput;
     setChatMessages(p => [...p, { id: Date.now().toString(), role: 'user', text: msg }]);
     setChatInput(''); setLoadingChat(true);
+    // Send device's local date so server uses the user's actual calendar day
+    const localToday = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local TZ
     try {
       const res = await fetch(`${API_URL}/api/ai/chat`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, message: msg }),
+        body: JSON.stringify({ userId, message: msg, today: localToday }),
       });
       const data = await res.json();
       setChatMessages(p => [...p, { id: (Date.now() + 1).toString(), role: 'assistant', text: data.response || 'Sorry, I had trouble with that.' }]);
@@ -805,7 +813,9 @@ export default function App() {
     const ranges = { '7d': 7, '30d': 30, '3m': 90, '6m': 180, 'all': 99999 };
     const days = ranges[insightsRange] || 30;
     const cutoff = Date.now() - days * 86400000;
-    return transactions.filter(tx => new Date(tx.transaction_date).getTime() >= cutoff);
+    let txs = transactions.filter(tx => new Date(tx.transaction_date).getTime() >= cutoff);
+    if (insightsCatFilter !== 'all') txs = txs.filter(tx => tx.category === insightsCatFilter);
+    return txs;
   };
 
   const getCatData = () => {
@@ -973,45 +983,44 @@ export default function App() {
   // DASHBOARD TAB
   // ════════════════════════════════════════════════════
   const renderDashboard = () => {
-    const catData = getCatData();
+    const recentTx = transactions.slice(0, 3);
+    const weekSpend = transactions
+      .filter(tx => (tx.transaction_date || '') >= new Date(Date.now() - 6 * 86400000).toISOString().split('T')[0])
+      .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
     return (
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}>
         {/* Balance card */}
         <View style={s.balanceCard}>
-          <Text style={s.balanceLabel}>
-            {selectedAccount ? selectedAccount.name : 'Total Balance'}
-          </Text>
-          <Text style={s.balanceAmt}>
-            ${fmtMoney(selectedAccount?.balances?.current || 0)}
-          </Text>
-          <Text style={s.balanceSub}>
-            {selectedAccount
-              ? `${selectedAccount.subtype} · ${selectedAccount.type}`
-              : 'Connect a bank to get started'}
-          </Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.balanceLabel}>{selectedAccount ? selectedAccount.name : 'Total Balance'}</Text>
+              <Text style={s.balanceAmt}>${fmtMoney(selectedAccount?.balances?.current || 0)}</Text>
+              <Text style={s.balanceSub}>{selectedAccount ? `${selectedAccount.subtype} · ${selectedAccount.type}` : 'Connect a bank to get started'}</Text>
+            </View>
+            {(loadingAccounts || loadingTx) ? (
+              <ActivityIndicator color="rgba(255,255,255,0.7)" size="small" style={{ marginTop: 4 }} />
+            ) : (
+              <TouchableOpacity onPress={refreshAll} style={{ backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 7, marginTop: 4 }}>
+                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>↺ Refresh</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
 
         {/* Account selector */}
         {accounts.length > 1 && (
-          <View style={s.section}>
-            <Text style={s.sectionTitle}>Accounts</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              {accounts.map(acc => (
-                <TouchableOpacity
-                  key={acc.account_id}
-                  style={[s.chip, selectedAccount?.account_id === acc.account_id && s.chipActive]}
-                  onPress={() => setSelectedAccount(acc)}
-                >
-                  <Text style={[s.chipTitle, selectedAccount?.account_id === acc.account_id && s.chipTitleActive]}>
-                    {acc.name}
-                  </Text>
-                  <Text style={[s.chipSub, selectedAccount?.account_id === acc.account_id && { color: 'rgba(255,255,255,0.65)' }]}>
-                    ${fmtMoney(acc.balances?.current || 0)}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+            {accounts.map(acc => (
+              <TouchableOpacity
+                key={acc.account_id}
+                style={[s.chip, selectedAccount?.account_id === acc.account_id && s.chipActive]}
+                onPress={() => setSelectedAccount(acc)}
+              >
+                <Text style={[s.chipTitle, selectedAccount?.account_id === acc.account_id && s.chipTitleActive]}>{acc.name}</Text>
+                <Text style={[s.chipSub, selectedAccount?.account_id === acc.account_id && { color: 'rgba(255,255,255,0.65)' }]}>${fmtMoney(acc.balances?.current || 0)}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
         )}
 
         {/* Bank reconnect prompt */}
@@ -1019,10 +1028,7 @@ export default function App() {
           <View style={s.reconnectCard}>
             <Text style={s.reconnectTitle}>Bank connection needs refresh</Text>
             <Text style={s.reconnectText}>Your bank connection has expired or needs to be re-linked.</Text>
-            <TouchableOpacity
-              style={[s.btn, { marginBottom: 0 }]}
-              onPress={() => { openDrawer(); }}
-            >
+            <TouchableOpacity style={[s.btn, { marginBottom: 0 }]} onPress={openDrawer}>
               <Text style={s.btnText}>Reconnect Bank</Text>
             </TouchableOpacity>
           </View>
@@ -1030,27 +1036,17 @@ export default function App() {
 
         {/* Stats row */}
         <View style={s.statsRow}>
-          <View style={s.statCard}>
-            <Text style={s.statLabel}>Monthly Spend</Text>
+          <View style={[s.statCard, { borderLeftWidth: 3, borderLeftColor: C.accent }]}>
+            <Text style={s.statLabel}>30-Day Spend</Text>
             <Text style={s.statVal}>${fmtMoney(monthlySpend)}</Text>
+            <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 4 }}>Last 30 days</Text>
           </View>
-          <View style={s.statCard}>
-            <Text style={s.statLabel}>Transactions</Text>
-            <Text style={s.statVal}>{transactions.length}</Text>
+          <View style={[s.statCard, { borderLeftWidth: 3, borderLeftColor: C.blue }]}>
+            <Text style={s.statLabel}>7-Day Spend</Text>
+            <Text style={s.statVal}>${fmtMoney(weekSpend)}</Text>
+            <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 4 }}>Last 7 days</Text>
           </View>
         </View>
-
-        {/* Refresh button */}
-        {(loadingAccounts || loadingTx) ? (
-          <View style={{ alignItems: 'center', marginBottom: 16 }}>
-            <ActivityIndicator color={C.accent} />
-            <Text style={[s.subText, { marginTop: 8 }]}>Refreshing data...</Text>
-          </View>
-        ) : (
-          <TouchableOpacity style={s.refreshBtn} onPress={refreshAll}>
-            <Text style={s.refreshText}>↺  Refresh Data</Text>
-          </TouchableOpacity>
-        )}
 
         {/* Connect bank prompt */}
         {!linkedAccount && !accountsError && (
@@ -1060,6 +1056,28 @@ export default function App() {
             <TouchableOpacity style={s.btn} onPress={openDrawer}>
               <Text style={s.btnText}>Get Started</Text>
             </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Recent transactions preview */}
+        {recentTx.length > 0 && (
+          <View style={s.section}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={s.sectionTitle}>Recent Transactions</Text>
+              <TouchableOpacity onPress={() => setActiveTab('transactions')}>
+                <Text style={{ color: C.accent, fontSize: 12, fontWeight: '600' }}>See All ›</Text>
+              </TouchableOpacity>
+            </View>
+            {recentTx.map((tx, i) => (
+              <View key={tx.id || i} style={[s.txItem, { paddingVertical: 10 }]}>
+                <CatIcon category={tx.category} />
+                <View style={{ flex: 1 }}>
+                  <Text style={s.txMerchant} numberOfLines={1}>{tx.merchant_name || tx.description || 'Unknown'}</Text>
+                  <Text style={s.txMeta}>{fmtDate(tx.transaction_date)} · {(tx.category || 'Other').replace(/_/g, ' ')}</Text>
+                </View>
+                <Text style={s.txAmt}>-${fmtMoney(tx.amount)}</Text>
+              </View>
+            ))}
           </View>
         )}
 
@@ -1190,17 +1208,29 @@ export default function App() {
 
     return (
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}>
-        {/* Date range selector */}
-        <TouchableOpacity
-          onPress={() => setInsightsDropdownVisible(true)}
-          style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: C.surface, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 13, marginBottom: 16, borderWidth: 1, borderColor: C.border }}
-        >
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text style={{ fontSize: 15 }}>📅</Text>
-            <Text style={{ color: C.text, fontSize: 14, fontWeight: '600' }}>{RANGE_LABELS[insightsRange]}</Text>
-          </View>
-          <Text style={{ color: C.textSub, fontSize: 18, lineHeight: 20 }}>▾</Text>
-        </TouchableOpacity>
+        {/* Date range + category filter selectors */}
+        <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
+          <TouchableOpacity
+            onPress={() => setInsightsDropdownVisible(true)}
+            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: C.surface, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 13, borderWidth: 1, borderColor: C.border }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={{ fontSize: 15 }}>📅</Text>
+              <Text style={{ color: C.text, fontSize: 14, fontWeight: '600' }}>{RANGE_LABELS[insightsRange]}</Text>
+            </View>
+            <Text style={{ color: C.textSub, fontSize: 18, lineHeight: 20 }}>▾</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setInsightsCatDropdownVisible(true)}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: insightsCatFilter !== 'all' ? C.accent + '22' : C.surface, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 13, borderWidth: 1, borderColor: insightsCatFilter !== 'all' ? C.accent : C.border }}
+          >
+            <Text style={{ fontSize: 14 }}>⊟</Text>
+            <Text style={{ color: insightsCatFilter !== 'all' ? C.accent : C.textSub, fontSize: 13, fontWeight: insightsCatFilter !== 'all' ? '700' : '400' }}>
+              {insightsCatFilter === 'all' ? 'Category' : insightsCatFilter.replace(/_/g,' ').slice(0, 10)}
+            </Text>
+            <Text style={{ color: insightsCatFilter !== 'all' ? C.accent : C.textSub, fontSize: 16, lineHeight: 18 }}>▾</Text>
+          </TouchableOpacity>
+        </View>
 
         {/* Stats grid */}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 20 }}>
@@ -1278,6 +1308,7 @@ export default function App() {
                 width={SW - 64} height={200} bezier
                 chartConfig={{ ...CHART_CFG, decimalPlaces: 0, formatYLabel: (v) => '$' + (Number(v) >= 1000 ? (Number(v)/1000).toFixed(1)+'k' : v) }}
                 style={{ borderRadius: 10, marginLeft: -16 }} withInnerLines={false} withDots
+                yAxisLabel="" yAxisSuffix=""
               />
             )}
             {chartType === 'bar' && (
@@ -1286,7 +1317,7 @@ export default function App() {
                 width={SW - 64} height={200}
                 chartConfig={{ ...CHART_CFG, decimalPlaces: 0, formatYLabel: (v) => '$' + (Number(v) >= 1000 ? (Number(v)/1000).toFixed(1)+'k' : v) }}
                 style={{ borderRadius: 10, marginLeft: -16 }} withInnerLines={false}
-                fromZero yAxisLabel="$" yAxisSuffix=""
+                fromZero yAxisLabel="" yAxisSuffix=""
               />
             )}
             {chartType === 'pie' && catData && (
@@ -1375,14 +1406,25 @@ export default function App() {
         </TouchableOpacity>
       </View>
       {transactions.length > 0 && (
-        <TouchableOpacity
-          onPress={() => setTxSortDropdownVisible(true)}
-          style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginBottom: 8, backgroundColor: C.surface, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11, borderWidth: 1, borderColor: C.border }}
-        >
-          <Text style={{ color: C.textSub, fontSize: 13, marginRight: 4 }}>Sort:</Text>
-          <Text style={{ color: C.text, fontSize: 13, fontWeight: '600', flex: 1 }}>{SORT_LABELS[txSortBy]}</Text>
-          <Text style={{ color: C.textSub, fontSize: 16, lineHeight: 18 }}>▾</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 8, marginHorizontal: 16, marginBottom: 8 }}>
+          <TouchableOpacity
+            onPress={() => setTxSortDropdownVisible(true)}
+            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: C.surface, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11, borderWidth: 1, borderColor: C.border }}
+          >
+            <Text style={{ color: C.textSub, fontSize: 13, marginRight: 4 }}>Sort:</Text>
+            <Text style={{ color: C.text, fontSize: 13, fontWeight: '600', flex: 1 }}>{SORT_LABELS[txSortBy]}</Text>
+            <Text style={{ color: C.textSub, fontSize: 16, lineHeight: 18 }}>▾</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setTxFilterDropdownVisible(true)}
+            style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: txFilterCategory !== 'all' ? C.accent + '22' : C.surface, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11, borderWidth: 1, borderColor: txFilterCategory !== 'all' ? C.accent : C.border }}
+          >
+            <Text style={{ color: txFilterCategory !== 'all' ? C.accent : C.textSub, fontSize: 13, fontWeight: txFilterCategory !== 'all' ? '700' : '400' }}>
+              {txFilterCategory === 'all' ? '⊟ Filter' : `⊟ ${txFilterCategory.replace(/_/g,' ').slice(0,10)}`}
+            </Text>
+            <Text style={{ color: txFilterCategory !== 'all' ? C.accent : C.textSub, fontSize: 16, lineHeight: 18, marginLeft: 4 }}>▾</Text>
+          </TouchableOpacity>
+        </View>
       )}
       {!!syncError && (
         <View style={[s.errBox, { margin: 16, marginTop: 4 }]}>
@@ -1438,57 +1480,89 @@ export default function App() {
   // ════════════════════════════════════════════════════
   const renderGoals = () => {
     const GOAL_TYPES = [
-      { key: 'debt_payoff', label: 'Debt Payoff', icon: '⬇', color: C.red, desc: 'Pay off debts strategically' },
-      { key: 'savings', label: 'Savings', icon: '★', color: C.green, desc: 'Build toward a savings target' },
-      { key: 'spending_behavior', label: 'Spending Behavior', icon: '◎', color: C.amber, desc: 'Control category spending' },
-      { key: 'streak', label: 'Budget Streak', icon: '🔥', color: C.accent, desc: 'Stay under budget daily' },
+      { key: 'debt_payoff', label: 'Debt Payoff', icon: '⬇', color: C.red },
+      { key: 'savings', label: 'Savings', icon: '★', color: C.green },
+      { key: 'spending_behavior', label: 'Spending Behavior', icon: '◎', color: C.amber },
+      { key: 'streak', label: 'Budget Streak', icon: '🔥', color: C.accent },
     ];
     const byType = (type) => goals.filter(g => g.type === type);
     const GoalCard = ({ goal }) => {
       const pct = goal.target_amount > 0 ? Math.min(100, Math.round((goal.current_amount / goal.target_amount) * 100)) : 0;
-      const typeColor = GOAL_TYPES.find(t => t.key === goal.type)?.color || C.accent;
+      const typeInfo = GOAL_TYPES.find(t => t.key === goal.type) || { color: C.accent, icon: '★' };
       return (
-        <View style={[s.insightCard, { flexDirection: 'column', alignItems: 'stretch', gap: 8 }]}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Text style={{ color: C.text, fontSize: 14, fontWeight: '600', flex: 1 }} numberOfLines={1}>{goal.title}</Text>
-            <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
-              {goal.update_mode === 'auto' && <Text style={{ color: C.accent, fontSize: 10, fontWeight: '700', backgroundColor: C.surface2, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>AUTO</Text>}
-              {goal.is_completed && <Text style={{ color: C.green, fontSize: 11, fontWeight: '700' }}>✓ Done</Text>}
-            </View>
-          </View>
-          {goal.target_amount > 0 && (
-            <>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                <Text style={{ color: C.textSub, fontSize: 12 }}>${fmtMoney(goal.current_amount)} / ${fmtMoney(goal.target_amount)}</Text>
-                <Text style={{ color: typeColor, fontSize: 12, fontWeight: '700' }}>{pct}%</Text>
+        <View style={{ backgroundColor: C.surface, borderRadius: 18, marginBottom: 14, overflow: 'hidden', borderWidth: 1, borderColor: C.border }}>
+          {/* Color accent stripe */}
+          <View style={{ height: 4, backgroundColor: typeInfo.color }} />
+          <View style={{ padding: 16 }}>
+            {/* Title row */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: `${typeInfo.color}22`, justifyContent: 'center', alignItems: 'center' }}>
+                  <Text style={{ fontSize: 17 }}>{typeInfo.icon}</Text>
+                </View>
+                <Text style={{ color: C.text, fontSize: 15, fontWeight: '700', flex: 1 }} numberOfLines={1}>{goal.title}</Text>
               </View>
-              <View style={s.barBg}><View style={[s.bar, { width: `${pct}%`, backgroundColor: typeColor }]} /></View>
-            </>
-          )}
-          {goal.type === 'streak' && (
-            <View style={{ flexDirection: 'row', gap: 16 }}>
-              <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700' }}>🔥 {goal.streak_count || 0} day streak</Text>
-              <Text style={{ color: C.textSub, fontSize: 13 }}>Best: {goal.streak_best || 0}</Text>
+              <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+                {goal.update_mode === 'auto' && (
+                  <View style={{ backgroundColor: C.accent + '33', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3 }}>
+                    <Text style={{ color: C.accent, fontSize: 10, fontWeight: '700' }}>AUTO</Text>
+                  </View>
+                )}
+                {goal.is_completed && (
+                  <View style={{ backgroundColor: C.green + '33', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3 }}>
+                    <Text style={{ color: C.green, fontSize: 10, fontWeight: '700' }}>✓ DONE</Text>
+                  </View>
+                )}
+              </View>
             </View>
-          )}
-          {goal.deadline && <Text style={{ color: C.textMuted, fontSize: 11 }}>Target: {fmtDate(goal.deadline)}</Text>}
-          <View style={{ flexDirection: 'row', gap: 8, marginTop: 2 }}>
-            <TouchableOpacity
-              style={{ flex: 1, backgroundColor: C.surface2, borderRadius: 8, paddingVertical: 6, alignItems: 'center' }}
-              onPress={async () => {
-                const newAmt = goal.current_amount + 1;
-                await fetch(`${API_URL}/api/goals/${goal.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current_amount: newAmt, is_completed: newAmt >= goal.target_amount }) });
-                fetchGoals();
-              }}
-            >
-              <Text style={{ color: C.accent, fontSize: 12, fontWeight: '600' }}>+ Update</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={{ backgroundColor: '#1a0808', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 6, alignItems: 'center' }}
-              onPress={async () => { await fetch(`${API_URL}/api/goals/${goal.id}`, { method: 'DELETE' }); fetchGoals(); }}
-            >
-              <Text style={{ color: C.red, fontSize: 12, fontWeight: '600' }}>Delete</Text>
-            </TouchableOpacity>
+            {/* Progress */}
+            {goal.target_amount > 0 && (
+              <>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <Text style={{ color: C.textSub, fontSize: 13 }}>${fmtMoney(goal.current_amount)} <Text style={{ color: C.textMuted }}>of ${fmtMoney(goal.target_amount)}</Text></Text>
+                  <Text style={{ color: typeInfo.color, fontSize: 13, fontWeight: '800' }}>{pct}%</Text>
+                </View>
+                <View style={{ height: 8, backgroundColor: C.border, borderRadius: 4, marginBottom: 4, overflow: 'hidden' }}>
+                  <View style={{ height: 8, width: `${pct}%`, backgroundColor: typeInfo.color, borderRadius: 4 }} />
+                </View>
+                <Text style={{ color: C.textMuted, fontSize: 11, marginBottom: 12 }}>${fmtMoney(goal.target_amount - goal.current_amount)} remaining</Text>
+              </>
+            )}
+            {goal.type === 'streak' && (
+              <View style={{ flexDirection: 'row', gap: 20, marginBottom: 12 }}>
+                <View style={{ alignItems: 'center' }}>
+                  <Text style={{ color: typeInfo.color, fontSize: 22, fontWeight: '800' }}>{goal.streak_count || 0}</Text>
+                  <Text style={{ color: C.textMuted, fontSize: 10 }}>CURRENT</Text>
+                </View>
+                <View style={{ width: 1, backgroundColor: C.border }} />
+                <View style={{ alignItems: 'center' }}>
+                  <Text style={{ color: C.textSub, fontSize: 22, fontWeight: '700' }}>{goal.streak_best || 0}</Text>
+                  <Text style={{ color: C.textMuted, fontSize: 10 }}>BEST</Text>
+                </View>
+              </View>
+            )}
+            {goal.deadline && (
+              <Text style={{ color: C.textMuted, fontSize: 11, marginBottom: 12 }}>Target date: {fmtDate(goal.deadline)}</Text>
+            )}
+            {/* Actions */}
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TouchableOpacity
+                style={{ flex: 1, backgroundColor: typeInfo.color + '22', borderRadius: 10, paddingVertical: 9, alignItems: 'center' }}
+                onPress={async () => {
+                  const newAmt = goal.current_amount + 1;
+                  await fetch(`${API_URL}/api/goals/${goal.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current_amount: newAmt, is_completed: newAmt >= goal.target_amount }) });
+                  fetchGoals();
+                }}
+              >
+                <Text style={{ color: typeInfo.color, fontSize: 13, fontWeight: '700' }}>+ Update Progress</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ backgroundColor: C.red + '22', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 9, alignItems: 'center' }}
+                onPress={async () => { await fetch(`${API_URL}/api/goals/${goal.id}`, { method: 'DELETE' }); fetchGoals(); }}
+              >
+                <Text style={{ color: C.red, fontSize: 13, fontWeight: '700' }}>Delete</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       );
@@ -1576,45 +1650,77 @@ export default function App() {
     const byType = (type) => goals.filter(g => g.type === type);
     const GoalCard = ({ goal }) => {
       const pct = goal.target_amount > 0 ? Math.min(100, Math.round((goal.current_amount / goal.target_amount) * 100)) : 0;
-      const typeColor = GOAL_TYPES.find(t => t.key === goal.type)?.color || C.accent;
+      const typeInfo = GOAL_TYPES.find(t => t.key === goal.type) || { color: C.accent, icon: '★' };
       return (
-        <View style={[s.insightCard, { flexDirection: 'column', alignItems: 'stretch', gap: 8 }]}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Text style={{ color: C.text, fontSize: 14, fontWeight: '600', flex: 1 }} numberOfLines={1}>{goal.title}</Text>
-            <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
-              {goal.update_mode === 'auto' && <Text style={{ color: C.accent, fontSize: 10, fontWeight: '700', backgroundColor: C.surface2, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>AUTO</Text>}
-              {goal.is_completed && <Text style={{ color: C.green, fontSize: 11, fontWeight: '700' }}>✓ Done</Text>}
-            </View>
-          </View>
-          {goal.target_amount > 0 && (
-            <>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                <Text style={{ color: C.textSub, fontSize: 12 }}>${fmtMoney(goal.current_amount)} / ${fmtMoney(goal.target_amount)}</Text>
-                <Text style={{ color: typeColor, fontSize: 12, fontWeight: '700' }}>{pct}%</Text>
+        <View style={{ backgroundColor: C.surface, borderRadius: 18, marginBottom: 14, overflow: 'hidden', borderWidth: 1, borderColor: C.border }}>
+          <View style={{ height: 4, backgroundColor: typeInfo.color }} />
+          <View style={{ padding: 16 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: `${typeInfo.color}22`, justifyContent: 'center', alignItems: 'center' }}>
+                  <Text style={{ fontSize: 17 }}>{typeInfo.icon}</Text>
+                </View>
+                <Text style={{ color: C.text, fontSize: 15, fontWeight: '700', flex: 1 }} numberOfLines={1}>{goal.title}</Text>
               </View>
-              <View style={s.barBg}><View style={[s.bar, { width: `${pct}%`, backgroundColor: typeColor }]} /></View>
-            </>
-          )}
-          {goal.type === 'streak' && (
-            <View style={{ flexDirection: 'row', gap: 16 }}>
-              <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700' }}>🔥 {goal.streak_count || 0} day streak</Text>
-              <Text style={{ color: C.textSub, fontSize: 13 }}>Best: {goal.streak_best || 0}</Text>
+              <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+                {goal.update_mode === 'auto' && (
+                  <View style={{ backgroundColor: C.accent + '33', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3 }}>
+                    <Text style={{ color: C.accent, fontSize: 10, fontWeight: '700' }}>AUTO</Text>
+                  </View>
+                )}
+                {goal.is_completed && (
+                  <View style={{ backgroundColor: C.green + '33', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3 }}>
+                    <Text style={{ color: C.green, fontSize: 10, fontWeight: '700' }}>✓ DONE</Text>
+                  </View>
+                )}
+              </View>
             </View>
-          )}
-          {goal.deadline && <Text style={{ color: C.textMuted, fontSize: 11 }}>Target: {fmtDate(goal.deadline)}</Text>}
-          <View style={{ flexDirection: 'row', gap: 8, marginTop: 2 }}>
-            <TouchableOpacity style={{ flex: 1, backgroundColor: C.surface2, borderRadius: 8, paddingVertical: 6, alignItems: 'center' }}
-              onPress={async () => {
-                const newAmt = goal.current_amount + 1;
-                await fetch(`${API_URL}/api/goals/${goal.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current_amount: newAmt, is_completed: newAmt >= goal.target_amount }) });
-                fetchGoals();
-              }}>
-              <Text style={{ color: C.accent, fontSize: 12, fontWeight: '600' }}>+ Update</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={{ backgroundColor: '#1a0808', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 6, alignItems: 'center' }}
-              onPress={async () => { await fetch(`${API_URL}/api/goals/${goal.id}`, { method: 'DELETE' }); fetchGoals(); }}>
-              <Text style={{ color: C.red, fontSize: 12, fontWeight: '600' }}>Delete</Text>
-            </TouchableOpacity>
+            {goal.target_amount > 0 && (
+              <>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <Text style={{ color: C.textSub, fontSize: 13 }}>${fmtMoney(goal.current_amount)} <Text style={{ color: C.textMuted }}>of ${fmtMoney(goal.target_amount)}</Text></Text>
+                  <Text style={{ color: typeInfo.color, fontSize: 13, fontWeight: '800' }}>{pct}%</Text>
+                </View>
+                <View style={{ height: 8, backgroundColor: C.border, borderRadius: 4, marginBottom: 4, overflow: 'hidden' }}>
+                  <View style={{ height: 8, width: `${pct}%`, backgroundColor: typeInfo.color, borderRadius: 4 }} />
+                </View>
+                <Text style={{ color: C.textMuted, fontSize: 11, marginBottom: 12 }}>${fmtMoney(goal.target_amount - goal.current_amount)} remaining</Text>
+              </>
+            )}
+            {goal.type === 'streak' && (
+              <View style={{ flexDirection: 'row', gap: 20, marginBottom: 12 }}>
+                <View style={{ alignItems: 'center' }}>
+                  <Text style={{ color: typeInfo.color, fontSize: 22, fontWeight: '800' }}>{goal.streak_count || 0}</Text>
+                  <Text style={{ color: C.textMuted, fontSize: 10 }}>CURRENT</Text>
+                </View>
+                <View style={{ width: 1, backgroundColor: C.border }} />
+                <View style={{ alignItems: 'center' }}>
+                  <Text style={{ color: C.textSub, fontSize: 22, fontWeight: '700' }}>{goal.streak_best || 0}</Text>
+                  <Text style={{ color: C.textMuted, fontSize: 10 }}>BEST</Text>
+                </View>
+              </View>
+            )}
+            {goal.deadline && (
+              <Text style={{ color: C.textMuted, fontSize: 11, marginBottom: 12 }}>Target date: {fmtDate(goal.deadline)}</Text>
+            )}
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TouchableOpacity
+                style={{ flex: 1, backgroundColor: typeInfo.color + '22', borderRadius: 10, paddingVertical: 9, alignItems: 'center' }}
+                onPress={async () => {
+                  const newAmt = goal.current_amount + 1;
+                  await fetch(`${API_URL}/api/goals/${goal.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current_amount: newAmt, is_completed: newAmt >= goal.target_amount }) });
+                  fetchGoals();
+                }}
+              >
+                <Text style={{ color: typeInfo.color, fontSize: 13, fontWeight: '700' }}>+ Update Progress</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ backgroundColor: C.red + '22', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 9, alignItems: 'center' }}
+                onPress={async () => { await fetch(`${API_URL}/api/goals/${goal.id}`, { method: 'DELETE' }); fetchGoals(); }}
+              >
+                <Text style={{ color: C.red, fontSize: 13, fontWeight: '700' }}>Delete</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       );
@@ -1703,19 +1809,21 @@ export default function App() {
             const limit = parseFloat(b.monthly_limit || 0);
             const pct = limit > 0 ? Math.min(100, Math.round((spent / limit) * 100)) : 0;
             const barColor = pct >= 100 ? C.red : pct >= 75 ? C.amber : C.green;
-            const paycycleFreqLabel2 = b.paycycle_freq === 'weekly' ? 'Weekly' : b.paycycle_freq === 'biweekly' ? 'Biweekly' : 'Monthly';
-            const periodLabel2 = b.period === 'paycycle'
-              ? `Paycycle (${paycycleFreqLabel2}${b.paycycle_start ? ', from ' + b.paycycle_start : ''})`
-              : { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly' }[b.period || 'monthly'];
-            const catLabel = PLAID_CATEGORIES.find(c => c.key === b.category)?.label || b.category;
+            const remaining = Math.max(0, limit - spent);
+            const catInfo = PLAID_CATEGORIES.find(c => c.key === b.category);
+            const catLabel = catInfo?.label || b.category;
+            const catIcon = catInfo?.icon || b.category[0];
+            const catBg = CAT_BG[b.category] || C.accent;
+            const periodLabel2 = { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly', paycycle: 'Paycycle' }[b.period || 'monthly'];
             return (
-              <View key={b.id} style={[s.insightCard, { flexDirection: 'column', alignItems: 'stretch', gap: 10 }]}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <View key={b.id} style={{ backgroundColor: C.surface, borderRadius: 18, marginBottom: 14, padding: 16, borderWidth: 1, borderColor: C.border }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+                  <Icon char={catIcon} color={catBg} size={44} radius={13} />
                   <View style={{ flex: 1 }}>
-                    <Text style={{ color: C.text, fontSize: 14, fontWeight: '600' }}>{catLabel}</Text>
-                    <Text style={{ color: C.textMuted, fontSize: 11, marginTop: 1 }}>{periodLabel2}</Text>
+                    <Text style={{ color: C.text, fontSize: 15, fontWeight: '700' }}>{catLabel}</Text>
+                    <Text style={{ color: C.textMuted, fontSize: 11, marginTop: 2 }}>{periodLabel2} · ${fmtMoney(limit)} limit</Text>
                   </View>
-                  <View style={{ flexDirection: 'row', gap: 12 }}>
+                  <View style={{ alignItems: 'flex-end', gap: 4 }}>
                     <TouchableOpacity onPress={() => { setEditingBudget(b); setNewBudgetCat(b.category); setNewBudgetLimit(String(b.monthly_limit)); setNewBudgetPeriod(b.period || 'monthly'); setNewBudgetPaycycleStart(b.paycycle_start || ''); setNewBudgetPaycycleFreq(b.paycycle_freq || 'biweekly'); setAddBudgetVisible(true); }}>
                       <Text style={{ color: C.accent, fontSize: 12, fontWeight: '600' }}>Edit</Text>
                     </TouchableOpacity>
@@ -1724,13 +1832,20 @@ export default function App() {
                     </TouchableOpacity>
                   </View>
                 </View>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <Text style={{ color: C.textSub, fontSize: 12 }}>${fmtMoney(spent)} spent</Text>
-                  <Text style={{ color: barColor, fontSize: 12, fontWeight: '700' }}>{pct}% of ${fmtMoney(limit)}</Text>
+                <View style={{ height: 8, backgroundColor: C.border, borderRadius: 4, marginBottom: 10, overflow: 'hidden' }}>
+                  <View style={{ height: 8, width: `${pct}%`, backgroundColor: barColor, borderRadius: 4 }} />
                 </View>
-                <View style={s.barBg}><View style={[s.bar, { width: `${pct}%`, backgroundColor: barColor }]} /></View>
-                {pct >= 100 && <Text style={{ color: C.red, fontSize: 11, fontWeight: '600' }}>Over budget by ${fmtMoney(spent - limit)}</Text>}
-                {pct >= 75 && pct < 100 && <Text style={{ color: C.amber, fontSize: 11, fontWeight: '600' }}>Approaching limit — ${fmtMoney(limit - spent)} remaining</Text>}
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <View>
+                    <Text style={{ color: C.textMuted, fontSize: 10, fontWeight: '600', marginBottom: 1 }}>SPENT</Text>
+                    <Text style={{ color: C.text, fontSize: 16, fontWeight: '800' }}>${fmtMoney(spent)}</Text>
+                  </View>
+                  <Text style={{ color: barColor, fontSize: 20, fontWeight: '800' }}>{pct}%</Text>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={{ color: C.textMuted, fontSize: 10, fontWeight: '600', marginBottom: 1 }}>{pct >= 100 ? 'OVER BY' : 'REMAINING'}</Text>
+                    <Text style={{ color: barColor, fontSize: 16, fontWeight: '800' }}>${fmtMoney(pct >= 100 ? spent - limit : remaining)}</Text>
+                  </View>
+                </View>
               </View>
             );
           })
@@ -2290,7 +2405,7 @@ export default function App() {
           <View style={[s.connectCard, { alignItems: 'center', paddingVertical: 40 }]}>
             <Icon char="$" color={C.accent} size={52} radius={16} />
             <Text style={[s.emptyTitle, { marginTop: 16 }]}>No budgets yet</Text>
-            <Text style={[s.emptyText, { marginBottom: 20 }]}>Set monthly spending limits by category to track where your money goes.</Text>
+            <Text style={[s.emptyText, { marginBottom: 20 }]}>Set spending limits by category to track where your money goes.</Text>
             <TouchableOpacity style={s.btn} onPress={() => { setEditingBudget(null); setNewBudgetCat(''); setNewBudgetLimit(''); setAddBudgetVisible(true); }}>
               <Text style={s.btnText}>Create First Budget</Text>
             </TouchableOpacity>
@@ -2301,19 +2416,22 @@ export default function App() {
             const limit = parseFloat(b.monthly_limit || 0);
             const pct = limit > 0 ? Math.min(100, Math.round((spent / limit) * 100)) : 0;
             const barColor = pct >= 100 ? C.red : pct >= 75 ? C.amber : C.green;
-            const paycycleFreqLabel = b.paycycle_freq === 'weekly' ? 'Weekly' : b.paycycle_freq === 'biweekly' ? 'Biweekly' : 'Monthly';
-            const periodLabel = b.period === 'paycycle'
-              ? `Paycycle (${paycycleFreqLabel}${b.paycycle_start ? ', from ' + b.paycycle_start : ''})`
-              : { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly' }[b.period || 'monthly'];
-            const catLabel = PLAID_CATEGORIES.find(c => c.key === b.category)?.label || b.category;
+            const remaining = Math.max(0, limit - spent);
+            const catInfo = PLAID_CATEGORIES.find(c => c.key === b.category);
+            const catLabel = catInfo?.label || b.category;
+            const catIcon = catInfo?.icon || b.category[0];
+            const catBg = CAT_BG[b.category] || C.accent;
+            const periodLabel = { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly', paycycle: 'Paycycle' }[b.period || 'monthly'];
             return (
-              <View key={b.id} style={[s.insightCard, { flexDirection: 'column', alignItems: 'stretch', gap: 10 }]}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <View key={b.id} style={{ backgroundColor: C.surface, borderRadius: 18, marginBottom: 14, padding: 16, borderWidth: 1, borderColor: C.border }}>
+                {/* Header row */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+                  <Icon char={catIcon} color={catBg} size={44} radius={13} />
                   <View style={{ flex: 1 }}>
-                    <Text style={{ color: C.text, fontSize: 14, fontWeight: '600' }}>{catLabel}</Text>
-                    <Text style={{ color: C.textMuted, fontSize: 11, marginTop: 1 }}>{periodLabel} Budget</Text>
+                    <Text style={{ color: C.text, fontSize: 15, fontWeight: '700' }}>{catLabel}</Text>
+                    <Text style={{ color: C.textMuted, fontSize: 11, marginTop: 2 }}>{periodLabel} · ${fmtMoney(limit)} limit</Text>
                   </View>
-                  <View style={{ flexDirection: 'row', gap: 12 }}>
+                  <View style={{ alignItems: 'flex-end', gap: 4 }}>
                     <TouchableOpacity onPress={() => { setEditingBudget(b); setNewBudgetCat(b.category); setNewBudgetLimit(String(b.monthly_limit)); setNewBudgetPeriod(b.period || 'monthly'); setAddBudgetVisible(true); }}>
                       <Text style={{ color: C.accent, fontSize: 12, fontWeight: '600' }}>Edit</Text>
                     </TouchableOpacity>
@@ -2322,17 +2440,24 @@ export default function App() {
                     </TouchableOpacity>
                   </View>
                 </View>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <Text style={{ color: C.textSub, fontSize: 12 }}>${fmtMoney(spent)} spent</Text>
-                  <Text style={{ color: barColor, fontSize: 12, fontWeight: '700' }}>{pct}% of ${fmtMoney(limit)}</Text>
+                {/* Progress bar */}
+                <View style={{ height: 8, backgroundColor: C.border, borderRadius: 4, marginBottom: 10, overflow: 'hidden' }}>
+                  <View style={{ height: 8, width: `${pct}%`, backgroundColor: barColor, borderRadius: 4 }} />
                 </View>
-                <View style={s.barBg}><View style={[s.bar, { width: `${pct}%`, backgroundColor: barColor }]} /></View>
-                {pct >= 100 && (
-                  <Text style={{ color: C.red, fontSize: 11, fontWeight: '600' }}>Over budget by ${fmtMoney(spent - limit)}</Text>
-                )}
-                {pct >= 75 && pct < 100 && (
-                  <Text style={{ color: C.amber, fontSize: 11, fontWeight: '600' }}>Approaching limit — ${fmtMoney(limit - spent)} remaining</Text>
-                )}
+                {/* Spend/remaining row */}
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <View>
+                    <Text style={{ color: C.textMuted, fontSize: 10, fontWeight: '600', marginBottom: 1 }}>SPENT</Text>
+                    <Text style={{ color: C.text, fontSize: 16, fontWeight: '800' }}>${fmtMoney(spent)}</Text>
+                  </View>
+                  <View style={{ alignItems: 'center' }}>
+                    <Text style={{ color: barColor, fontSize: 20, fontWeight: '800' }}>{pct}%</Text>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={{ color: C.textMuted, fontSize: 10, fontWeight: '600', marginBottom: 1 }}>{pct >= 100 ? 'OVER BY' : 'REMAINING'}</Text>
+                    <Text style={{ color: barColor, fontSize: 16, fontWeight: '800' }}>${fmtMoney(pct >= 100 ? spent - limit : remaining)}</Text>
+                  </View>
+                </View>
               </View>
             );
           })
@@ -3092,6 +3217,54 @@ export default function App() {
               </TouchableOpacity>
             ))}
             <TouchableOpacity style={[s.linkRow, { marginTop: 4 }]} onPress={() => setTxSortDropdownVisible(false)}>
+              <Text style={s.linkText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Transaction Category Filter Dropdown Modal */}
+      <Modal visible={txFilterDropdownVisible} animationType="fade" transparent onRequestClose={() => setTxFilterDropdownVisible(false)}>
+        <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setTxFilterDropdownVisible(false)}>
+          <View style={[s.modalCard, { paddingBottom: 8 }]}>
+            <Text style={s.modalTitle}>Filter by Category</Text>
+            <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
+              {[['all', 'All Categories'], ...Array.from(new Set(transactions.map(tx => tx.category).filter(Boolean))).sort().map(c => [c, c.replace(/_/g, ' ')])].map(([key, label]) => (
+                <TouchableOpacity
+                  key={key}
+                  onPress={() => { setTxFilterCategory(key); setTxFilterDropdownVisible(false); }}
+                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: C.border }}
+                >
+                  <Text style={{ color: txFilterCategory === key ? C.accent : C.text, fontSize: 15, fontWeight: txFilterCategory === key ? '700' : '400' }}>{label}</Text>
+                  {txFilterCategory === key && <Text style={{ color: C.accent, fontSize: 16 }}>✓</Text>}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity style={[s.linkRow, { marginTop: 4 }]} onPress={() => setTxFilterDropdownVisible(false)}>
+              <Text style={s.linkText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Insights Category Filter Dropdown Modal */}
+      <Modal visible={insightsCatDropdownVisible} animationType="fade" transparent onRequestClose={() => setInsightsCatDropdownVisible(false)}>
+        <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setInsightsCatDropdownVisible(false)}>
+          <View style={[s.modalCard, { paddingBottom: 8 }]}>
+            <Text style={s.modalTitle}>Filter by Category</Text>
+            <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
+              {[['all', 'All Categories'], ...Array.from(new Set(transactions.map(tx => tx.category).filter(Boolean))).sort().map(c => [c, c.replace(/_/g, ' ')])].map(([key, label]) => (
+                <TouchableOpacity
+                  key={key}
+                  onPress={() => { setInsightsCatFilter(key); setSelectedCategory(null); setInsightsCatDropdownVisible(false); }}
+                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: C.border }}
+                >
+                  <Text style={{ color: insightsCatFilter === key ? C.accent : C.text, fontSize: 15, fontWeight: insightsCatFilter === key ? '700' : '400' }}>{label}</Text>
+                  {insightsCatFilter === key && <Text style={{ color: C.accent, fontSize: 16 }}>✓</Text>}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity style={[s.linkRow, { marginTop: 4 }]} onPress={() => setInsightsCatDropdownVisible(false)}>
               <Text style={s.linkText}>Cancel</Text>
             </TouchableOpacity>
           </View>
