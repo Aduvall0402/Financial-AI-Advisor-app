@@ -592,6 +592,35 @@ app.patch("/api/groups/:groupId/goals/:goalId", async (req: Request, res: Respon
 });
 
 // ============================================
+// GROUP BUDGET ROUTES
+// ============================================
+
+app.get("/api/groups/:groupId/budgets", async (req: Request, res: Response) => {
+  try {
+    const { data, error } = await supabase.from("group_budgets").select("*").eq("group_id", req.params.groupId).order("category");
+    if (error) throw error;
+    res.json({ budgets: data || [] });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+app.post("/api/groups/:groupId/budgets", async (req: Request, res: Response) => {
+  try {
+    const { category, monthly_limit, period, created_by } = req.body;
+    const { data, error } = await supabase.from("group_budgets").insert([{ group_id: req.params.groupId, category, monthly_limit, period: period || "monthly", created_by }]).select();
+    if (error) throw error;
+    res.json({ budget: data?.[0] });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+app.delete("/api/groups/:groupId/budgets/:budgetId", async (req: Request, res: Response) => {
+  try {
+    const { error } = await supabase.from("group_budgets").delete().eq("id", req.params.budgetId);
+    if (error) throw error;
+    res.json({ message: "Budget deleted" });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+// ============================================
 // BUDGET ROUTES
 // ============================================
 
