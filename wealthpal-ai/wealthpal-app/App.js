@@ -309,6 +309,10 @@ export default function App() {
   const [txSortBy, setTxSortBy] = useState('date_desc');
   const [txSortDropdownVisible, setTxSortDropdownVisible] = useState(false);
 
+  // More tab sub-section + group share loading — MUST be declared here (before any early returns)
+  const [moreSection, setMoreSection] = useState(null);
+  const [groupShareLoading, setGroupShareLoading] = useState(false);
+
   const sortedTransactions = useMemo(() => {
     const txs = [...transactions];
     switch (txSortBy) {
