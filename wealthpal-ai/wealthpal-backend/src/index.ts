@@ -415,7 +415,7 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
       recent_transactions,
       goals_section: goalsSection,
       budgets_section: budgetsSection,
-      total_transactions: txList.length,
+      total_transactions: spendingTx.length,
       today: todayStr,
     };
 

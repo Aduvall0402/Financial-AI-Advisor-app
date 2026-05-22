@@ -2148,13 +2148,14 @@ export default function App() {
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <TouchableOpacity
               style={{ flex: 1, borderRadius: 9, paddingVertical: 8, alignItems: 'center', backgroundColor: typeInfo.color + '18' }}
-              onPress={async () => {
-                const newAmt = goal.current_amount + 1;
-                await fetch(`${API_URL}/api/goals/${goal.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current_amount: newAmt, is_completed: newAmt >= goal.target_amount }) });
-                fetchGoals();
+              onPress={() => {
+                setNewGoal({ title: goal.title, target_amount: String(goal.target_amount || ''), current_amount: String(goal.current_amount || ''), deadline: goal.deadline || '', category: goal.category || '' });
+                setAddGoalType(goal.type);
+                setAddGoalUpdateMode(goal.update_mode || 'manual');
+                setAddGoalVisible(true);
               }}
             >
-              <Text style={{ color: typeInfo.color, fontSize: 13, fontWeight: '700' }}>+ Progress</Text>
+              <Text style={{ color: typeInfo.color, fontSize: 13, fontWeight: '700' }}>Edit</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={{ borderRadius: 9, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: C.border }}
