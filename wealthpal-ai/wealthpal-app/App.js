@@ -181,7 +181,9 @@ function fmtMoney(n) {
 
 function fmtDate(d) {
   if (!d) return '';
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const s = String(d);
+  const dateStr = s.includes('T') ? s : s + 'T00:00:00';
+  return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 export default function App() {
