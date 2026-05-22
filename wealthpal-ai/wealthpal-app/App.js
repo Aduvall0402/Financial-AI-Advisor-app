@@ -3380,7 +3380,7 @@ export default function App() {
               <Icon char="i" color={C.textSub} size={32} />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={s.drawerRowText}>About</Text>
-                <Text style={s.drawerRowSub}>Version 1.0.0</Text>
+                <Text style={s.drawerRowSub}>Version 1.0.1</Text>
               </View>
               <Text style={s.chevron}>›</Text>
             </TouchableOpacity>
