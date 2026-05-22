@@ -313,68 +313,103 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
       if ((count || 0) >= 6) {
         return res.status(429).json({ error: "Free plan limit reached (6 AI requests per 12 hours). Upgrade to WealthPal Premium for unlimited access.", rate_limited: true });
       }
-      // Log this request
       try { await supabase.from("ai_usage").insert([{ user_id: userId }]); } catch { /* best-effort */ }
     }
 
-    // Use the client's local date if sent and valid; fall back to UTC server date
     const rawToday: string = req.body.today || "";
     const todayStr: string = /^\d{4}-\d{2}-\d{2}$/.test(rawToday) ? rawToday : new Date().toISOString().split("T")[0];
-    const todayDate = new Date(todayStr + "T00:00:00Z");
 
-    // Fetch ALL transactions for this user — no date cutoff
-    const { data: allTx } = await supabase
-      .from("transactions")
-      .select("merchant_name, amount, category, transaction_date, description")
-      .eq("user_id", userId)
-      .order("transaction_date", { ascending: false });
-
-    const txList = allTx || [];
-
-    // Exclude income and transfers from spending calculations
-    const NON_SPENDING = new Set([
+    // Categories that are never "spending"
+    const NON_SPENDING_CATS = new Set([
       'INCOME', 'TRANSFER_IN', 'TRANSFER_OUT', 'TRANSFER',
       'INTEREST_EARNED', 'PAYROLL', 'REFUND', 'LOAN_PROCEEDS',
     ]);
-    const isSpending = (t: any) => !NON_SPENDING.has((t.category || '').toUpperCase());
-    const spendingTx = txList.filter(isSpending);
+    const isSpendingCat = (cat: string) => !NON_SPENDING_CATS.has((cat || '').toUpperCase());
 
-    // Pre-compute spending windows — use (days-1) so "last N days" includes today as day 1
-    const windowSpend = (days: number) => {
-      const cutoff = new Date(todayDate.getTime() - (days - 1) * 86400000).toISOString().split("T")[0];
-      return spendingTx.filter(t => t.transaction_date >= cutoff).reduce((s, t) => s + parseFloat(t.amount), 0);
+    // Tool executor — each tool queries Supabase directly for exact data
+    const toolExecutor = async (name: string, args: any): Promise<any> => {
+      switch (name) {
+        case 'get_spending_total': {
+          const { data } = await supabase
+            .from("transactions")
+            .select("amount, category")
+            .eq("user_id", userId)
+            .gte("transaction_date", args.start_date)
+            .lte("transaction_date", args.end_date);
+          let rows = (data || []).filter((t: any) => isSpendingCat(t.category));
+          if (args.category) rows = rows.filter((t: any) => t.category?.toUpperCase() === args.category.toUpperCase());
+          const total = rows.reduce((s: number, t: any) => s + parseFloat(t.amount), 0);
+          return { total: parseFloat(total.toFixed(2)), transaction_count: rows.length, start_date: args.start_date, end_date: args.end_date };
+        }
+        case 'get_transactions': {
+          const { data } = await supabase
+            .from("transactions")
+            .select("merchant_name, amount, category, transaction_date, description")
+            .eq("user_id", userId)
+            .gte("transaction_date", args.start_date)
+            .lte("transaction_date", args.end_date)
+            .order("transaction_date", { ascending: false });
+          let rows = (data || []).filter((t: any) => isSpendingCat(t.category));
+          if (args.merchant) {
+            const m = args.merchant.toLowerCase();
+            rows = rows.filter((t: any) => (t.merchant_name || t.description || '').toLowerCase().includes(m));
+          }
+          if (args.category) rows = rows.filter((t: any) => t.category?.toUpperCase() === args.category.toUpperCase());
+          if (args.order_by_amount) rows.sort((a: any, b: any) => parseFloat(b.amount) - parseFloat(a.amount));
+          const limit = Math.min(args.limit || 20, 50);
+          return {
+            transactions: rows.slice(0, limit).map((t: any) => ({
+              merchant: t.merchant_name || t.description || 'Unknown',
+              amount: parseFloat(t.amount),
+              category: t.category,
+              date: t.transaction_date,
+            })),
+          };
+        }
+        case 'get_spending_by_category': {
+          const { data } = await supabase
+            .from("transactions")
+            .select("amount, category")
+            .eq("user_id", userId)
+            .gte("transaction_date", args.start_date)
+            .lte("transaction_date", args.end_date);
+          const catMap: Record<string, number> = {};
+          (data || []).filter((t: any) => isSpendingCat(t.category)).forEach((t: any) => {
+            const cat = t.category || 'Other';
+            catMap[cat] = (catMap[cat] || 0) + parseFloat(t.amount);
+          });
+          return {
+            categories: Object.entries(catMap)
+              .map(([category, total]) => ({ category, total: parseFloat(total.toFixed(2)) }))
+              .sort((a, b) => b.total - a.total),
+          };
+        }
+        case 'get_top_merchants': {
+          const { data } = await supabase
+            .from("transactions")
+            .select("merchant_name, description, amount, category")
+            .eq("user_id", userId)
+            .gte("transaction_date", args.start_date)
+            .lte("transaction_date", args.end_date);
+          const merchantMap: Record<string, number> = {};
+          (data || []).filter((t: any) => isSpendingCat(t.category)).forEach((t: any) => {
+            const name = t.merchant_name || t.description || 'Unknown';
+            merchantMap[name] = (merchantMap[name] || 0) + parseFloat(t.amount);
+          });
+          const limit = Math.min(args.limit || 5, 20);
+          return {
+            merchants: Object.entries(merchantMap)
+              .map(([merchant, total]) => ({ merchant, total: parseFloat(total.toFixed(2)) }))
+              .sort((a, b) => b.total - a.total)
+              .slice(0, limit),
+          };
+        }
+        default:
+          return { error: `Unknown tool: ${name}` };
+      }
     };
 
-    const spending_7d  = windowSpend(7);
-    const spending_9d  = windowSpend(9);
-    const spending_14d = windowSpend(14);
-    const spending_30d = windowSpend(30);
-    const spending_60d = windowSpend(60);
-    const spending_90d = windowSpend(90);
-
-    // Category breakdown for 30d (spending only)
-    const categoryMap: { [key: string]: number } = {};
-    spendingTx.filter(t => t.transaction_date >= new Date(todayDate.getTime() - 30 * 86400000).toISOString().split("T")[0])
-      .forEach(t => { categoryMap[t.category] = (categoryMap[t.category] || 0) + parseFloat(t.amount); });
-    const top_categories = Object.entries(categoryMap)
-      .map(([name, amount]) => ({ name, amount }))
-      .sort((a, b) => b.amount - a.amount)
-      .slice(0, 8);
-
-    // Today and yesterday specific windows
-    const yesterdayStr = new Date(todayDate.getTime() - 86400000).toISOString().split("T")[0];
-    const spending_today = spendingTx.filter(t => t.transaction_date === todayStr).reduce((s, t) => s + parseFloat(t.amount), 0);
-    const spending_yesterday = spendingTx.filter(t => t.transaction_date === yesterdayStr).reduce((s, t) => s + parseFloat(t.amount), 0);
-
-    // Most recent 150 SPENDING transactions for AI reference (income/transfers excluded)
-    const recent_transactions = spendingTx.slice(0, 150).map(t => ({
-      merchant: t.merchant_name || t.description || "Unknown",
-      amount: parseFloat(t.amount),
-      category: t.category || "Other",
-      date: t.transaction_date,
-    }));
-
-    // Fetch account balances from Plaid
+    // Fetch static context (accounts, goals, budgets, debts)
     let accounts: Array<{ name: string; type: string; subtype: string; balance: number }> = [];
     try {
       const { data: accountData } = await supabase
@@ -385,7 +420,7 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
         .limit(1);
       if (accountData?.length && accountData[0]?.plaid_access_token) {
         const plaidAccounts = await plaidService.getAccounts(accountData[0].plaid_access_token);
-        accounts = plaidAccounts.map(a => ({
+        accounts = plaidAccounts.map((a: any) => ({
           name: a.name,
           type: a.type as string,
           subtype: a.subtype as string,
@@ -394,40 +429,27 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
       }
     } catch { /* no linked account */ }
 
-    // Fetch debts, goals, budgets for full context
-    const { data: debts } = await supabase.from("debts").select("*").eq("user_id", userId);
-    const debt = (debts || []).map((d: any) => ({ name: d.debt_name, balance: d.current_balance, interest: d.interest_rate }));
+    const [debtsRes, goalsRes, budgetsRes] = await Promise.all([
+      supabase.from("debts").select("debt_name,current_balance,interest_rate").eq("user_id", userId),
+      supabase.from("goals").select("type,title,target_amount,current_amount,deadline").eq("user_id", userId),
+      supabase.from("budgets").select("category,monthly_limit,period").eq("user_id", userId),
+    ]);
 
-    const { data: goalsData } = await supabase.from("goals").select("type,title,target_amount,current_amount,deadline").eq("user_id", userId);
-    const { data: budgetsData } = await supabase.from("budgets").select("category,monthly_limit,period").eq("user_id", userId);
+    const debt = (debtsRes.data || []).map((d: any) => ({ name: d.debt_name, balance: d.current_balance, interest: d.interest_rate }));
+    const goals_section = (goalsRes.data || []).map((g: any) => `  - ${g.type}: "${g.title}" — $${g.current_amount || 0}/$${g.target_amount || 0}${g.deadline ? ' by ' + g.deadline : ''}`).join("\n") || "  - None";
+    const budgets_section = (budgetsRes.data || []).map((b: any) => `  - ${b.category} (${b.period}): limit $${b.monthly_limit}`).join("\n") || "  - None";
 
-    const goalsSection = (goalsData || []).map((g: any) => `  - ${g.type}: "${g.title}" — $${g.current_amount || 0}/$${g.target_amount || 0}${g.deadline ? ' by ' + g.deadline : ''}`).join("\n") || "  - None";
-    const budgetsSection = (budgetsData || []).map((b: any) => `  - ${b.category} (${b.period}): limit $${b.monthly_limit}`).join("\n") || "  - None";
-
-    const summary = {
-      monthly_income: 0,
-      monthly_spending: spending_30d,
-      weekly_spending: spending_7d,
-      spending_windows: { "today": spending_today, "yesterday": spending_yesterday, "7d": spending_7d, "9d": spending_9d, "14d": spending_14d, "30d": spending_30d, "60d": spending_60d, "90d": spending_90d },
-      top_categories,
-      debt,
-      accounts,
-      recent_transactions,
-      goals_section: goalsSection,
-      budgets_section: budgetsSection,
-      total_transactions: spendingTx.length,
-      today: todayStr,
-    };
-
+    const staticContext = { today: todayStr, accounts, goals_section, budgets_section, debt };
     const safeHistory = Array.isArray(history) ? history.slice(-10) : [];
-    const response = await openaiService.chatWithAssistant(message, summary as any, safeHistory);
+
+    const response = await openaiService.chatWithAssistant(message, staticContext, safeHistory, toolExecutor);
 
     try {
       await supabase.from("chat_messages").insert([
         { user_id: userId, role: "user", content: message },
         { user_id: userId, role: "assistant", content: response },
       ]);
-    } catch { /* best-effort log, don't fail chat */ }
+    } catch { /* best-effort log */ }
     res.json({ response });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "Failed to process chat" });
@@ -456,7 +478,7 @@ app.get("/api/ai/notification-summary/:userId", async (req: Request, res: Respon
     const topCat = Object.entries(catMap).sort(([, a], [, b]) => b - a)[0];
 
     const prompt = `Generate a single short sentence (under 20 words) for a push notification spending summary. The user spent $${total.toFixed(2)} across ${count} transactions in the last 30 days. Top category: ${topCat ? `${topCat[0]} ($${topCat[1].toFixed(2)})` : "none"}. Be encouraging and specific.`;
-    const summary = await openaiService.chatWithAssistant(prompt, { monthly_income: 0, monthly_spending: total, top_categories: [], debt: [] });
+    const summary = await openaiService.simpleChat(prompt);
     res.json({ summary });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "Failed to generate summary" });

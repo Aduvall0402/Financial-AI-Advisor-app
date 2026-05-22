@@ -10,9 +10,7 @@ if (rawOpenaiKey !== openaiKey) {
 }
 console.log(`OpenAI key loaded: ${openaiKey.slice(0, 10)}...${openaiKey.slice(-4)}`);
 
-const openai = new OpenAI({
-  apiKey: openaiKey,
-});
+const openai = new OpenAI({ apiKey: openaiKey });
 
 // Transcribe audio using Whisper
 export async function transcribeAudio(audioStream: any): Promise<string> {
@@ -26,11 +24,7 @@ export async function transcribeAudio(audioStream: any): Promise<string> {
 
 // Categorize transactions using AI
 export async function categorizeTransactions(
-  transactions: Array<{
-    merchant: string;
-    amount: number;
-    description?: string;
-  }>
+  transactions: Array<{ merchant: string; amount: number; description?: string }>
 ) {
   const transactionList = transactions
     .map((t) => `${t.merchant || t.description} - $${t.amount}`)
@@ -50,22 +44,14 @@ Return ONLY a JSON object with merchant/description as key and category as value
   try {
     const response = await openai.chat.completions.create({
       model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-      messages: [
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
+      messages: [{ role: "user", content: prompt }],
       max_tokens: parseInt(process.env.OPENAI_MAX_TOKENS || "1000"),
     });
 
     const content = response.choices[0].message.content;
     if (!content) throw new Error("Empty response from OpenAI");
-
-    // Parse JSON from response
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error("Could not extract JSON from response");
-
     return JSON.parse(jsonMatch[0]);
   } catch (error) {
     console.error("Error categorizing transactions:", error);
@@ -84,32 +70,17 @@ export async function generateFinancialInsight(financialSummary: {
 
 Monthly Income: $${financialSummary.monthly_income}
 Monthly Spending: $${financialSummary.monthly_spending}
-Top Spending Categories: ${financialSummary.top_categories
-    .map((c) => `${c.name}: $${c.amount}`)
-    .join(", ")}
-Debts: ${financialSummary.debt
-    .map(
-      (d) => `${d.name}: $${d.balance} at ${d.interest}% interest`
-    )
-    .join(", ")}
+Top Spending Categories: ${financialSummary.top_categories.map((c) => `${c.name}: $${c.amount}`).join(", ")}
+Debts: ${financialSummary.debt.map((d) => `${d.name}: $${d.balance} at ${d.interest}% interest`).join(", ")}
 
-Provide insights that are:
-- Specific to their situation
-- Actionable
-- Encouraging but honest`;
+Provide insights that are specific, actionable, and honest.`;
 
   try {
     const response = await openai.chat.completions.create({
       model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-      messages: [
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
+      messages: [{ role: "user", content: prompt }],
       max_tokens: parseInt(process.env.OPENAI_MAX_TOKENS || "1000"),
     });
-
     return response.choices[0].message.content || "";
   } catch (error) {
     console.error("Error generating insight:", error);
@@ -117,105 +88,170 @@ Provide insights that are:
   }
 }
 
-// Chat with AI finance assistant
+// Tool definitions — the AI calls these to query real data
+const CHAT_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
+  {
+    type: "function",
+    function: {
+      name: "get_spending_total",
+      description: "Get the exact total amount spent between two dates (income and transfers excluded automatically). Use this for any 'how much did I spend' question.",
+      parameters: {
+        type: "object",
+        properties: {
+          start_date: { type: "string", description: "Start date YYYY-MM-DD inclusive" },
+          end_date: { type: "string", description: "End date YYYY-MM-DD inclusive" },
+          category: { type: "string", description: "Optional: filter by a specific category key (e.g. FOOD_AND_DRINK, TRANSPORTATION)" },
+        },
+        required: ["start_date", "end_date"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_transactions",
+      description: "Fetch a list of transactions. Use for questions about specific merchants, dates, or to find the largest purchase.",
+      parameters: {
+        type: "object",
+        properties: {
+          start_date: { type: "string", description: "Start date YYYY-MM-DD" },
+          end_date: { type: "string", description: "End date YYYY-MM-DD" },
+          merchant: { type: "string", description: "Optional partial merchant name filter (case-insensitive)" },
+          category: { type: "string", description: "Optional category filter" },
+          limit: { type: "number", description: "Max results to return (default 20, max 50)" },
+          order_by_amount: { type: "boolean", description: "If true, sort by amount descending (for largest purchase queries)" },
+        },
+        required: ["start_date", "end_date"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_spending_by_category",
+      description: "Get spending broken down by category for a date range. Use for 'what did I spend the most on' or category comparison questions.",
+      parameters: {
+        type: "object",
+        properties: {
+          start_date: { type: "string", description: "Start date YYYY-MM-DD" },
+          end_date: { type: "string", description: "End date YYYY-MM-DD" },
+        },
+        required: ["start_date", "end_date"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_top_merchants",
+      description: "Get the merchants where the most money was spent in a date range.",
+      parameters: {
+        type: "object",
+        properties: {
+          start_date: { type: "string" },
+          end_date: { type: "string" },
+          limit: { type: "number", description: "Number of top merchants to return (default 5)" },
+        },
+        required: ["start_date", "end_date"],
+      },
+    },
+  },
+];
+
+// Simple one-shot completion (no tools, no history)
+export async function simpleChat(prompt: string): Promise<string> {
+  const response = await openai.chat.completions.create({
+    model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+    messages: [{ role: "user", content: prompt }],
+    max_tokens: parseInt(process.env.OPENAI_MAX_TOKENS || "500"),
+  });
+  return response.choices[0].message.content || "";
+}
+
+// Chat with AI finance assistant — uses tool calling for accurate live data
 export async function chatWithAssistant(
   userMessage: string,
-  financialSummary: {
-    monthly_income: number;
-    monthly_spending: number;
-    weekly_spending?: number;
-    spending_windows?: { [key: string]: number };
-    top_categories: Array<{ name: string; amount: number }>;
+  staticContext: {
+    today: string;
+    accounts: Array<{ name: string; type: string; subtype: string; balance: number }>;
+    goals_section: string;
+    budgets_section: string;
     debt: Array<{ name: string; balance: number; interest: number }>;
-    accounts?: Array<{ name: string; type: string; subtype: string; balance: number }>;
-    recent_transactions?: Array<{ merchant: string; amount: number; category: string; date: string }>;
-    goals_section?: string;
-    budgets_section?: string;
-    total_transactions?: number;
-    today?: string;
   },
-  history?: Array<{ role: "user" | "assistant"; content: string }>
-) {
-  const accountsSection = financialSummary.accounts?.length
-    ? financialSummary.accounts.map(a => `  - ${a.name} (${a.subtype}): $${a.balance.toFixed(2)}`).join("\n")
+  history: Array<{ role: "user" | "assistant"; content: string }>,
+  toolExecutor: (name: string, args: any) => Promise<any>
+): Promise<string> {
+  const accountsSection = staticContext.accounts.length
+    ? staticContext.accounts.map(a => `  - ${a.name} (${a.subtype}): $${a.balance.toFixed(2)}`).join("\n")
     : "  - No linked accounts";
 
-  const recentTxSection = financialSummary.recent_transactions?.length
-    ? financialSummary.recent_transactions.map(t => `  - ${t.date}: ${t.merchant} — $${t.amount.toFixed(2)} (${t.category})`).join("\n")
-    : "  - No recent transactions";
+  const systemPrompt = `You are WealthPal AI, a sharp and honest personal finance assistant. You have LIVE database access via tools — use them to get exact data before answering any spending question.
 
-  const today = financialSummary.today || new Date().toISOString().split("T")[0];
-  const sw = financialSummary.spending_windows || {};
+TODAY: ${staticContext.today}
 
-  const spendingWindowsSection = Object.keys(sw).length > 0
-    ? Object.entries(sw).map(([window, amt]) => {
-        const label = window === 'today' ? 'Today' : window === 'yesterday' ? 'Yesterday' : `Last ${window}`;
-        return `  - ${label}: $${(amt as number).toFixed(2)}`;
-      }).join("\n")
-    : `  - Last 7 days: $${(financialSummary.weekly_spending || 0).toFixed(2)}\n  - Last 30 days: $${financialSummary.monthly_spending.toFixed(2)}`;
-
-  const systemPrompt = `You are WealthPal AI, a sharp and honest personal finance assistant. You have FULL ACCESS to this user's real financial data from their bank via Plaid.
-
-TODAY: ${today}
-
-PRE-COMPUTED SPENDING BY TIME WINDOW:
-${spendingWindowsSection}
-
-TOP SPENDING CATEGORIES (last 30 days):
-${financialSummary.top_categories.map(c => `  - ${c.name}: $${c.amount.toFixed(2)}`).join("\n") || "  - None yet"}
-
-LINKED BANK ACCOUNTS:
+LINKED ACCOUNTS:
 ${accountsSection}
 
 GOALS:
-${financialSummary.goals_section || "  - None set"}
+${staticContext.goals_section || "  - None set"}
 
 ACTIVE BUDGETS:
-${financialSummary.budgets_section || "  - None set"}
+${staticContext.budgets_section || "  - None set"}
 
-DEBTS: ${financialSummary.debt.length > 0 ? financialSummary.debt.map(d => `${d.name} ($${d.balance} @ ${d.interest}%)`).join(", ") : "None"}
+DEBTS: ${staticContext.debt.length > 0 ? staticContext.debt.map(d => `${d.name} ($${d.balance} @ ${d.interest}%)`).join(", ") : "None"}
 
-ALL TRANSACTIONS (${financialSummary.total_transactions || 0} total, up to 150 shown newest first):
-${recentTxSection}
+RULES:
+1. For ANY spending question ("how much", "did I spend", "what did I buy", "largest purchase"), call a tool FIRST — never guess or estimate.
+2. Be brutally concise: 1-3 sentences max unless detail is explicitly requested.
+3. Yes/no questions: answer yes or no FIRST, then one sentence of context.
+4. Use exact dollar amounts from tool results — never round or say "around."
+5. Do not use filler phrases like "Great question!", "Absolutely!", or "I'd be happy to."
+6. If something looks financially unwise, say so directly.
+7. Reference specific merchant names, dates, and amounts from tool results.`;
 
-RULES — follow these strictly:
-1. Be brutally concise. 1-3 sentences max unless detail is explicitly requested.
-2. Yes/no questions get a direct yes or no FIRST, then one sentence of context.
-3. Affordability questions: always check the active budgets and current balance first. If it puts them over budget or would leave them short, say so plainly.
-4. Use exact dollar amounts from the data — never round vaguely or say "around."
-5. CRITICAL — spending totals: ALWAYS use the PRE-COMPUTED SPENDING BY TIME WINDOW values above. Do NOT manually sum the transaction list — that list is a sample and will give wrong totals. "Today" = the Today window. "Yesterday" = the Yesterday window. "This week" = Last 7d. "This month" = Last 30d.
-6. The transaction list is for looking up specific merchants, dates, and descriptions. The spending windows are the authoritative totals.
-7. Do not use filler phrases like "Great question!", "Absolutely!", "Of course!", or "I'd be happy to." Start with the answer.
-8. If something looks financially unwise, say so directly — be a trusted advisor, not a cheerleader.
-9. Reference specific merchant names, dates, and amounts when relevant.
-10. If asked for projections or future estimates, base them on actual historical patterns from the data.
-11. All spending data is from the database — it is accurate and up to date. Never say you don't have access to the data.`;
+  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    { role: "system", content: systemPrompt },
+    ...(history.map(m => ({ role: m.role, content: m.content })) as OpenAI.Chat.Completions.ChatCompletionMessageParam[]),
+    { role: "user", content: userMessage },
+  ];
 
-  try {
-    const priorMessages = (history || []).map(m => ({ role: m.role, content: m.content }));
-
+  // Agentic loop — let AI call tools until it has the data it needs
+  for (let i = 0; i < 5; i++) {
     const response = await openai.chat.completions.create({
       model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-      messages: [
-        { role: "system", content: systemPrompt },
-        ...priorMessages,
-        { role: "user", content: userMessage },
-      ],
+      messages,
+      tools: CHAT_TOOLS,
+      tool_choice: "auto",
       max_tokens: parseInt(process.env.OPENAI_MAX_TOKENS || "1000"),
     });
 
-    return response.choices[0].message.content || "";
-  } catch (error) {
-    const err = error as any;
-    const parts = [err?.message || 'Unknown OpenAI error'];
-    if (err?.response?.status) {
-      parts.push(`status=${err.response.status}`);
+    const choice = response.choices[0];
+    messages.push(choice.message as OpenAI.Chat.Completions.ChatCompletionMessageParam);
+
+    if (choice.finish_reason === "stop") {
+      return choice.message.content || "";
     }
-    if (err?.response?.data) {
-      parts.push(JSON.stringify(err.response.data));
+
+    if (choice.finish_reason === "tool_calls" && choice.message.tool_calls) {
+      for (const toolCall of choice.message.tool_calls) {
+        let result: any;
+        try {
+          const args = JSON.parse(toolCall.function.arguments);
+          result = await toolExecutor(toolCall.function.name, args);
+        } catch (e: any) {
+          result = { error: e.message };
+        }
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: JSON.stringify(result),
+        });
+      }
+    } else {
+      // Unexpected finish reason
+      return choice.message.content || "";
     }
-    const message = parts.join(' | ');
-    console.error("Error in chat:", message);
-    throw new Error(message);
   }
+
+  return "I ran into an issue fetching your data. Please try again.";
 }
