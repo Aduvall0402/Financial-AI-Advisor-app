@@ -148,7 +148,10 @@ export async function chatWithAssistant(
   const sw = financialSummary.spending_windows || {};
 
   const spendingWindowsSection = Object.keys(sw).length > 0
-    ? Object.entries(sw).map(([window, amt]) => `  - Last ${window}: $${(amt as number).toFixed(2)}`).join("\n")
+    ? Object.entries(sw).map(([window, amt]) => {
+        const label = window === 'today' ? 'Today' : window === 'yesterday' ? 'Yesterday' : `Last ${window}`;
+        return `  - ${label}: $${(amt as number).toFixed(2)}`;
+      }).join("\n")
     : `  - Last 7 days: $${(financialSummary.weekly_spending || 0).toFixed(2)}\n  - Last 30 days: $${financialSummary.monthly_spending.toFixed(2)}`;
 
   const systemPrompt = `You are WealthPal AI, a sharp and honest personal finance assistant. You have FULL ACCESS to this user's real financial data from their bank via Plaid.
@@ -180,11 +183,13 @@ RULES — follow these strictly:
 2. Yes/no questions get a direct yes or no FIRST, then one sentence of context.
 3. Affordability questions: always check the active budgets and current balance first. If it puts them over budget or would leave them short, say so plainly.
 4. Use exact dollar amounts from the data — never round vaguely or say "around."
-5. For any time period question, use the pre-computed windows or filter transactions by date — never say you lack data.
-6. Do not use filler phrases like "Great question!", "Absolutely!", "Of course!", or "I'd be happy to." Start with the answer.
-7. If something looks financially unwise, say so directly — be a trusted advisor, not a cheerleader.
-8. Reference specific merchant names, dates, and amounts when relevant.
-9. If asked for projections or future estimates, base them on actual historical patterns from the data.`;
+5. CRITICAL — spending totals: ALWAYS use the PRE-COMPUTED SPENDING BY TIME WINDOW values above. Do NOT manually sum the transaction list — that list is a sample and will give wrong totals. "Today" = the Today window. "Yesterday" = the Yesterday window. "This week" = Last 7d. "This month" = Last 30d.
+6. The transaction list is for looking up specific merchants, dates, and descriptions. The spending windows are the authoritative totals.
+7. Do not use filler phrases like "Great question!", "Absolutely!", "Of course!", or "I'd be happy to." Start with the answer.
+8. If something looks financially unwise, say so directly — be a trusted advisor, not a cheerleader.
+9. Reference specific merchant names, dates, and amounts when relevant.
+10. If asked for projections or future estimates, base them on actual historical patterns from the data.
+11. All spending data is from the database — it is accurate and up to date. Never say you don't have access to the data.`;
 
   try {
     const priorMessages = (history || []).map(m => ({ role: m.role, content: m.content }));

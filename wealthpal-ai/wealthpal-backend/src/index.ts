@@ -361,8 +361,13 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 8);
 
-    // Most recent 150 transactions for AI reference
-    const recent_transactions = txList.slice(0, 150).map(t => ({
+    // Today and yesterday specific windows
+    const yesterdayStr = new Date(todayDate.getTime() - 86400000).toISOString().split("T")[0];
+    const spending_today = spendingTx.filter(t => t.transaction_date === todayStr).reduce((s, t) => s + parseFloat(t.amount), 0);
+    const spending_yesterday = spendingTx.filter(t => t.transaction_date === yesterdayStr).reduce((s, t) => s + parseFloat(t.amount), 0);
+
+    // Most recent 150 SPENDING transactions for AI reference (income/transfers excluded)
+    const recent_transactions = spendingTx.slice(0, 150).map(t => ({
       merchant: t.merchant_name || t.description || "Unknown",
       amount: parseFloat(t.amount),
       category: t.category || "Other",
@@ -403,7 +408,7 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
       monthly_income: 0,
       monthly_spending: spending_30d,
       weekly_spending: spending_7d,
-      spending_windows: { "7d": spending_7d, "9d": spending_9d, "14d": spending_14d, "30d": spending_30d, "60d": spending_60d, "90d": spending_90d },
+      spending_windows: { "today": spending_today, "yesterday": spending_yesterday, "7d": spending_7d, "9d": spending_9d, "14d": spending_14d, "30d": spending_30d, "60d": spending_60d, "90d": spending_90d },
       top_categories,
       debt,
       accounts,

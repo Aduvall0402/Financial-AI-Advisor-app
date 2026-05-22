@@ -91,7 +91,8 @@ function hexToRgb(hex) {
 }
 
 const PLAID_CATEGORIES = [
-  { key: 'FOOD_AND_DRINK', label: 'Food & Drink', icon: 'F' },
+  { key: 'GROCERY', label: 'Groceries', icon: 'G' },
+  { key: 'DINING', label: 'Dining', icon: 'D' },
   { key: 'GENERAL_MERCHANDISE', label: 'Shopping', icon: 'S' },
   { key: 'TRANSPORTATION', label: 'Transportation', icon: 'T' },
   { key: 'TRAVEL', label: 'Travel', icon: '✈' },
@@ -106,6 +107,17 @@ const PLAID_CATEGORIES = [
   { key: 'OTHER', label: 'Other', icon: 'O' },
 ];
 
+const GROCERY_KEYWORDS = ['walmart','kroger','safeway','whole foods','trader joe','aldi','costco','publix','albertsons','wegmans','heb ','stop & shop','grocery','supermarket','food mart','fresh market','sprouts','meijer','winn-dixie','food lion','ingles','harris teeter','market basket','food 4 less','smart & final','stater bros','giant food','acme','shoprite','food city'];
+const DINING_KEYWORDS = ['restaurant','cafe','coffee','starbucks','mcdonald','burger','pizza','sushi','taco','subway','chipotle','diner','grill','bistro','kitchen','eatery','donut','bakery','sandwich','deli','bar ','tavern','pub ','bbq','wings','noodle','ramen','pho','thai','chinese','mexican','steakhouse','chick-fil','dunkin','panera','five guys','shake shack','domino','papa john','kfc','popeye','wendy'];
+
+function refineFoodCategory(merchantName, rawCategory) {
+  if (rawCategory !== 'FOOD_AND_DRINK') return rawCategory;
+  const m = (merchantName || '').toLowerCase();
+  if (GROCERY_KEYWORDS.some(k => m.includes(k))) return 'GROCERY';
+  if (DINING_KEYWORDS.some(k => m.includes(k))) return 'DINING';
+  return 'DINING'; // default unknown food to dining
+}
+
 const RANGE_LABELS = {
   '7d': 'Last 7 Days', '30d': 'Last 30 Days',
   '3m': 'Last 3 Months', '6m': 'Last 6 Months', 'all': 'All Time',
@@ -118,7 +130,8 @@ const SORT_LABELS = {
 };
 
 const CAT_LETTERS = {
-  Groceries: 'G', 'Food and Drink': 'F', Food: 'F', Restaurants: 'R',
+  Groceries: 'G', Grocery: 'G', GROCERY: 'G', Dining: 'D', DINING: 'D',
+  'Food and Drink': 'F', Food: 'F', Restaurants: 'D',
   Gas: 'G', Transportation: 'T', Travel: 'T', Shopping: 'S',
   Entertainment: 'E', Subscriptions: 'S', Utilities: 'U',
   Health: 'H', Healthcare: 'H', Other: 'O',
@@ -129,8 +142,10 @@ const CAT_LETTERS = {
 };
 
 const CAT_BG = {
-  Groceries: '#059669', 'Food and Drink': '#d97706', Food: '#d97706',
-  Restaurants: '#d97706', Gas: '#2563eb', Transportation: '#2563eb',
+  Groceries: '#059669', Grocery: '#059669', GROCERY: '#059669',
+  Dining: '#d97706', DINING: '#d97706', Restaurants: '#d97706',
+  'Food and Drink': '#d97706', Food: '#d97706',
+  Gas: '#2563eb', Transportation: '#2563eb',
   Travel: '#7c3aed', Shopping: '#db2777', Entertainment: '#dc2626',
   Subscriptions: '#0891b2', Utilities: '#65a30d', Health: '#059669',
   Healthcare: '#059669', Other: '#475569',
@@ -297,6 +312,8 @@ export default function App() {
   const [editingTx, setEditingTx] = useState(null);
   const [editTxFields, setEditTxFields] = useState({});
   const [savingTx, setSavingTx] = useState(false);
+  const [rememberCategoryRule, setRememberCategoryRule] = useState(false);
+  const [contributeToGoalId, setContributeToGoalId] = useState(null);
 
   // Goals
   const [goals, setGoals] = useState([]);
@@ -344,6 +361,8 @@ export default function App() {
   const [budgetGlobalPeriod, setBudgetGlobalPeriod] = useState('monthly');
   const [customCategories, setCustomCategories] = useState([]);
   const [newCatInput, setNewCatInput] = useState('');
+  const [categoryRules, setCategoryRules] = useState({}); // merchant -> category
+  const saveCategoryRules = (rules) => { setCategoryRules(rules); AsyncStorage.setItem('categoryRules', JSON.stringify(rules)); };
 
   // Transactions sort
   const [txSortBy, setTxSortBy] = useState('date_desc');
@@ -383,6 +402,13 @@ export default function App() {
   ];
   const currencySymbol = CURRENCIES.find(c => c.code === currency)?.symbol || '$';
   const fmtCurrency = useCallback((n) => `${currencySymbol}${fmtMoney(n)}`, [currencySymbol]);
+
+  // Apply category rules + food refinement to get the display category for a transaction
+  const getEffectiveCategory = useCallback((tx) => {
+    const merchant = (tx.merchant_name || tx.description || '').toLowerCase();
+    if (categoryRules[merchant]) return categoryRules[merchant];
+    return refineFoodCategory(tx.merchant_name || tx.description || '', tx.category);
+  }, [categoryRules]);
   const [currencyVisible, setCurrencyVisible] = useState(false);
 
   // Help & FAQ
@@ -513,6 +539,7 @@ export default function App() {
   // ── Theme + persisted prefs ──────────────────────────
   useEffect(() => {
     AsyncStorage.getItem('customCategories').then(v => { if (v) { try { setCustomCategories(JSON.parse(v)); } catch {} } });
+    AsyncStorage.getItem('categoryRules').then(v => { if (v) { try { setCategoryRules(JSON.parse(v)); } catch {} } });
     AsyncStorage.multiGet([
       'themeBg', 'themeAccent', 'displayName',
       'notifOverall', 'notifDaily', 'notifWeekly', 'notifMonthly', 'notifBudget',
@@ -1040,13 +1067,20 @@ export default function App() {
     for (const goal of autoGoals) {
       let total = 0;
       if (goal.type === 'savings') {
-        total = transactions
-          .filter(tx => {
-            const cat = (tx.category || '').toLowerCase();
-            const merch = (tx.merchant_name || '').toLowerCase();
-            return cat.includes('transfer') || cat.includes('saving') || merch.includes('saving');
-          })
-          .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+        if (goal.category) {
+          // Auto-contribute: sum transactions matching the linked category
+          total = transactions
+            .filter(tx => tx.category === goal.category || getEffectiveCategory(tx) === goal.category)
+            .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+        } else {
+          total = transactions
+            .filter(tx => {
+              const cat = (tx.category || '').toLowerCase();
+              const merch = (tx.merchant_name || '').toLowerCase();
+              return cat.includes('transfer') || cat.includes('saving') || merch.includes('saving');
+            })
+            .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+        }
       } else if (goal.type === 'debt_payoff') {
         const kw = (goal.title || '').toLowerCase().split(' ')[0];
         total = transactions
@@ -1391,10 +1425,10 @@ export default function App() {
             </View>
             {recentTx.map((tx, i) => (
               <View key={tx.id || i} style={[s.txItem, { paddingVertical: 10 }]}>
-                <CatIcon category={tx.category} />
+                <CatIcon category={getEffectiveCategory(tx)} />
                 <View style={{ flex: 1 }}>
                   <Text style={s.txMerchant} numberOfLines={1}>{tx.merchant_name || tx.description || 'Unknown'}</Text>
-                  <Text style={s.txMeta}>{fmtDate(tx.transaction_date)} · {(tx.category || 'Other').replace(/_/g, ' ')}</Text>
+                  <Text style={s.txMeta}>{fmtDate(tx.transaction_date)} · {(getEffectiveCategory(tx) || 'Other').replace(/_/g, ' ')}</Text>
                 </View>
                 <Text style={s.txAmt}>-${fmtMoney(tx.amount)}</Text>
               </View>
@@ -1859,7 +1893,9 @@ export default function App() {
                     });
                   } else {
                     setEditingTx(item);
-                    setEditTxFields({ merchant_name: item.merchant_name, amount: String(item.amount), category: item.category, transaction_date: item.transaction_date, description: item.description || '' });
+                    setEditTxFields({ merchant_name: item.merchant_name, amount: String(item.amount), category: getEffectiveCategory(item), transaction_date: item.transaction_date, description: item.description || '' });
+                    setRememberCategoryRule(false);
+                    setContributeToGoalId(null);
                     setEditTxVisible(true);
                   }
                 }}
@@ -1871,10 +1907,10 @@ export default function App() {
                     {isSelected && <Text style={{ color: '#fff', fontSize: 13, fontWeight: '800' }}>✓</Text>}
                   </View>
                 )}
-                <CatIcon category={item.category} />
+                <CatIcon category={getEffectiveCategory(item)} />
                 <View style={{ flex: 1 }}>
                   <Text style={s.txMerchant} numberOfLines={1}>{item.merchant_name || item.description || 'Unknown'}</Text>
-                  <Text style={s.txMeta}>{fmtDate(item.transaction_date)} · {item.category || 'Other'}</Text>
+                  <Text style={s.txMeta}>{fmtDate(item.transaction_date)} · {(getEffectiveCategory(item) || 'Other').replace(/_/g, ' ')}</Text>
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
                   <Text style={s.txAmt}>-${fmtMoney(item.amount)}</Text>
@@ -1956,13 +1992,14 @@ export default function App() {
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <TouchableOpacity
               style={{ flex: 1, borderRadius: 9, paddingVertical: 8, alignItems: 'center', backgroundColor: typeInfo.color + '18' }}
-              onPress={async () => {
-                const newAmt = goal.current_amount + 1;
-                await fetch(`${API_URL}/api/goals/${goal.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current_amount: newAmt, is_completed: newAmt >= goal.target_amount }) });
-                fetchGoals();
+              onPress={() => {
+                setNewGoal({ title: goal.title, target_amount: String(goal.target_amount || ''), current_amount: String(goal.current_amount || ''), deadline: goal.deadline || '', category: goal.category || '' });
+                setAddGoalType(goal.type);
+                setAddGoalUpdateMode(goal.update_mode || 'manual');
+                setAddGoalVisible(true);
               }}
             >
-              <Text style={{ color: typeInfo.color, fontSize: 13, fontWeight: '700' }}>+ Progress</Text>
+              <Text style={{ color: typeInfo.color, fontSize: 13, fontWeight: '700' }}>Edit</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={{ borderRadius: 9, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: C.border }}
@@ -3590,55 +3627,103 @@ export default function App() {
       {/* Transaction Edit Modal */}
       <Modal visible={editTxVisible} animationType="slide" transparent onRequestClose={() => setEditTxVisible(false)}>
         <View style={s.modalOverlay}>
-          <View style={s.modalCard}>
-            <Text style={s.modalTitle}>Edit Transaction</Text>
-            <Text style={s.label}>Merchant / Name</Text>
-            <TextInput style={s.input} value={editTxFields.merchant_name} onChangeText={v => setEditTxFields(p => ({...p, merchant_name: v}))} placeholderTextColor={C.textMuted} />
-            <Text style={s.label}>Amount ($)</Text>
-            <TextInput style={s.input} value={editTxFields.amount} onChangeText={v => setEditTxFields(p => ({...p, amount: v}))} keyboardType="decimal-pad" placeholderTextColor={C.textMuted} />
-            <Text style={s.label}>Category</Text>
-            <TextInput style={s.input} value={editTxFields.category} onChangeText={v => setEditTxFields(p => ({...p, category: v}))} placeholderTextColor={C.textMuted} />
-            <Text style={s.label}>Date (YYYY-MM-DD)</Text>
-            <TextInput style={s.input} value={editTxFields.transaction_date} onChangeText={v => setEditTxFields(p => ({...p, transaction_date: v}))} placeholderTextColor={C.textMuted} />
-            <Text style={s.label}>Description</Text>
-            <TextInput style={s.input} value={editTxFields.description} onChangeText={v => setEditTxFields(p => ({...p, description: v}))} placeholderTextColor={C.textMuted} />
-            <TouchableOpacity
-              style={[s.btn, savingTx && s.btnOff]}
-              disabled={savingTx}
-              onPress={async () => {
-                setSavingTx(true);
-                try {
-                  await fetch(`${API_URL}/api/transactions/${editingTx.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...editTxFields, amount: parseFloat(editTxFields.amount) }) });
+          <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end' }}>
+            <View style={s.modalCard}>
+              <Text style={s.modalTitle}>Edit Transaction</Text>
+              <Text style={s.label}>Merchant / Name</Text>
+              <TextInput style={s.input} value={editTxFields.merchant_name} onChangeText={v => setEditTxFields(p => ({...p, merchant_name: v}))} placeholderTextColor={C.textMuted} />
+              <Text style={s.label}>Amount ($)</Text>
+              <TextInput style={s.input} value={editTxFields.amount} onChangeText={v => setEditTxFields(p => ({...p, amount: v}))} keyboardType="decimal-pad" placeholderTextColor={C.textMuted} />
+              <Text style={s.label}>Category</Text>
+              <ScrollView style={{ maxHeight: 160, marginBottom: 12, borderWidth: 1, borderColor: C.border, borderRadius: 12 }} showsVerticalScrollIndicator={false}>
+                {[...PLAID_CATEGORIES, ...customCategories.map(c => ({ key: c, label: c, icon: '★' }))].map(cat => (
+                  <TouchableOpacity key={cat.key} onPress={() => setEditTxFields(p => ({...p, category: cat.key}))}
+                    style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 11, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: C.border }}>
+                    <Text style={{ color: editTxFields.category === cat.key ? C.accent : C.text, fontSize: 14 }}>{cat.icon} {cat.label}</Text>
+                    {editTxFields.category === cat.key && <Text style={{ color: C.accent, fontWeight: '700' }}>✓</Text>}
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              {/* Remember rule */}
+              {editTxFields.merchant_name ? (
+                <TouchableOpacity
+                  onPress={() => setRememberCategoryRule(p => !p)}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 14, padding: 12, borderRadius: 12, backgroundColor: rememberCategoryRule ? C.accent + '22' : C.surface, borderWidth: 1, borderColor: rememberCategoryRule ? C.accent : C.border }}
+                >
+                  <View style={{ width: 20, height: 20, borderRadius: 5, borderWidth: 2, borderColor: rememberCategoryRule ? C.accent : C.border, backgroundColor: rememberCategoryRule ? C.accent : 'transparent', justifyContent: 'center', alignItems: 'center' }}>
+                    {rememberCategoryRule && <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>✓</Text>}
+                  </View>
+                  <Text style={{ color: C.text, fontSize: 13, flex: 1 }}>Always categorize <Text style={{ fontWeight: '700' }}>{editTxFields.merchant_name}</Text> as this</Text>
+                </TouchableOpacity>
+              ) : null}
+              {/* Contribute to goal */}
+              {goals.filter(g => g.type === 'savings' || g.type === 'debt_payoff').length > 0 && (
+                <View style={{ marginBottom: 14 }}>
+                  <Text style={s.label}>Contribute to Goal (optional)</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    {[{ id: null, title: 'None' }, ...goals.filter(g => g.type === 'savings' || g.type === 'debt_payoff')].map(g => (
+                      <TouchableOpacity key={g.id || 'none'} onPress={() => setContributeToGoalId(g.id)}
+                        style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, marginRight: 8, backgroundColor: contributeToGoalId === g.id ? C.accent : C.surface, borderWidth: 1, borderColor: contributeToGoalId === g.id ? C.accent : C.border }}>
+                        <Text style={{ color: contributeToGoalId === g.id ? '#fff' : C.textSub, fontSize: 12, fontWeight: '600' }}>{g.title || 'None'}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+              <Text style={s.label}>Date (YYYY-MM-DD)</Text>
+              <TextInput style={s.input} value={editTxFields.transaction_date} onChangeText={v => setEditTxFields(p => ({...p, transaction_date: v}))} placeholderTextColor={C.textMuted} />
+              <TouchableOpacity
+                style={[s.btn, savingTx && s.btnOff]}
+                disabled={savingTx}
+                onPress={async () => {
+                  setSavingTx(true);
+                  try {
+                    await fetch(`${API_URL}/api/transactions/${editingTx.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...editTxFields, amount: parseFloat(editTxFields.amount) }) });
+                    // Save category rule if checked
+                    if (rememberCategoryRule && editTxFields.merchant_name) {
+                      const key = editTxFields.merchant_name.toLowerCase();
+                      saveCategoryRules({ ...categoryRules, [key]: editTxFields.category });
+                    }
+                    // Contribute to goal if selected
+                    if (contributeToGoalId) {
+                      const goal = goals.find(g => g.id === contributeToGoalId);
+                      if (goal) {
+                        const newAmt = (goal.current_amount || 0) + parseFloat(editTxFields.amount || 0);
+                        await fetch(`${API_URL}/api/goals/${contributeToGoalId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current_amount: newAmt, is_completed: goal.target_amount > 0 && newAmt >= goal.target_amount }) });
+                        fetchGoals();
+                      }
+                    }
+                    setEditTxVisible(false);
+                    fetchTransactions();
+                  } catch {}
+                  finally { setSavingTx(false); }
+                }}
+              >
+                {savingTx ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Save Changes</Text>}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[s.btn, { backgroundColor: '#06b6d4', marginTop: 0 }]}
+                onPress={() => {
                   setEditTxVisible(false);
-                  fetchTransactions();
-                } catch {}
-                finally { setSavingTx(false); }
-              }}
-            >
-              {savingTx ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Save Changes</Text>}
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[s.btn, { backgroundColor: '#06b6d4', marginTop: 0 }]}
-              onPress={() => {
-                setEditTxVisible(false);
-                setTimeout(() => {
-                  setNewRecurring({
-                    name: editTxFields.merchant_name || '',
-                    amount: String(editTxFields.amount || ''),
-                    category: editTxFields.category || 'OTHER',
-                    frequency: 'monthly',
-                    day_of_month: new Date(editTxFields.transaction_date || Date.now()).getDate(),
-                    interval_days: 30,
-                    start_date: editTxFields.transaction_date || new Date().toISOString().split('T')[0],
-                  });
-                  setAddRecurringVisible(true);
-                }, 300);
-              }}
-            >
-              <Text style={s.btnText}>↻ Mark as Recurring</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={s.linkRow} onPress={() => setEditTxVisible(false)}><Text style={s.linkText}>Cancel</Text></TouchableOpacity>
-          </View>
+                  setTimeout(() => {
+                    setNewRecurring({
+                      name: editTxFields.merchant_name || '',
+                      amount: String(editTxFields.amount || ''),
+                      category: editTxFields.category || 'OTHER',
+                      frequency: 'monthly',
+                      day_of_month: new Date(editTxFields.transaction_date || Date.now()).getDate(),
+                      interval_days: 30,
+                      start_date: editTxFields.transaction_date || new Date().toISOString().split('T')[0],
+                    });
+                    setAddRecurringVisible(true);
+                  }, 300);
+                }}
+              >
+                <Text style={s.btnText}>↻ Mark as Recurring</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={s.linkRow} onPress={() => setEditTxVisible(false)}><Text style={s.linkText}>Cancel</Text></TouchableOpacity>
+            </View>
+          </ScrollView>
         </View>
       </Modal>
 
@@ -3669,9 +3754,23 @@ export default function App() {
                   </View>
                   {addGoalUpdateMode === 'auto' && (
                     <View style={{ backgroundColor: C.bg, borderRadius: 10, padding: 12, marginBottom: 14, borderWidth: 1, borderColor: C.border }}>
-                      <Text style={{ color: C.textSub, fontSize: 12, lineHeight: 18 }}>
-                        Automatic: after each sync, progress is computed from your transactions — savings/transfer transactions for savings goals, loan/payment transactions for debt payoff goals.
+                      <Text style={{ color: C.textSub, fontSize: 12, lineHeight: 18, marginBottom: addGoalType === 'savings' ? 10 : 0 }}>
+                        {addGoalType === 'savings' ? 'After each sync, transactions from the linked category are summed and added toward this goal.' : 'Progress is computed from loan/payment transactions after each sync.'}
                       </Text>
+                      {addGoalType === 'savings' && (
+                        <>
+                          <Text style={[s.label, { marginBottom: 6 }]}>Link Category (transactions that count)</Text>
+                          <ScrollView style={{ maxHeight: 130 }} showsVerticalScrollIndicator={false}>
+                            {PLAID_CATEGORIES.map(cat => (
+                              <TouchableOpacity key={cat.key} onPress={() => setNewGoal(p => ({...p, category: cat.key}))}
+                                style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 9, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: C.border }}>
+                                <Text style={{ color: newGoal.category === cat.key ? C.accent : C.text, fontSize: 13 }}>{cat.icon} {cat.label}</Text>
+                                {newGoal.category === cat.key && <Text style={{ color: C.accent }}>✓</Text>}
+                              </TouchableOpacity>
+                            ))}
+                          </ScrollView>
+                        </>
+                      )}
                     </View>
                   )}
                 </>
