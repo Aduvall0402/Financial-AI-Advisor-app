@@ -14,6 +14,16 @@ const openai = new OpenAI({
   apiKey: openaiKey,
 });
 
+// Transcribe audio using Whisper
+export async function transcribeAudio(audioStream: any): Promise<string> {
+  const response = await openai.audio.transcriptions.create({
+    model: "whisper-1",
+    file: audioStream,
+    language: "en",
+  });
+  return response.text || "";
+}
+
 // Categorize transactions using AI
 export async function categorizeTransactions(
   transactions: Array<{

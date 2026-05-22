@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   SafeAreaView, View, Text, TouchableOpacity, StyleSheet,
   ScrollView, TextInput, FlatList, ActivityIndicator,
@@ -9,6 +9,17 @@ import { LineChart, BarChart, PieChart } from 'react-native-chart-kit';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+import * as Speech from 'expo-speech';
+import { Audio } from 'expo-av';
+
+// Categories that represent income/deposits — exclude from all spending calculations
+const INCOME_CATEGORIES = new Set([
+  'INCOME', 'TRANSFER_IN', 'Income', 'Transfer In', 'Payroll', 'PAYROLL',
+  'INTEREST_EARNED', 'Interest', 'Refund', 'REFUND', 'LOAN_PROCEEDS',
+]);
+const isIncomeTx = (tx) => INCOME_CATEGORIES.has(tx.category) || INCOME_CATEGORIES.has(tx.category?.toUpperCase?.());
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({ shouldShowAlert: true, shouldPlaySound: true, shouldSetBadge: false }),
@@ -235,7 +246,7 @@ export default function App() {
   const monthlySpend = useMemo(() => {
     const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
     return transactions
-      .filter(tx => new Date(tx.transaction_date).getTime() >= cutoff)
+      .filter(tx => new Date(tx.transaction_date).getTime() >= cutoff && !isIncomeTx(tx))
       .reduce((sum, tx) => sum + parseFloat(tx.amount || 0), 0);
   }, [transactions]);
 
@@ -342,10 +353,115 @@ export default function App() {
   const [groupShareLoading, setGroupShareLoading] = useState(false);
   const [groupSettingsOpen, setGroupSettingsOpen] = useState(false);
 
+  // Auth token for secure API calls
+  const [authToken, setAuthToken] = useState(null);
+  const authTokenRef = useRef(null);
+
+  // Payday detection
+  const [paydayInfo, setPaydayInfo] = useState(null); // { nextDate, daysUntil }
+
+  // Currency
+  const [currency, setCurrency] = useState('USD');
+  const CURRENCIES = [
+    { code: 'USD', symbol: '$', name: 'US Dollar' },
+    { code: 'EUR', symbol: '€', name: 'Euro' },
+    { code: 'GBP', symbol: '£', name: 'British Pound' },
+    { code: 'CAD', symbol: 'C$', name: 'Canadian Dollar' },
+    { code: 'AUD', symbol: 'A$', name: 'Australian Dollar' },
+    { code: 'JPY', symbol: '¥', name: 'Japanese Yen' },
+    { code: 'MXN', symbol: 'MX$', name: 'Mexican Peso' },
+    { code: 'INR', symbol: '₹', name: 'Indian Rupee' },
+  ];
+  const currencySymbol = CURRENCIES.find(c => c.code === currency)?.symbol || '$';
+  const fmtCurrency = useCallback((n) => `${currencySymbol}${fmtMoney(n)}`, [currencySymbol]);
+  const [currencyVisible, setCurrencyVisible] = useState(false);
+
+  // Help & FAQ
+  const [helpVisible, setHelpVisible] = useState(false);
+
+  // Auto sync
+  const [autoSyncHour, setAutoSyncHour] = useState(6); // default 6am
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState(null);
+  const [autoSyncTimeVisible, setAutoSyncTimeVisible] = useState(false);
+
+  // Transaction search
+  const [txSearch, setTxSearch] = useState('');
+  const [txSearchActive, setTxSearchActive] = useState(false);
+
+  // Voice input
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingObj, setRecordingObj] = useState(null);
+  const [speakingMsgId, setSpeakingMsgId] = useState(null);
+
+  // Recurring transactions
+  const [recurringTxs, setRecurringTxs] = useState([]);
+  const [addRecurringVisible, setAddRecurringVisible] = useState(false);
+  const [newRecurring, setNewRecurring] = useState({ name: '', amount: '', category: 'OTHER', frequency: 'monthly', day_of_month: 1, interval_days: 7, start_date: '' });
+  const [recurringMonth, setRecurringMonth] = useState(new Date());
+
+  // ── Auto sync useEffect ──────────────────────────────
+  useEffect(() => {
+    if (!autoSyncEnabled || !userIdRef.current) return;
+    const checkAutoSync = () => {
+      const now = new Date();
+      if (now.getHours() !== autoSyncHour) return;
+      const lastSync = lastSyncTime || 0;
+      const elapsed = Date.now() - lastSync;
+      if (elapsed < 23 * 60 * 60 * 1000) return; // 23h lockout
+      const newLastSync = Date.now();
+      setLastSyncTime(newLastSync);
+      AsyncStorage.setItem('lastSyncTime', String(newLastSync));
+      syncTransactions();
+    };
+    checkAutoSync();
+    const interval = setInterval(checkAutoSync, 60 * 1000);
+    return () => clearInterval(interval);
+  }, [autoSyncEnabled, autoSyncHour, lastSyncTime]);
+
+  // ── Fetch Recurring Transactions ─────────────────────
+  const fetchRecurring = useCallback(async () => {
+    if (!userIdRef.current) return;
+    try {
+      const res = await fetch(`${API_URL}/api/recurring/${userIdRef.current}`);
+      const d = await res.json();
+      setRecurringTxs(d.recurring || []);
+    } catch {}
+  }, []);
+
+  // Payday auto-detection from income transaction history
+  useEffect(() => {
+    if (!transactions.length) { setPaydayInfo(null); return; }
+    const incomeTxs = transactions
+      .filter(tx => isIncomeTx(tx))
+      .sort((a, b) => new Date(b.transaction_date).getTime() - new Date(a.transaction_date).getTime());
+    if (incomeTxs.length < 2) { setPaydayInfo(null); return; }
+    const dates = incomeTxs.slice(0, 6).map(tx => new Date(tx.transaction_date).getTime());
+    const gaps = [];
+    for (let i = 0; i < dates.length - 1; i++) gaps.push(dates[i] - dates[i + 1]);
+    const avgGap = gaps.reduce((s, g) => s + g, 0) / gaps.length;
+    const avgDays = Math.round(avgGap / 86400000);
+    if (avgDays < 5 || avgDays > 35) { setPaydayInfo(null); return; }
+    const lastPayday = new Date(dates[0]);
+    const nextPayday = new Date(lastPayday.getTime() + avgDays * 86400000);
+    const today = new Date();
+    const daysUntil = Math.round((nextPayday.getTime() - today.getTime()) / 86400000);
+    if (daysUntil < 0 || daysUntil > 35) { setPaydayInfo(null); return; }
+    setPaydayInfo({ nextDate: nextPayday.toISOString().split('T')[0], daysUntil, frequencyDays: avgDays });
+  }, [transactions]);
+
   const sortedTransactions = useMemo(() => {
-    const txs = txFilterCategory === 'all'
+    let txs = txFilterCategory === 'all'
       ? [...transactions]
       : transactions.filter(tx => tx.category === txFilterCategory);
+    if (txSearch.trim()) {
+      const q = txSearch.trim().toLowerCase();
+      txs = txs.filter(tx =>
+        (tx.merchant_name || '').toLowerCase().includes(q) ||
+        (tx.description || '').toLowerCase().includes(q) ||
+        (tx.category || '').toLowerCase().includes(q)
+      );
+    }
     switch (txSortBy) {
       case 'date_asc':    return txs.sort((a, b) => new Date(a.transaction_date) - new Date(b.transaction_date));
       case 'amount_desc': return txs.sort((a, b) => parseFloat(b.amount) - parseFloat(a.amount));
@@ -354,7 +470,7 @@ export default function App() {
       case 'category':    return txs.sort((a, b) => (a.category || '').localeCompare(b.category || ''));
       default:            return txs.sort((a, b) => new Date(b.transaction_date) - new Date(a.transaction_date));
     }
-  }, [transactions, txSortBy, txFilterCategory]);
+  }, [transactions, txSortBy, txFilterCategory, txSearch]);
 
   // Insights dropdown
   const [insightsDropdownVisible, setInsightsDropdownVisible] = useState(false);
@@ -371,12 +487,26 @@ export default function App() {
   const [groupTxSort, setGroupTxSort] = useState('date_desc');
   const [groupTxFilterVisible, setGroupTxFilterVisible] = useState(false);
 
+  // ── Secure API call helper ───────────────────────────
+  const apiCall = useCallback((path, options = {}) => {
+    const token = authTokenRef.current;
+    return fetch(`${API_URL}${path}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        ...(options.headers || {}),
+      },
+    });
+  }, []);
+
   // ── Theme + persisted prefs ──────────────────────────
   useEffect(() => {
     AsyncStorage.getItem('customCategories').then(v => { if (v) { try { setCustomCategories(JSON.parse(v)); } catch {} } });
     AsyncStorage.multiGet([
       'themeBg', 'themeAccent', 'displayName',
       'notifOverall', 'notifDaily', 'notifWeekly', 'notifMonthly', 'notifBudget',
+      'currency', 'autoSyncHour', 'autoSyncEnabled', 'lastSyncTime',
     ]).then(pairs => {
       const m = Object.fromEntries(pairs.map(([k, v]) => [k, v]));
       if (m.themeBg) setThemeBg(m.themeBg);
@@ -387,6 +517,10 @@ export default function App() {
       if (m.notifWeekly !== null) setNotifWeekly(m.notifWeekly === 'true');
       if (m.notifMonthly !== null) setNotifMonthly(m.notifMonthly === 'true');
       if (m.notifBudget !== null) setNotifBudget(m.notifBudget === 'true');
+      if (m.currency) setCurrency(m.currency);
+      if (m.autoSyncHour) setAutoSyncHour(parseInt(m.autoSyncHour));
+      if (m.autoSyncEnabled) setAutoSyncEnabled(m.autoSyncEnabled === 'true');
+      if (m.lastSyncTime) setLastSyncTime(parseInt(m.lastSyncTime));
     });
   }, []);
 
@@ -434,6 +568,8 @@ export default function App() {
       const data = await res.json();
       if (!res.ok) { setError(data.error || 'Login failed'); return; }
       const uid = data.session.user.id;
+      const token = data.session.access_token;
+      if (token) { setAuthToken(token); authTokenRef.current = token; }
       const firstName = data.first_name || data.session.user.user_metadata?.full_name?.split(' ')[0] || email.split('@')[0];
       setUserId(uid); userIdRef.current = uid;
       setDisplayName(firstName);
@@ -471,6 +607,8 @@ export default function App() {
       const data = await res.json();
       if (!res.ok) { setError(data.error || 'Signup failed'); return; }
       const uid = data.user.id;
+      const token = data.session?.access_token;
+      if (token) { setAuthToken(token); authTokenRef.current = token; }
       setUserId(uid); userIdRef.current = uid;
       setDisplayName(firstName.trim());
       AsyncStorage.setItem('displayName', firstName.trim());
@@ -640,20 +778,21 @@ export default function App() {
     budgets.forEach(b => {
       const start = getPeriodStart(b.period || 'monthly', b.paycycle_start, b.paycycle_freq);
       const spent = transactions
-        .filter(tx => (tx.transaction_date || '') >= start && tx.category === b.category)
+        .filter(tx => (tx.transaction_date || '') >= start && tx.category === b.category && !isIncomeTx(tx))
         .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
       const limit = parseFloat(b.monthly_limit || 0);
       const pct = limit > 0 ? (spent / limit) * 100 : 0;
       const catLabel = PLAID_CATEGORIES.find(c => c.key === b.category)?.label || b.category;
-      if (pct >= 90) {
+      const thresholds = [
+        { pct: 100, title: `Budget Exceeded: ${catLabel}`, body: `You've spent $${fmtMoney(spent)} — $${fmtMoney(spent - limit)} over your $${fmtMoney(limit)} limit.` },
+        { pct: 90, title: `Budget Alert (90%): ${catLabel}`, body: `You've used 90% of your $${fmtMoney(limit)} ${catLabel} budget.` },
+        { pct: 75, title: `Budget Alert (75%): ${catLabel}`, body: `75% of your $${fmtMoney(limit)} ${catLabel} budget used.` },
+        { pct: 50, title: `Budget Midpoint: ${catLabel}`, body: `You've used half ($${fmtMoney(spent)}) of your $${fmtMoney(limit)} ${catLabel} budget.` },
+      ];
+      const triggered = thresholds.find(t => pct >= t.pct);
+      if (triggered) {
         Notifications.scheduleNotificationAsync({
-          content: {
-            title: pct >= 100 ? `Budget Exceeded: ${catLabel}` : `Budget Alert: ${catLabel}`,
-            body: pct >= 100
-              ? `You've spent $${fmtMoney(spent)} — $${fmtMoney(spent - limit)} over your $${fmtMoney(limit)} limit.`
-              : `You've used ${Math.round(pct)}% of your $${fmtMoney(limit)} budget ($${fmtMoney(spent)} spent).`,
-            sound: true,
-          },
+          content: { title: triggered.title, body: triggered.body, sound: true },
           trigger: null,
         }).catch(() => {});
       }
@@ -762,6 +901,56 @@ export default function App() {
     } catch (e) {
       setChatMessages(p => [...p, { id: (Date.now() + 1).toString(), role: 'assistant', text: `Connection error: ${e?.message || 'Could not reach server.'}` }]);
     } finally { setLoadingChat(false); }
+  };
+
+  // ── Voice Input ─────────────────────────────────────
+  const startRecording = async () => {
+    try {
+      const { granted } = await Audio.requestPermissionsAsync();
+      if (!granted) { Alert.alert('Permission Required', 'Microphone access is needed for voice input.'); return; }
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      const rec = new Audio.Recording();
+      await rec.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      await rec.startAsync();
+      setRecordingObj(rec);
+      setIsRecording(true);
+    } catch { Alert.alert('Error', 'Could not start recording.'); }
+  };
+
+  const stopRecording = async () => {
+    if (!recordingObj) return;
+    setIsRecording(false);
+    try {
+      await recordingObj.stopAndUnloadAsync();
+      const uri = recordingObj.getURI();
+      setRecordingObj(null);
+      if (!uri) return;
+      // Upload to backend for transcription
+      const formData = new FormData();
+      formData.append('audio', { uri, name: 'voice.m4a', type: 'audio/m4a' });
+      const res = await fetch(`${API_URL}/api/ai/transcribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'multipart/form-data' },
+        body: formData,
+      });
+      const data = await res.json();
+      if (data.text) setChatInput(prev => prev + (prev ? ' ' : '') + data.text);
+    } catch { Alert.alert('Error', 'Could not transcribe audio.'); }
+  };
+
+  const speakMessage = (msg) => {
+    if (speakingMsgId === msg.id) {
+      Speech.stop();
+      setSpeakingMsgId(null);
+    } else {
+      Speech.stop();
+      setSpeakingMsgId(msg.id);
+      Speech.speak(msg.text, {
+        onDone: () => setSpeakingMsgId(null),
+        onError: () => setSpeakingMsgId(null),
+        rate: 0.95,
+      });
+    }
   };
 
   // ── Goals / Groups fetch ─────────────────────────────
@@ -879,7 +1068,13 @@ export default function App() {
     ).join('\n');
     const csv = header + rows;
     try {
-      await Share.share({ message: csv, title: `WealthPal Transactions (${txsToExport.length})` });
+      const fileUri = FileSystem.cacheDirectory + `wealthpal_transactions_${Date.now()}.csv`;
+      await FileSystem.writeAsStringAsync(fileUri, csv, { encoding: FileSystem.EncodingType.UTF8 });
+      await Sharing.shareAsync(fileUri, {
+        mimeType: 'text/csv',
+        dialogTitle: `WealthPal Transactions (${txsToExport.length})`,
+        UTI: 'public.comma-separated-values-text',
+      });
     } catch { /* user dismissed */ }
   };
 
@@ -888,7 +1083,7 @@ export default function App() {
     const ranges = { '7d': 7, '30d': 30, '3m': 90, '6m': 180, 'all': 99999 };
     const days = ranges[insightsRange] || 30;
     const cutoff = Date.now() - days * 86400000;
-    let txs = transactions.filter(tx => new Date(tx.transaction_date).getTime() >= cutoff);
+    let txs = transactions.filter(tx => new Date(tx.transaction_date).getTime() >= cutoff && !isIncomeTx(tx));
     if (insightsCatFilter !== 'all') txs = txs.filter(tx => tx.category === insightsCatFilter);
     return txs;
   };
@@ -1060,7 +1255,7 @@ export default function App() {
   const renderDashboard = () => {
     const recentTx = transactions.slice(0, 3);
     const weekSpend = transactions
-      .filter(tx => (tx.transaction_date || '') >= new Date(Date.now() - 6 * 86400000).toISOString().split('T')[0])
+      .filter(tx => (tx.transaction_date || '') >= new Date(Date.now() - 6 * 86400000).toISOString().split('T')[0] && !isIncomeTx(tx))
       .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
     return (
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}
@@ -1071,7 +1266,7 @@ export default function App() {
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <View style={{ flex: 1 }}>
               <Text style={s.balanceLabel}>{selectedAccount ? selectedAccount.name.toUpperCase() : 'TOTAL BALANCE'}</Text>
-              <Text style={s.balanceAmt}>${fmtMoney(selectedAccount?.balances?.current || 0)}</Text>
+              <Text style={s.balanceAmt}>{fmtCurrency(selectedAccount?.balances?.current || 0)}</Text>
               {selectedAccount && <Text style={s.balanceSub}>{selectedAccount.subtype} · {selectedAccount.type}</Text>}
             </View>
             {(loadingAccounts || loadingTx) && (
@@ -1090,7 +1285,7 @@ export default function App() {
                 onPress={() => setSelectedAccount(acc)}
               >
                 <Text style={[s.acctPillText, selectedAccount?.account_id === acc.account_id && { color: '#fff' }]}>
-                  {acc.name} · ${fmtMoney(acc.balances?.current || 0)}
+                  {acc.name} · {fmtCurrency(acc.balances?.current || 0)}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -1109,16 +1304,33 @@ export default function App() {
           </View>
         )}
 
+        {/* Payday banner */}
+        {paydayInfo && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.surface, borderRadius: 14, padding: 14, marginBottom: 14, borderWidth: 1, borderColor: C.green + '55' }}>
+            <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: C.green, justifyContent: 'center', alignItems: 'center' }}>
+              <Text style={{ fontSize: 18 }}>💰</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: C.green, fontSize: 13, fontWeight: '700' }}>
+                {paydayInfo.daysUntil === 0 ? 'Payday is today!' : `${paydayInfo.daysUntil} day${paydayInfo.daysUntil === 1 ? '' : 's'} until payday`}
+              </Text>
+              <Text style={{ color: C.textMuted, fontSize: 11, marginTop: 2 }}>
+                Next: {fmtDate(paydayInfo.nextDate)} · every {paydayInfo.frequencyDays} days
+              </Text>
+            </View>
+          </View>
+        )}
+
         {/* Stats row */}
         <View style={s.statsRow}>
           <View style={s.statCard}>
             <Text style={s.statLabel}>30-Day Spend</Text>
-            <Text style={s.statVal}>${fmtMoney(monthlySpend)}</Text>
+            <Text style={s.statVal}>{fmtCurrency(monthlySpend)}</Text>
             <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 4 }}>Last 30 days</Text>
           </View>
           <View style={s.statCard}>
             <Text style={s.statLabel}>7-Day Spend</Text>
-            <Text style={s.statVal}>${fmtMoney(weekSpend)}</Text>
+            <Text style={s.statVal}>{fmtCurrency(weekSpend)}</Text>
             <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 4 }}>Last 7 days</Text>
           </View>
         </View>
@@ -1495,28 +1707,49 @@ export default function App() {
   const renderTransactions = () => (
     <View style={{ flex: 1 }}>
       <View style={s.txTopBar}>
-        <Text style={s.sectionTitle}>Transactions</Text>
-        <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-          {bulkSelectMode ? (
-            <>
-              <TouchableOpacity style={[s.syncBtn, { backgroundColor: C.accent + '22', borderColor: C.accent }]} onPress={exportCSV}>
-                <Text style={[s.syncText, { color: C.accent }]}>Export {selectedTxIds.size > 0 ? `(${selectedTxIds.size})` : 'All'}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={s.syncBtn} onPress={() => { setBulkSelectMode(false); setSelectedTxIds(new Set()); }}>
-                <Text style={s.syncText}>Done</Text>
-              </TouchableOpacity>
-            </>
-          ) : (
-            <>
-              <TouchableOpacity style={s.syncBtn} onPress={exportCSV}>
-                <Text style={s.syncText}>↓ CSV</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={s.syncBtn} onPress={syncTransactions} disabled={syncing || loadingTx}>
-                {syncing ? <ActivityIndicator size="small" color={C.accent} /> : <Text style={s.syncText}>↻ Sync</Text>}
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
+        {txSearchActive ? (
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TextInput
+              style={[s.chatInput, { flex: 1, marginBottom: 0, paddingVertical: 9, height: 40 }]}
+              placeholder="Search transactions..."
+              placeholderTextColor={C.textMuted}
+              value={txSearch}
+              onChangeText={setTxSearch}
+              autoFocus
+            />
+            <TouchableOpacity onPress={() => { setTxSearchActive(false); setTxSearch(''); }}>
+              <Text style={{ color: C.textMuted, fontSize: 13 }}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <>
+            <Text style={s.sectionTitle}>Transactions</Text>
+            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+              {bulkSelectMode ? (
+                <>
+                  <TouchableOpacity style={[s.syncBtn, { backgroundColor: C.accent + '22', borderColor: C.accent }]} onPress={exportCSV}>
+                    <Text style={[s.syncText, { color: C.accent }]}>Export {selectedTxIds.size > 0 ? `(${selectedTxIds.size})` : 'All'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={s.syncBtn} onPress={() => { setBulkSelectMode(false); setSelectedTxIds(new Set()); }}>
+                    <Text style={s.syncText}>Done</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <TouchableOpacity style={s.syncBtn} onPress={() => setTxSearchActive(true)}>
+                    <Text style={s.syncText}>🔍</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={s.syncBtn} onPress={exportCSV}>
+                    <Text style={s.syncText}>↓ CSV</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={s.syncBtn} onPress={syncTransactions} disabled={syncing || loadingTx}>
+                    {syncing ? <ActivityIndicator size="small" color={C.accent} /> : <Text style={s.syncText}>↻ Sync</Text>}
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          </>
+        )}
       </View>
       {bulkSelectMode && (
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 8, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border }}>
@@ -1751,13 +1984,15 @@ export default function App() {
     if (moreSection === 'budget') return renderBudgetSection();
     if (moreSection === 'networth') return renderNetWorth();
     if (moreSection === 'creditscore') return renderCreditScore();
+    if (moreSection === 'recurring') return renderRecurringSection();
 
     const items = [
       { id: 'goals', label: 'Goals', icon: '★', color: C.accent, desc: 'Track savings, debt payoff & streaks' },
       { id: 'groups', label: 'Groups', icon: '◈', color: C.blue, desc: 'Shared budgets & group goals' },
       { id: 'budget', label: 'Budget', icon: '◎', color: C.green, desc: 'Spending limits by category' },
+      { id: 'recurring', label: 'Recurring', icon: '↻', color: '#06b6d4', desc: 'Bills, subscriptions & repeating payments' },
       { id: 'networth', label: 'Net Worth', icon: '▲', color: C.amber, desc: 'Assets minus liabilities' },
-      { id: 'creditscore', label: 'Credit Score', icon: 'C', color: '#06b6d4', desc: 'Monitor your credit health' },
+      { id: 'creditscore', label: 'Credit Score', icon: 'C', color: '#f97316', desc: 'Monitor your credit health' },
     ];
     return (
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}>
@@ -1766,7 +2001,7 @@ export default function App() {
           <TouchableOpacity
             key={item.id}
             style={[s.txItem, { paddingVertical: 18 }]}
-            onPress={() => { if (item.id === 'groups') { fetchGroups(); } setMoreSection(item.id); }}
+            onPress={() => { if (item.id === 'groups') { fetchGroups(); } if (item.id === 'recurring') { fetchRecurring(); } setMoreSection(item.id); }}
             activeOpacity={0.75}
           >
             <Icon char={item.icon} color={item.color} size={46} radius={14} />
@@ -1926,13 +2161,13 @@ export default function App() {
         </View>
         {/* Global period selector */}
         <View style={{ flexDirection: 'row', backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border, overflow: 'hidden', marginBottom: 14 }}>
-          {['weekly','biweekly','monthly'].map(p => (
+          {['weekly','biweekly','monthly','paycycle'].map(p => (
             <TouchableOpacity
               key={p}
               onPress={() => setBudgetGlobalPeriod(p)}
               style={{ flex: 1, paddingVertical: 10, alignItems: 'center', backgroundColor: budgetGlobalPeriod === p ? C.accent : 'transparent' }}
             >
-              <Text style={{ color: budgetGlobalPeriod === p ? '#fff' : C.textSub, fontSize: 13, fontWeight: '700' }}>{periodLabels[p]}</Text>
+              <Text style={{ color: budgetGlobalPeriod === p ? '#fff' : C.textSub, fontSize: 12, fontWeight: '700' }}>{periodLabels[p]}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -1996,6 +2231,94 @@ export default function App() {
                       <Text style={{ color: C.red, fontSize: 12, fontWeight: '600' }}>Delete</Text>
                     </TouchableOpacity>
                   </View>
+                </View>
+              </View>
+            );
+          })
+        )}
+        <View style={{ height: 24 }} />
+      </ScrollView>
+    );
+  };
+
+  const renderRecurringSection = () => {
+    const FREQ_LABELS = { monthly: 'Monthly', weekly: 'Weekly', biweekly: 'Every 2 weeks', custom: 'Custom interval' };
+    const monthlyTotal = recurringTxs.reduce((s, r) => {
+      const amt = parseFloat(r.amount || 0);
+      if (r.frequency === 'monthly') return s + amt;
+      if (r.frequency === 'weekly') return s + amt * 4.33;
+      if (r.frequency === 'biweekly') return s + amt * 2.17;
+      if (r.frequency === 'custom' && r.interval_days) return s + amt * (30 / r.interval_days);
+      return s;
+    }, 0);
+    const getNextDate = (r) => {
+      const start = new Date(r.start_date || r.created_at || Date.now());
+      const today = new Date();
+      if (r.frequency === 'monthly') {
+        const next = new Date(today.getFullYear(), today.getMonth(), r.day_of_month || start.getDate());
+        if (next < today) next.setMonth(next.getMonth() + 1);
+        return next;
+      }
+      const days = r.frequency === 'weekly' ? 7 : r.frequency === 'biweekly' ? 14 : (r.interval_days || 30);
+      let d = new Date(start);
+      while (d < today) d = new Date(d.getTime() + days * 86400000);
+      return d;
+    };
+    return (
+      <ScrollView style={s.tab} showsVerticalScrollIndicator={false}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14, marginTop: 2, gap: 6 }}>
+          <TouchableOpacity onPress={() => setMoreSection(null)}>
+            <Text style={{ color: C.accent, fontSize: 13, fontWeight: '600' }}>‹ More</Text>
+          </TouchableOpacity>
+          <Text style={{ color: C.textMuted, fontSize: 13 }}>/</Text>
+          <Text style={{ color: C.text, fontSize: 16, fontWeight: '700', flex: 1 }}>Recurring</Text>
+          <TouchableOpacity style={s.syncBtn} onPress={() => { setNewRecurring({ name: '', amount: '', category: 'OTHER', frequency: 'monthly', day_of_month: 1, interval_days: 30, start_date: new Date().toISOString().split('T')[0] }); setAddRecurringVisible(true); }}>
+            <Text style={s.syncText}>+ Add</Text>
+          </TouchableOpacity>
+        </View>
+
+        {recurringTxs.length > 0 && (
+          <View style={{ backgroundColor: C.surface, borderRadius: 14, padding: 14, marginBottom: 14 }}>
+            <Text style={{ color: C.textMuted, fontSize: 11, fontWeight: '600' }}>MONTHLY TOTAL</Text>
+            <Text style={{ color: C.red, fontSize: 26, fontWeight: '800' }}>{fmtCurrency(monthlyTotal)}</Text>
+            <Text style={{ color: C.textMuted, fontSize: 11, marginTop: 4 }}>Estimated per month</Text>
+          </View>
+        )}
+
+        {recurringTxs.length === 0 ? (
+          <View style={[s.connectCard, { alignItems: 'center', paddingVertical: 40 }]}>
+            <Icon char="↻" color={'#06b6d4'} size={52} radius={16} />
+            <Text style={[s.emptyTitle, { marginTop: 16 }]}>No recurring transactions</Text>
+            <Text style={[s.emptyText, { marginBottom: 20 }]}>Add subscriptions, bills, and repeating payments to track your fixed costs.</Text>
+            <TouchableOpacity style={s.btn} onPress={() => { setNewRecurring({ name: '', amount: '', category: 'OTHER', frequency: 'monthly', day_of_month: 1, interval_days: 30, start_date: new Date().toISOString().split('T')[0] }); setAddRecurringVisible(true); }}>
+              <Text style={s.btnText}>Add First Recurring</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          recurringTxs.map(r => {
+            const nextDate = getNextDate(r);
+            const daysUntil = Math.round((nextDate.getTime() - Date.now()) / 86400000);
+            return (
+              <View key={r.id} style={{ backgroundColor: C.surface, borderRadius: 14, marginBottom: 10, padding: 14 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                  <CatIcon category={r.category || 'OTHER'} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: C.text, fontSize: 14, fontWeight: '700' }}>{r.name}</Text>
+                    <Text style={{ color: C.textSub, fontSize: 12, marginTop: 2 }}>
+                      {FREQ_LABELS[r.frequency] || r.frequency} · {fmtCurrency(r.amount)}
+                    </Text>
+                    <Text style={{ color: daysUntil <= 3 ? C.red : daysUntil <= 7 ? C.amber : C.textMuted, fontSize: 11, marginTop: 2 }}>
+                      Next: {fmtDate(nextDate.toISOString())} ({daysUntil === 0 ? 'today' : `${daysUntil}d`})
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={async () => {
+                      await fetch(`${API_URL}/api/recurring/${r.id}`, { method: 'DELETE' });
+                      fetchRecurring();
+                    }}
+                  >
+                    <Text style={{ color: C.red, fontSize: 12, fontWeight: '600' }}>✕</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
             );
@@ -2725,7 +3048,16 @@ export default function App() {
         showsVerticalScrollIndicator={false}
         renderItem={({ item }) => (
           <View style={[s.bubble, item.role === 'user' ? s.userBubble : s.aiBubble]}>
-            {item.role === 'assistant' && <Text style={s.bubbleName}>WealthPal AI</Text>}
+            {item.role === 'assistant' && (
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <Text style={s.bubbleName}>WealthPal AI</Text>
+                <TouchableOpacity onPress={() => speakMessage(item)} style={{ padding: 4 }}>
+                  <Text style={{ fontSize: 13, color: speakingMsgId === item.id ? C.accent : C.textMuted }}>
+                    {speakingMsgId === item.id ? '⏹' : '🔊'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
             <Text style={[s.bubbleText, item.role === 'user' && { color: '#fff' }]}>{item.text}</Text>
           </View>
         )}
@@ -2737,13 +3069,21 @@ export default function App() {
         </View>
       )}
       <View style={s.chatBar}>
+        <TouchableOpacity
+          onPress={isRecording ? stopRecording : startRecording}
+          style={{ paddingHorizontal: 10, justifyContent: 'center', alignItems: 'center' }}
+        >
+          <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: isRecording ? C.red : C.surface2, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: isRecording ? C.red : C.border }}>
+            <Text style={{ fontSize: 16 }}>{isRecording ? '⏹' : '🎙'}</Text>
+          </View>
+        </TouchableOpacity>
         <TextInput
           style={s.chatInput}
           placeholder="Ask about your finances..."
           placeholderTextColor={C.textMuted}
           value={chatInput}
           onChangeText={setChatInput}
-          editable={!loadingChat}
+          editable={!loadingChat && !isRecording}
           multiline
           maxLength={500}
         />
@@ -2882,11 +3222,6 @@ export default function App() {
               <Text style={s.chevron}>›</Text>
             </TouchableOpacity>
             <View style={s.drawerRow}>
-              <Icon char="ID" color={C.green} size={32} />
-              <Text style={[s.drawerRowText, { flex: 1, marginLeft: 12 }]}>Face ID / Biometrics</Text>
-              <Switch value={biometrics} onValueChange={setBiometrics} trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff" />
-            </View>
-            <View style={s.drawerRow}>
               <Icon char="◱" color={C.blue} size={32} />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={s.drawerRowText}>Android Home Widget</Text>
@@ -2899,16 +3234,29 @@ export default function App() {
                 thumbColor="#fff"
               />
             </View>
-            <TouchableOpacity style={s.drawerRow}>
-              <Icon char="P" color={C.textSub} size={32} />
-              <Text style={[s.drawerRowText, { flex: 1, marginLeft: 12 }]}>Privacy & Security</Text>
-              <Text style={s.chevron}>›</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={s.drawerRow}>
-              <Icon char="$" color={C.green} size={32} />
+            <TouchableOpacity
+              style={s.drawerRow}
+              onPress={() => { closeDrawer(); setTimeout(() => setCurrencyVisible(true), 300); }}
+            >
+              <Icon char={currencySymbol[0] || '$'} color={C.green} size={32} />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={s.drawerRowText}>Currency</Text>
-                <Text style={s.drawerRowSub}>USD · US Dollar</Text>
+                <Text style={s.drawerRowSub}>{currency} · {CURRENCIES.find(c => c.code === currency)?.name || 'US Dollar'}</Text>
+              </View>
+              <Text style={s.chevron}>›</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={s.drawerRow}
+              onPress={() => { closeDrawer(); setTimeout(() => setAutoSyncTimeVisible(true), 300); }}
+            >
+              <Icon char="⏰" color={C.amber} size={32} />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={s.drawerRowText}>Auto Sync</Text>
+                <Text style={s.drawerRowSub}>
+                  {autoSyncEnabled
+                    ? `Daily at ${autoSyncHour === 0 ? '12:00 AM' : autoSyncHour < 12 ? `${autoSyncHour}:00 AM` : autoSyncHour === 12 ? '12:00 PM' : `${autoSyncHour - 12}:00 PM`}`
+                    : 'Tap to schedule daily sync'}
+                </Text>
               </View>
               <Text style={s.chevron}>›</Text>
             </TouchableOpacity>
@@ -2937,7 +3285,10 @@ export default function App() {
           {/* Support */}
           <View style={s.drawerGroup}>
             <Text style={s.drawerGroupLabel}>Support</Text>
-            <TouchableOpacity style={s.drawerRow}>
+            <TouchableOpacity
+              style={s.drawerRow}
+              onPress={() => { closeDrawer(); setTimeout(() => setHelpVisible(true), 300); }}
+            >
               <Icon char="?" color={C.blue} size={32} />
               <Text style={[s.drawerRowText, { flex: 1, marginLeft: 12 }]}>Help & FAQ</Text>
               <Text style={s.chevron}>›</Text>
@@ -3227,6 +3578,26 @@ export default function App() {
               }}
             >
               {savingTx ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Save Changes</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.btn, { backgroundColor: '#06b6d4', marginTop: 0 }]}
+              onPress={() => {
+                setEditTxVisible(false);
+                setTimeout(() => {
+                  setNewRecurring({
+                    name: editTxFields.merchant_name || '',
+                    amount: String(editTxFields.amount || ''),
+                    category: editTxFields.category || 'OTHER',
+                    frequency: 'monthly',
+                    day_of_month: new Date(editTxFields.transaction_date || Date.now()).getDate(),
+                    interval_days: 30,
+                    start_date: editTxFields.transaction_date || new Date().toISOString().split('T')[0],
+                  });
+                  setAddRecurringVisible(true);
+                }, 300);
+              }}
+            >
+              <Text style={s.btnText}>↻ Mark as Recurring</Text>
             </TouchableOpacity>
             <TouchableOpacity style={s.linkRow} onPress={() => setEditTxVisible(false)}><Text style={s.linkText}>Cancel</Text></TouchableOpacity>
           </View>
@@ -3713,6 +4084,180 @@ export default function App() {
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
+      </Modal>
+
+      {/* Currency Modal */}
+      <Modal visible={currencyVisible} animationType="slide" transparent onRequestClose={() => setCurrencyVisible(false)}>
+        <View style={s.modalOverlay}>
+          <View style={s.modalCard}>
+            <Text style={s.modalTitle}>Select Currency</Text>
+            <Text style={{ color: C.textSub, fontSize: 13, marginBottom: 16 }}>All amounts will display in your selected currency.</Text>
+            {CURRENCIES.map(c => (
+              <TouchableOpacity
+                key={c.code}
+                onPress={() => {
+                  setCurrency(c.code);
+                  AsyncStorage.setItem('currency', c.code);
+                  setCurrencyVisible(false);
+                }}
+                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: C.border }}
+              >
+                <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: currency === c.code ? C.accent : C.surface2, justifyContent: 'center', alignItems: 'center', marginRight: 14 }}>
+                  <Text style={{ color: currency === c.code ? '#fff' : C.textSub, fontSize: 16, fontWeight: '700' }}>{c.symbol}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: C.text, fontSize: 15, fontWeight: currency === c.code ? '700' : '400' }}>{c.name}</Text>
+                  <Text style={{ color: C.textMuted, fontSize: 12 }}>{c.code}</Text>
+                </View>
+                {currency === c.code && <Text style={{ color: C.accent, fontSize: 18 }}>✓</Text>}
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity style={[s.linkRow, { marginTop: 8 }]} onPress={() => setCurrencyVisible(false)}>
+              <Text style={s.linkText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Help & FAQ Modal */}
+      <Modal visible={helpVisible} animationType="slide" transparent onRequestClose={() => setHelpVisible(false)}>
+        <View style={s.modalOverlay}>
+          <View style={[s.modalCard, { maxHeight: '85%' }]}>
+            <Text style={s.modalTitle}>Help & FAQ</Text>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {[
+                { q: 'How do I connect my bank?', a: 'Tap the ⚙ gear icon → Connect Bank. This is a Premium feature that uses Plaid to securely link your accounts.' },
+                { q: 'How does the AI work?', a: 'The AI uses your real transaction history to answer financial questions. Free users get 6 requests per 12 hours; Premium is unlimited.' },
+                { q: 'Why are some transactions income?', a: 'WealthPal automatically excludes income (payroll, transfers in) from spending totals. You can verify categories in the Transactions tab.' },
+                { q: 'How is payday detected?', a: 'The app analyzes patterns in your income transactions to estimate when your next payday is. It appears as a banner on the Home tab.' },
+                { q: 'What is the Paycycle budget period?', a: 'Paycycle resets your budget tracking at the start of each pay period, so your limits match your actual income cycle.' },
+                { q: 'How does auto sync work?', a: 'Set a daily sync time in Settings → Auto Sync. The app syncs once per day at that hour. There is a 23-hour lockout to prevent abuse.' },
+                { q: 'How do I export transactions?', a: 'In the Transactions tab, tap ↓ CSV. The app creates a real CSV file and lets you save or share it.' },
+                { q: 'Can I use voice to talk to the AI?', a: 'Yes! Tap the 🎙 microphone button in the AI chat. Speak your question and it will be transcribed automatically.' },
+                { q: 'What are Recurring Transactions?', a: 'Under More → Recurring, you can track bills and subscriptions. You can also mark any transaction as recurring from its edit screen.' },
+                { q: 'How do Groups work?', a: 'Groups let you share transactions and budgets with family or roommates. Each member controls what they share.' },
+              ].map((item, i) => (
+                <View key={i} style={{ marginBottom: 18 }}>
+                  <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>Q: {item.q}</Text>
+                  <Text style={{ color: C.textSub, fontSize: 13, lineHeight: 20 }}>{item.a}</Text>
+                </View>
+              ))}
+              <View style={{ backgroundColor: C.surface, borderRadius: 12, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: C.border }}>
+                <Text style={{ color: C.textSub, fontSize: 13, fontWeight: '600', marginBottom: 4 }}>Still need help?</Text>
+                <Text style={{ color: C.text, fontSize: 14, fontWeight: '700' }}>addga04@gmail.com</Text>
+                <Text style={{ color: C.textMuted, fontSize: 12, marginTop: 4 }}>We typically respond within 24 hours.</Text>
+              </View>
+            </ScrollView>
+            <TouchableOpacity style={s.btn} onPress={() => setHelpVisible(false)}>
+              <Text style={s.btnText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Auto Sync Time Picker Modal */}
+      <Modal visible={autoSyncTimeVisible} animationType="slide" transparent onRequestClose={() => setAutoSyncTimeVisible(false)}>
+        <View style={s.modalOverlay}>
+          <View style={s.modalCard}>
+            <Text style={s.modalTitle}>Auto Sync Schedule</Text>
+            <Text style={{ color: C.textSub, fontSize: 13, marginBottom: 16 }}>
+              Transactions sync automatically once per day at your chosen hour. You cannot manually re-sync within 23 hours of the last auto-sync.
+            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+              <Text style={{ color: C.text, fontSize: 14, fontWeight: '600' }}>Enable Auto Sync</Text>
+              <Switch
+                value={autoSyncEnabled}
+                onValueChange={v => { setAutoSyncEnabled(v); AsyncStorage.setItem('autoSyncEnabled', String(v)); }}
+                trackColor={{ false: C.border, true: C.accent }}
+                thumbColor="#fff"
+              />
+            </View>
+            {autoSyncEnabled && (
+              <>
+                <Text style={[s.label, { marginBottom: 10 }]}>Sync Hour</Text>
+                <ScrollView style={{ maxHeight: 220 }} showsVerticalScrollIndicator={false}>
+                  {Array.from({ length: 24 }, (_, h) => {
+                    const label = h === 0 ? '12:00 AM' : h < 12 ? `${h}:00 AM` : h === 12 ? '12:00 PM' : `${h - 12}:00 PM`;
+                    return (
+                      <TouchableOpacity
+                        key={h}
+                        onPress={() => { setAutoSyncHour(h); AsyncStorage.setItem('autoSyncHour', String(h)); }}
+                        style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: C.border }}
+                      >
+                        <Text style={{ color: autoSyncHour === h ? C.accent : C.text, fontSize: 15, fontWeight: autoSyncHour === h ? '700' : '400' }}>{label}</Text>
+                        {autoSyncHour === h && <Text style={{ color: C.accent }}>✓</Text>}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </>
+            )}
+            {lastSyncTime ? (
+              <Text style={{ color: C.textMuted, fontSize: 12, marginTop: 12 }}>
+                Last sync: {new Date(lastSyncTime).toLocaleString()}
+              </Text>
+            ) : null}
+            <TouchableOpacity style={[s.btn, { marginTop: 16 }]} onPress={() => setAutoSyncTimeVisible(false)}>
+              <Text style={s.btnText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Add Recurring Transaction Modal */}
+      <Modal visible={addRecurringVisible} animationType="slide" transparent onRequestClose={() => setAddRecurringVisible(false)}>
+        <View style={s.modalOverlay}>
+          <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end' }}>
+            <View style={s.modalCard}>
+              <Text style={s.modalTitle}>Add Recurring</Text>
+              <Text style={s.label}>Name</Text>
+              <TextInput style={s.input} placeholder="e.g. Netflix, Rent, Car Payment" placeholderTextColor={C.textMuted} value={newRecurring.name} onChangeText={v => setNewRecurring(p => ({ ...p, name: v }))} />
+              <Text style={s.label}>Amount ($)</Text>
+              <TextInput style={s.input} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={C.textMuted} value={newRecurring.amount} onChangeText={v => setNewRecurring(p => ({ ...p, amount: v }))} />
+              <Text style={s.label}>Frequency</Text>
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 18 }}>
+                {[['monthly','Monthly'],['weekly','Weekly'],['biweekly','Biweekly'],['custom','Custom']].map(([k, l]) => (
+                  <TouchableOpacity key={k} onPress={() => setNewRecurring(p => ({ ...p, frequency: k }))} style={{ flex: 1, paddingVertical: 9, borderRadius: 10, alignItems: 'center', backgroundColor: newRecurring.frequency === k ? C.accent : C.surface, borderWidth: 1, borderColor: newRecurring.frequency === k ? C.accent : C.border }}>
+                    <Text style={{ color: newRecurring.frequency === k ? '#fff' : C.textSub, fontSize: 12, fontWeight: '600' }}>{l}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              {newRecurring.frequency === 'monthly' && (
+                <>
+                  <Text style={s.label}>Day of Month</Text>
+                  <TextInput style={s.input} keyboardType="number-pad" placeholder="1-28" placeholderTextColor={C.textMuted} value={String(newRecurring.day_of_month)} onChangeText={v => setNewRecurring(p => ({ ...p, day_of_month: parseInt(v) || 1 }))} />
+                </>
+              )}
+              {newRecurring.frequency === 'custom' && (
+                <>
+                  <Text style={s.label}>Every X Days</Text>
+                  <TextInput style={s.input} keyboardType="number-pad" placeholder="e.g. 7, 14, 30" placeholderTextColor={C.textMuted} value={String(newRecurring.interval_days)} onChangeText={v => setNewRecurring(p => ({ ...p, interval_days: parseInt(v) || 7 }))} />
+                </>
+              )}
+              <Text style={s.label}>Start Date (YYYY-MM-DD)</Text>
+              <TextInput style={s.input} placeholder={new Date().toISOString().split('T')[0]} placeholderTextColor={C.textMuted} value={newRecurring.start_date} onChangeText={v => setNewRecurring(p => ({ ...p, start_date: v }))} />
+              <TouchableOpacity
+                style={[s.btn, !newRecurring.name.trim() && s.btnOff]}
+                disabled={!newRecurring.name.trim()}
+                onPress={async () => {
+                  try {
+                    await fetch(`${API_URL}/api/recurring`, {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ user_id: userId, ...newRecurring, amount: parseFloat(newRecurring.amount) || 0 }),
+                    });
+                    setAddRecurringVisible(false);
+                    fetchRecurring();
+                  } catch {}
+                }}
+              >
+                <Text style={s.btnText}>Add Recurring</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={s.linkRow} onPress={() => setAddRecurringVisible(false)}>
+                <Text style={s.linkText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
       </Modal>
 
     </SafeAreaView>

@@ -3,10 +3,14 @@ dotenv.config();
 
 import express, { Express, Request, Response } from "express";
 import cors from "cors";
+import multer from "multer";
+import fs from "fs";
 import supabase from "./supabase";
 import * as plaidService from "./plaidService";
 import * as openaiService from "./openaiService";
 import * as auth from "./auth";
+
+const upload = multer({ dest: "/tmp/wealthpal-audio/" });
 
 const app: Express = express();
 const PORT = process.env.PORT || 3000;
@@ -699,6 +703,69 @@ app.delete("/api/budgets/:budgetId", async (req: Request, res: Response) => {
     const { error } = await supabase.from("budgets").delete().eq("id", req.params.budgetId);
     if (error) throw error;
     res.json({ message: "Budget deleted" });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+// ============================================
+// VOICE TRANSCRIPTION (Whisper)
+// ============================================
+app.post("/api/ai/transcribe", upload.single("audio"), async (req: Request, res: Response) => {
+  if (!req.file) return res.status(400).json({ error: "No audio file uploaded" });
+  try {
+    const fileStream = fs.createReadStream(req.file.path);
+    (fileStream as any).name = req.file.originalname || "audio.m4a";
+    const text = await openaiService.transcribeAudio(fileStream);
+    fs.unlink(req.file.path, () => {});
+    res.json({ text });
+  } catch (e: any) {
+    fs.unlink(req.file!.path, () => {});
+    res.status(500).json({ error: e?.message || "Transcription failed" });
+  }
+});
+
+// ============================================
+// RECURRING TRANSACTIONS ROUTES
+// ============================================
+app.get("/api/recurring/:userId", async (req: Request, res: Response) => {
+  try {
+    const { data, error } = await supabase
+      .from("recurring_transactions")
+      .select("*")
+      .eq("user_id", req.params.userId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    res.json({ recurring: data || [] });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+app.post("/api/recurring", async (req: Request, res: Response) => {
+  try {
+    const { user_id, name, amount, category, frequency, day_of_month, interval_days, start_date } = req.body;
+    const { data, error } = await supabase
+      .from("recurring_transactions")
+      .insert([{ user_id, name, amount, category: category || "OTHER", frequency: frequency || "monthly", day_of_month: day_of_month || 1, interval_days: interval_days || 30, start_date }])
+      .select();
+    if (error) throw error;
+    res.json({ recurring: data?.[0] });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+app.patch("/api/recurring/:id", async (req: Request, res: Response) => {
+  try {
+    const { error } = await supabase
+      .from("recurring_transactions")
+      .update({ ...req.body, updated_at: new Date().toISOString() })
+      .eq("id", req.params.id);
+    if (error) throw error;
+    res.json({ message: "Updated" });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+app.delete("/api/recurring/:id", async (req: Request, res: Response) => {
+  try {
+    const { error } = await supabase.from("recurring_transactions").delete().eq("id", req.params.id);
+    if (error) throw error;
+    res.json({ message: "Deleted" });
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
