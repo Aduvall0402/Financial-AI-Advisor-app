@@ -295,6 +295,24 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "User ID and message required" });
     }
 
+    // Check subscription and rate limit for free users
+    const { data: userRow } = await supabase.from("users").select("is_subscribed").eq("id", userId).single();
+    const isSubscribed = userRow?.is_subscribed === true;
+
+    if (!isSubscribed) {
+      const windowStart = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+      const { count } = await supabase
+        .from("ai_usage")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .gte("created_at", windowStart);
+      if ((count || 0) >= 6) {
+        return res.status(429).json({ error: "Free plan limit reached (6 AI requests per 12 hours). Upgrade to WealthPal Premium for unlimited access.", rate_limited: true });
+      }
+      // Log this request
+      try { await supabase.from("ai_usage").insert([{ user_id: userId }]); } catch { /* best-effort */ }
+    }
+
     // Use the client's local date if sent and valid; fall back to UTC server date
     const rawToday: string = req.body.today || "";
     const todayStr: string = /^\d{4}-\d{2}-\d{2}$/.test(rawToday) ? rawToday : new Date().toISOString().split("T")[0];
@@ -425,6 +443,17 @@ app.get("/api/ai/notification-summary/:userId", async (req: Request, res: Respon
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "Failed to generate summary" });
   }
+});
+
+// ============================================
+// SUBSCRIPTION ROUTE
+// ============================================
+
+app.get("/api/users/:userId/subscription", async (req: Request, res: Response) => {
+  try {
+    const { data } = await supabase.from("users").select("is_subscribed").eq("id", req.params.userId).single();
+    res.json({ is_subscribed: data?.is_subscribed === true });
+  } catch { res.json({ is_subscribed: false }); }
 });
 
 // ============================================
