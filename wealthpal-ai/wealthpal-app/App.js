@@ -14,12 +14,21 @@ import * as Sharing from 'expo-sharing';
 import * as Speech from 'expo-speech';
 import { Audio } from 'expo-av';
 
-// Categories that represent income/deposits — exclude from all spending calculations
+// Categories to exclude from all spending calculations (income, transfers, non-purchase flows)
 const INCOME_CATEGORIES = new Set([
-  'INCOME', 'TRANSFER_IN', 'Income', 'Transfer In', 'Payroll', 'PAYROLL',
-  'INTEREST_EARNED', 'Interest', 'Refund', 'REFUND', 'LOAN_PROCEEDS',
+  'INCOME', 'TRANSFER_IN', 'TRANSFER_OUT', 'TRANSFER',
+  'Income', 'Transfer In', 'Transfer Out', 'Transfer',
+  'Payroll', 'PAYROLL', 'INTEREST_EARNED', 'Interest',
+  'Refund', 'REFUND', 'LOAN_PROCEEDS',
 ]);
-const isIncomeTx = (tx) => INCOME_CATEGORIES.has(tx.category) || INCOME_CATEGORIES.has(tx.category?.toUpperCase?.());
+const isIncomeTx = (tx) => INCOME_CATEGORIES.has(tx.category) || INCOME_CATEGORIES.has((tx.category || '').toUpperCase());
+
+// Categories to additionally exclude from "largest purchase" (fixed costs / non-discretionary)
+const SKIP_LARGEST_PURCHASE = new Set([
+  'TRANSFER_OUT', 'TRANSFER_IN', 'TRANSFER', 'Transfer Out', 'Transfer In', 'Transfer',
+  'LOAN_PAYMENT', 'LOAN_PAYMENTS', 'Loan Payments', 'PAYMENT',
+]);
+const isSkipLargest = (tx) => isIncomeTx(tx) || SKIP_LARGEST_PURCHASE.has(tx.category) || SKIP_LARGEST_PURCHASE.has((tx.category || '').toUpperCase());
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({ shouldShowAlert: true, shouldPlaySound: true, shouldSetBadge: false }),
@@ -391,6 +400,7 @@ export default function App() {
 
   // Voice input
   const [isRecording, setIsRecording] = useState(false);
+  const [transcribingVoice, setTranscribingVoice] = useState(false);
   const [recordingObj, setRecordingObj] = useState(null);
   const [speakingMsgId, setSpeakingMsgId] = useState(null);
 
@@ -883,10 +893,12 @@ export default function App() {
     setChatInput(''); setLoadingChat(true);
     // Send device's local date so server uses the user's actual calendar day
     const _d = new Date(); const localToday = `${_d.getFullYear()}-${String(_d.getMonth()+1).padStart(2,'0')}-${String(_d.getDate()).padStart(2,'0')}`;
+    // Include last 10 turns of conversation history for context
+    const history = chatMessages.slice(-10).map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text }));
     try {
       const res = await fetch(`${API_URL}/api/ai/chat`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, message: msg, today: localToday }),
+        body: JSON.stringify({ userId, message: msg, today: localToday, history }),
       });
       const data = await res.json();
       if (res.status === 429 && data.rate_limited) {
@@ -920,12 +932,12 @@ export default function App() {
   const stopRecording = async () => {
     if (!recordingObj) return;
     setIsRecording(false);
+    setTranscribingVoice(true);
     try {
       await recordingObj.stopAndUnloadAsync();
       const uri = recordingObj.getURI();
       setRecordingObj(null);
-      if (!uri) return;
-      // Upload to backend for transcription
+      if (!uri) { setTranscribingVoice(false); return; }
       const formData = new FormData();
       formData.append('audio', { uri, name: 'voice.m4a', type: 'audio/m4a' });
       const res = await fetch(`${API_URL}/api/ai/transcribe`, {
@@ -934,8 +946,22 @@ export default function App() {
         body: formData,
       });
       const data = await res.json();
-      if (data.text) setChatInput(prev => prev + (prev ? ' ' : '') + data.text);
-    } catch { Alert.alert('Error', 'Could not transcribe audio.'); }
+      setTranscribingVoice(false);
+      if (data.text) {
+        // Reveal words one by one for a natural typing effect
+        const words = data.text.trim().split(/\s+/);
+        const prefix = chatInput ? chatInput + ' ' : '';
+        let idx = 0;
+        const tick = setInterval(() => {
+          idx++;
+          setChatInput(prefix + words.slice(0, idx).join(' '));
+          if (idx >= words.length) clearInterval(tick);
+        }, 80);
+      }
+    } catch {
+      setTranscribingVoice(false);
+      Alert.alert('Error', 'Could not transcribe audio.');
+    }
   };
 
   const speakMessage = (msg) => {
@@ -1045,14 +1071,22 @@ export default function App() {
     const now = new Date();
     if (period === 'weekly') { const d = new Date(now); d.setDate(d.getDate() - 6); return d.toISOString().split('T')[0]; }
     if (period === 'biweekly') { const d = new Date(now); d.setDate(d.getDate() - 13); return d.toISOString().split('T')[0]; }
-    if (period === 'paycycle' && paycycleStart) {
-      const freqDays = paycycleFreq === 'weekly' ? 7 : paycycleFreq === 'biweekly' ? 14 : 30;
-      const anchor = new Date(paycycleStart);
-      const msPerCycle = freqDays * 86400000;
-      const elapsed = now.getTime() - anchor.getTime();
-      const cycleOffset = elapsed % msPerCycle;
-      const cycleStart = new Date(now.getTime() - cycleOffset);
-      return cycleStart.toISOString().split('T')[0];
+    if (period === 'paycycle') {
+      if (paycycleStart) {
+        const freqDays = paycycleFreq === 'weekly' ? 7 : paycycleFreq === 'biweekly' ? 14 : 30;
+        const anchor = new Date(paycycleStart);
+        const msPerCycle = freqDays * 86400000;
+        const elapsed = now.getTime() - anchor.getTime();
+        const cycleOffset = elapsed % msPerCycle;
+        const cycleStart = new Date(now.getTime() - cycleOffset);
+        return cycleStart.toISOString().split('T')[0];
+      }
+      // Fall back to auto-detected pay cycle if available
+      if (paydayInfo) {
+        const nextPayday = new Date(paydayInfo.nextDate + 'T00:00:00Z');
+        const cycleStart = new Date(nextPayday.getTime() - paydayInfo.frequencyDays * 86400000);
+        return cycleStart.toISOString().split('T')[0];
+      }
     }
     return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]; // monthly
   };
@@ -1475,7 +1509,7 @@ export default function App() {
     const chartData = chartRawData.map(v => Math.max(0.01, v));
     const total = filteredTx.reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
     const avg = filteredTx.length ? total / filteredTx.length : 0;
-    const maxTx = filteredTx.reduce((m, tx) => parseFloat(tx.amount) > parseFloat(m?.amount || 0) ? tx : m, null);
+    const maxTx = filteredTx.filter(tx => !isSkipLargest(tx)).reduce((m, tx) => parseFloat(tx.amount) > parseFloat(m?.amount || 0) ? tx : m, null);
     const merchantCount = {};
     filteredTx.forEach(tx => { const m = tx.merchant_name || 'Unknown'; merchantCount[m] = (merchantCount[m] || 0) + 1; });
     const topMerchant = Object.entries(merchantCount).sort(([,a],[,b]) => b - a)[0];
@@ -1669,7 +1703,7 @@ export default function App() {
                       <View style={[s.bar, { width: `${barPct}%`, backgroundColor: barColor }]} />
                     </View>
                     <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 4 }}>
-                      {catTxCount} tx · {pctOfBudget !== null
+                      {catTxCount} transaction{catTxCount !== 1 ? 's' : ''} · {pctOfBudget !== null
                         ? `${pctOfBudget}% of $${fmtMoney(budgetLimit)} budget`
                         : `${pctOfTotal}% of total · no budget set`}
                     </Text>
@@ -1956,7 +1990,7 @@ export default function App() {
             <Icon char="★" color={C.accent} size={52} radius={16} />
             <Text style={[s.emptyTitle, { marginTop: 16 }]}>No goals yet</Text>
             <Text style={[s.emptyText, { marginBottom: 20 }]}>Set debt payoff, savings, spending, or streak goals to stay on track.</Text>
-            <TouchableOpacity style={s.btn} onPress={() => { setNewGoal({}); setAddGoalUpdateMode('manual'); setAddGoalVisible(true); }}>
+            <TouchableOpacity style={[s.btn, { alignSelf: 'stretch' }]} onPress={() => { setNewGoal({}); setAddGoalUpdateMode('manual'); setAddGoalVisible(true); }}>
               <Text style={s.btnText}>Create First Goal</Text>
             </TouchableOpacity>
           </View>
@@ -2115,7 +2149,7 @@ export default function App() {
             <Icon char="★" color={C.accent} size={52} radius={16} />
             <Text style={[s.emptyTitle, { marginTop: 16 }]}>No goals yet</Text>
             <Text style={[s.emptyText, { marginBottom: 20 }]}>Set debt payoff, savings, spending, or streak goals to stay on track.</Text>
-            <TouchableOpacity style={s.btn} onPress={() => { setNewGoal({}); setAddGoalUpdateMode('manual'); setAddGoalVisible(true); }}>
+            <TouchableOpacity style={[s.btn, { alignSelf: 'stretch' }]} onPress={() => { setNewGoal({}); setAddGoalUpdateMode('manual'); setAddGoalVisible(true); }}>
               <Text style={s.btnText}>Create First Goal</Text>
             </TouchableOpacity>
           </View>
@@ -2195,7 +2229,7 @@ export default function App() {
             <Icon char="$" color={C.accent} size={52} radius={16} />
             <Text style={[s.emptyTitle, { marginTop: 16 }]}>No budgets yet</Text>
             <Text style={[s.emptyText, { marginBottom: 20 }]}>Set spending limits by category to track where your money goes.</Text>
-            <TouchableOpacity style={s.btn} onPress={() => { setEditingBudget(null); setNewBudgetCat(''); setNewBudgetLimit(''); setAddBudgetVisible(true); }}>
+            <TouchableOpacity style={[s.btn, { alignSelf: 'stretch' }]} onPress={() => { setEditingBudget(null); setNewBudgetCat(''); setNewBudgetLimit(''); setAddBudgetVisible(true); }}>
               <Text style={s.btnText}>Create First Budget</Text>
             </TouchableOpacity>
           </View>
@@ -2290,7 +2324,7 @@ export default function App() {
             <Icon char="↻" color={'#06b6d4'} size={52} radius={16} />
             <Text style={[s.emptyTitle, { marginTop: 16 }]}>No recurring transactions</Text>
             <Text style={[s.emptyText, { marginBottom: 20 }]}>Add subscriptions, bills, and repeating payments to track your fixed costs.</Text>
-            <TouchableOpacity style={s.btn} onPress={() => { setNewRecurring({ name: '', amount: '', category: 'OTHER', frequency: 'monthly', day_of_month: 1, interval_days: 30, start_date: new Date().toISOString().split('T')[0] }); setAddRecurringVisible(true); }}>
+            <TouchableOpacity style={[s.btn, { alignSelf: 'stretch' }]} onPress={() => { setNewRecurring({ name: '', amount: '', category: 'OTHER', frequency: 'monthly', day_of_month: 1, interval_days: 30, start_date: new Date().toISOString().split('T')[0] }); setAddRecurringVisible(true); }}>
               <Text style={s.btnText}>Add First Recurring</Text>
             </TouchableOpacity>
           </View>
@@ -2981,7 +3015,7 @@ export default function App() {
             <Icon char="$" color={C.accent} size={52} radius={16} />
             <Text style={[s.emptyTitle, { marginTop: 16 }]}>No budgets yet</Text>
             <Text style={[s.emptyText, { marginBottom: 20 }]}>Set spending limits by category to track where your money goes.</Text>
-            <TouchableOpacity style={s.btn} onPress={() => { setEditingBudget(null); setNewBudgetCat(''); setNewBudgetLimit(''); setAddBudgetVisible(true); }}>
+            <TouchableOpacity style={[s.btn, { alignSelf: 'stretch' }]} onPress={() => { setEditingBudget(null); setNewBudgetCat(''); setNewBudgetLimit(''); setAddBudgetVisible(true); }}>
               <Text style={s.btnText}>Create First Budget</Text>
             </TouchableOpacity>
           </View>
@@ -3049,14 +3083,7 @@ export default function App() {
         renderItem={({ item }) => (
           <View style={[s.bubble, item.role === 'user' ? s.userBubble : s.aiBubble]}>
             {item.role === 'assistant' && (
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                <Text style={s.bubbleName}>WealthPal AI</Text>
-                <TouchableOpacity onPress={() => speakMessage(item)} style={{ padding: 4 }}>
-                  <Text style={{ fontSize: 13, color: speakingMsgId === item.id ? C.accent : C.textMuted }}>
-                    {speakingMsgId === item.id ? '⏹' : '🔊'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
+              <Text style={s.bubbleName}>WealthPal AI</Text>
             )}
             <Text style={[s.bubbleText, item.role === 'user' && { color: '#fff' }]}>{item.text}</Text>
           </View>
@@ -3071,22 +3098,33 @@ export default function App() {
       <View style={s.chatBar}>
         <TouchableOpacity
           onPress={isRecording ? stopRecording : startRecording}
+          disabled={transcribingVoice}
           style={{ paddingHorizontal: 10, justifyContent: 'center', alignItems: 'center' }}
         >
           <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: isRecording ? C.red : C.surface2, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: isRecording ? C.red : C.border }}>
             <Text style={{ fontSize: 16 }}>{isRecording ? '⏹' : '🎙'}</Text>
           </View>
         </TouchableOpacity>
-        <TextInput
-          style={s.chatInput}
-          placeholder="Ask about your finances..."
-          placeholderTextColor={C.textMuted}
-          value={chatInput}
-          onChangeText={setChatInput}
-          editable={!loadingChat && !isRecording}
-          multiline
-          maxLength={500}
-        />
+        {isRecording ? (
+          <View style={[s.chatInput, { justifyContent: 'center' }]}>
+            <Text style={{ color: C.red, fontSize: 14, fontWeight: '600' }}>🎙 Listening...</Text>
+          </View>
+        ) : transcribingVoice ? (
+          <View style={[s.chatInput, { justifyContent: 'center' }]}>
+            <Text style={{ color: C.textMuted, fontSize: 14 }}>Transcribing...</Text>
+          </View>
+        ) : (
+          <TextInput
+            style={s.chatInput}
+            placeholder="Ask about your finances..."
+            placeholderTextColor={C.textMuted}
+            value={chatInput}
+            onChangeText={setChatInput}
+            editable={!loadingChat}
+            multiline
+            maxLength={500}
+          />
+        )}
         <TouchableOpacity
           style={[s.sendBtn, (!chatInput.trim() || loadingChat) && s.sendBtnOff]}
           onPress={sendChat}

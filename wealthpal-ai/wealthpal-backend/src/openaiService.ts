@@ -133,7 +133,8 @@ export async function chatWithAssistant(
     budgets_section?: string;
     total_transactions?: number;
     today?: string;
-  }
+  },
+  history?: Array<{ role: "user" | "assistant"; content: string }>
 ) {
   const accountsSection = financialSummary.accounts?.length
     ? financialSummary.accounts.map(a => `  - ${a.name} (${a.subtype}): $${a.balance.toFixed(2)}`).join("\n")
@@ -186,17 +187,14 @@ RULES — follow these strictly:
 9. If asked for projections or future estimates, base them on actual historical patterns from the data.`;
 
   try {
+    const priorMessages = (history || []).map(m => ({ role: m.role, content: m.content }));
+
     const response = await openai.chat.completions.create({
       model: process.env.OPENAI_MODEL || "gpt-4o-mini",
       messages: [
-        {
-          role: "system",
-          content: systemPrompt,
-        },
-        {
-          role: "user",
-          content: userMessage,
-        },
+        { role: "system", content: systemPrompt },
+        ...priorMessages,
+        { role: "user", content: userMessage },
       ],
       max_tokens: parseInt(process.env.OPENAI_MAX_TOKENS || "1000"),
     });

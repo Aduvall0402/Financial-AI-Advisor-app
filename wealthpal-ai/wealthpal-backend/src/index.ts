@@ -294,7 +294,7 @@ app.get("/api/ai/financial-summary/:userId", async (req: Request, res: Response)
 
 app.post("/api/ai/chat", async (req: Request, res: Response) => {
   try {
-    const { userId, message } = req.body;
+    const { userId, message, history } = req.body;
     if (!userId || !message) {
       return res.status(400).json({ error: "User ID and message required" });
     }
@@ -331,10 +331,18 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
 
     const txList = allTx || [];
 
+    // Exclude income and transfers from spending calculations
+    const NON_SPENDING = new Set([
+      'INCOME', 'TRANSFER_IN', 'TRANSFER_OUT', 'TRANSFER',
+      'INTEREST_EARNED', 'PAYROLL', 'REFUND', 'LOAN_PROCEEDS',
+    ]);
+    const isSpending = (t: any) => !NON_SPENDING.has((t.category || '').toUpperCase());
+    const spendingTx = txList.filter(isSpending);
+
     // Pre-compute spending windows — use (days-1) so "last N days" includes today as day 1
     const windowSpend = (days: number) => {
       const cutoff = new Date(todayDate.getTime() - (days - 1) * 86400000).toISOString().split("T")[0];
-      return txList.filter(t => t.transaction_date >= cutoff).reduce((s, t) => s + parseFloat(t.amount), 0);
+      return spendingTx.filter(t => t.transaction_date >= cutoff).reduce((s, t) => s + parseFloat(t.amount), 0);
     };
 
     const spending_7d  = windowSpend(7);
@@ -344,9 +352,9 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
     const spending_60d = windowSpend(60);
     const spending_90d = windowSpend(90);
 
-    // Category breakdown for 30d
+    // Category breakdown for 30d (spending only)
     const categoryMap: { [key: string]: number } = {};
-    txList.filter(t => t.transaction_date >= new Date(todayDate.getTime() - 30 * 86400000).toISOString().split("T")[0])
+    spendingTx.filter(t => t.transaction_date >= new Date(todayDate.getTime() - 30 * 86400000).toISOString().split("T")[0])
       .forEach(t => { categoryMap[t.category] = (categoryMap[t.category] || 0) + parseFloat(t.amount); });
     const top_categories = Object.entries(categoryMap)
       .map(([name, amount]) => ({ name, amount }))
@@ -406,7 +414,8 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
       today: todayStr,
     };
 
-    const response = await openaiService.chatWithAssistant(message, summary as any);
+    const safeHistory = Array.isArray(history) ? history.slice(-10) : [];
+    const response = await openaiService.chatWithAssistant(message, summary as any, safeHistory);
 
     try {
       await supabase.from("chat_messages").insert([
