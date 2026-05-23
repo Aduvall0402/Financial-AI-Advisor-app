@@ -37,16 +37,28 @@ app.post("/api/auth/signup", async (req: Request, res: Response) => {
     }
     const fn = firstName || (fullName ? fullName.split(" ")[0] : "");
     const ln = lastName || (fullName ? fullName.split(" ").slice(1).join(" ") : "");
-    const { user, error } = await auth.signupUser(email, password, fullName || `${fn} ${ln}`.trim());
+    const { user, session, needsVerification, error } = await auth.signupUser(email, password, fullName || `${fn} ${ln}`.trim());
     if (error) {
       return res.status(400).json({ error: (error as any).message || "Signup failed" });
     }
     if (user) {
       await auth.createUserProfile(user.id, email, fn, ln);
     }
-    res.json({ user, message: "Signup successful" });
+    res.json({ user, session, needs_verification: needsVerification, message: "Signup successful" });
   } catch (error) {
     res.status(500).json({ error: "Signup failed" });
+  }
+});
+
+app.post("/api/auth/resend-verification", async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "Email required" });
+    const { error } = await auth.resendVerification(email);
+    if (error) return res.status(400).json({ error: (error as any).message || "Failed to resend" });
+    res.json({ message: "Verification email sent" });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to resend verification" });
   }
 });
 
@@ -670,6 +682,17 @@ app.patch("/api/groups/:groupId/goals/:goalId", async (req: Request, res: Respon
     const { error } = await supabase.from("group_goals").update(req.body).eq("id", req.params.goalId);
     if (error) throw error;
     res.json({ message: "Goal updated" });
+  } catch (e: any) { res.status(500).json({ error: e?.message }); }
+});
+
+app.delete("/api/groups/:groupId", async (req: Request, res: Response) => {
+  try {
+    await supabase.from("group_members").delete().eq("group_id", req.params.groupId);
+    await supabase.from("group_goals").delete().eq("group_id", req.params.groupId);
+    await supabase.from("group_budgets").delete().eq("group_id", req.params.groupId);
+    const { error } = await supabase.from("groups").delete().eq("id", req.params.groupId);
+    if (error) throw error;
+    res.json({ message: "Group deleted" });
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 

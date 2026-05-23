@@ -1,18 +1,36 @@
+import { createClient } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
+
+// Anon client for auth flows that send emails (signUp, OTP)
+const supabaseAnon = createClient(
+  process.env.SUPABASE_URL || "https://nlizziqpifjnzzlsytwk.supabase.co",
+  process.env.SUPABASE_ANON_KEY || "",
+  { auth: { autoRefreshToken: false, persistSession: false } }
+);
 
 export async function signupUser(email: string, password: string, fullName?: string) {
   try {
-    const { data, error } = await supabase.auth.admin.createUser({
+    // Use anon client so Supabase sends the real confirmation email
+    const { data, error } = await supabaseAnon.auth.signUp({
       email,
       password,
-      email_confirm: true,
-      user_metadata: fullName ? { full_name: fullName } : {},
+      options: { data: fullName ? { full_name: fullName } : {} },
     });
-
     if (error) throw error;
-    return { user: data.user, error: null };
+    const needsVerification = !data.session;
+    return { user: data.user, session: data.session, needsVerification, error: null };
   } catch (error) {
-    return { user: null, error: error };
+    return { user: null, session: null, needsVerification: false, error };
+  }
+}
+
+export async function resendVerification(email: string) {
+  try {
+    const { error } = await supabaseAnon.auth.resend({ type: 'signup', email });
+    if (error) throw error;
+    return { error: null };
+  } catch (error) {
+    return { error };
   }
 }
 
