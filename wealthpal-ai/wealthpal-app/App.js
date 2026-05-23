@@ -231,7 +231,7 @@ export default function App() {
 
   // Chat
   const [chatMessages, setChatMessages] = useState([
-    { id: '0', role: 'assistant', text: "Hi! I'm your WealthPal AI assistant. Ask me anything about your finances!" },
+    { id: '0', role: 'assistant', text: "Hi! I'm your Finlit assistant. Ask me anything about your finances!" },
   ]);
   const [chatInput, setChatInput] = useState('');
   const [loadingChat, setLoadingChat] = useState(false);
@@ -290,7 +290,7 @@ export default function App() {
   const [tutorialVisible, setTutorialVisible] = useState(false);
   const [tutorialStep, setTutorialStep] = useState(0);
   const TUTORIAL_STEPS = [
-    { icon: '⌂', color: '#7c3aed', title: 'Welcome to WealthPal AI', body: 'Your smart financial companion. We\'ll walk you through the key features to get you started.' },
+    { icon: '⌂', color: '#7c3aed', title: 'Welcome to Finlit', body: 'Your smart financial companion. We\'ll walk you through the key features to get you started.' },
     { icon: 'B', color: '#3b82f6', title: 'Connect Your Bank', body: 'Tap the ⚙ gear icon in the top right and select "Connect Bank" to securely link your accounts via Plaid.' },
     { icon: '≡', color: '#10b981', title: 'View Transactions', body: 'The Txns tab shows all your transactions. Use Sort to organize by date, amount, or category. Tap any transaction to edit it.' },
     { icon: '◈', color: '#f59e0b', title: 'Get Insights', body: 'The Insights tab shows spending charts and breakdowns by category. Tap categories to filter the chart.' },
@@ -391,8 +391,10 @@ export default function App() {
   // Payday detection (auto from transactions)
   const [paydayInfo, setPaydayInfo] = useState(null); // { nextDate, daysUntil }
   // User-set payday preference
-  const [userPayday, setUserPayday] = useState(null); // { dayOfMonth: 1-28, frequency: 'weekly'|'biweekly'|'monthly' }
+  const [userPayday, setUserPayday] = useState(null); // { nextDate: 'YYYY-MM-DD', frequency: 'weekly'|'biweekly'|'monthly' }
   const [paydayModalVisible, setPaydayModalVisible] = useState(false);
+  const [paydayNextDate, setPaydayNextDate] = useState('');
+  const [paydayFreq, setPaydayFreq] = useState('biweekly');
   const [pendingVerifyEmail, setPendingVerifyEmail] = useState('');
   // Post-sync transaction review
   const [postSyncTxs, setPostSyncTxs] = useState([]);
@@ -697,7 +699,7 @@ export default function App() {
       AsyncStorage.removeItem('displayName');
       setTransactions([]); setAccounts([]); setSelectedAccount(null);
       setLinkedAccount(null); setAccountsError(false); setDashboardData(null);
-      setChatMessages([{ id: '0', role: 'assistant', text: "Hi! I'm your WealthPal AI assistant. Ask me anything about your finances!" }]);
+      setChatMessages([{ id: '0', role: 'assistant', text: "Hi! I'm your Finlit assistant. Ask me anything about your finances!" }]);
     }, 300);
   };
 
@@ -957,7 +959,7 @@ export default function App() {
       });
       const data = await res.json();
       if (res.status === 429 && data.rate_limited) {
-        setChatMessages(p => [...p, { id: (Date.now() + 1).toString(), role: 'assistant', text: 'You have reached the free plan limit (6 AI requests per 12 hours). Upgrade to WealthPal Premium for unlimited access.' }]);
+        setChatMessages(p => [...p, { id: (Date.now() + 1).toString(), role: 'assistant', text: 'You have reached the free plan limit (6 AI requests per 12 hours). Upgrade to Finlit Premium for unlimited access.' }]);
         setAiRequestsUsed(6);
       } else if (!res.ok) {
         setChatMessages(p => [...p, { id: (Date.now() + 1).toString(), role: 'assistant', text: `Error: ${data.error || 'Server error. Please try again.'}` }]);
@@ -1135,16 +1137,13 @@ export default function App() {
     if (period === 'biweekly') { const d = new Date(now); d.setDate(d.getDate() - 13); return d.toISOString().split('T')[0]; }
     if (period === 'paycycle') {
       // 1) User-set payday takes priority
-      if (userPayday) {
+      if (userPayday && userPayday.nextDate) {
         const freqDays = userPayday.frequency === 'weekly' ? 7 : userPayday.frequency === 'biweekly' ? 14 : 30;
-        // Find last payday anchor: most recent occurrence of dayOfMonth
-        const anchor = new Date(now.getFullYear(), now.getMonth(), userPayday.dayOfMonth);
-        if (anchor > now) anchor.setMonth(anchor.getMonth() - 1);
         const msPerCycle = freqDays * 86400000;
-        const elapsed = now.getTime() - anchor.getTime();
-        const cycleOffset = elapsed % msPerCycle;
-        const cycleStart = new Date(now.getTime() - cycleOffset);
-        return cycleStart.toISOString().split('T')[0];
+        // Walk backward from nextDate to find the most recent payday <= now
+        const anchor = new Date(userPayday.nextDate + 'T00:00:00');
+        while (anchor > now) anchor.setTime(anchor.getTime() - msPerCycle);
+        return anchor.toISOString().split('T')[0];
       }
       // 2) Budget-level paycycle_start override
       if (paycycleStart) {
@@ -1181,7 +1180,7 @@ export default function App() {
       await FileSystem.writeAsStringAsync(fileUri, csv, { encoding: FileSystem.EncodingType.UTF8 });
       await Sharing.shareAsync(fileUri, {
         mimeType: 'text/csv',
-        dialogTitle: `WealthPal Transactions (${txsToExport.length})`,
+        dialogTitle: `Finlit Transactions (${txsToExport.length})`,
         UTI: 'public.comma-separated-values-text',
       });
     } catch { /* user dismissed */ }
@@ -1209,63 +1208,49 @@ export default function App() {
     const txs = selectedCategory
       ? getFilteredTx().filter(tx => tx.category === selectedCategory)
       : getFilteredTx();
-    const incomeTxs = transactions.filter(tx => isIncomeTx(tx));
     const now = new Date();
-
-    const dayKey = (d) => {
-      const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
-      return `${y}-${m}-${day}`;
-    };
+    const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 
     if (insightsRange === '7d') {
-      const labels = [], data = [], incomeData = [];
+      const labels = [], data = [];
       for (let i = 6; i >= 0; i--) {
         const d = new Date(now); d.setDate(d.getDate() - i);
-        const key = dayKey(d);
         labels.push(`${d.getMonth()+1}/${d.getDate()}`);
-        data.push(txs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
-        incomeData.push(incomeTxs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
+        data.push(txs.filter(tx => tx.transaction_date === dayKey(d)).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
       }
-      return { labels, data, incomeData, scrollable: true };
+      return { labels, data: data.map(v => Math.max(0.01, v)), scrollable: false };
     }
 
     if (insightsRange === '30d') {
-      const labels = [], data = [], incomeData = [];
+      const labels = [], data = [];
       for (let i = 29; i >= 0; i--) {
         const d = new Date(now); d.setDate(d.getDate() - i);
-        const key = dayKey(d);
-        labels.push(`${d.getMonth()+1}/${d.getDate()}`);
-        data.push(txs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
-        incomeData.push(incomeTxs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
+        labels.push(i % 5 === 0 || i === 0 ? `${d.getMonth()+1}/${d.getDate()}` : '');
+        data.push(txs.filter(tx => tx.transaction_date === dayKey(d)).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
       }
-      return { labels, data, incomeData, scrollable: true };
+      return { labels, data: data.map(v => Math.max(0.01, v)), scrollable: true };
     }
 
     if (insightsRange === '3m' || insightsRange === '6m') {
       const count = insightsRange === '3m' ? 3 : 6;
-      const months = {}, incomeMonths = {}, labels = [];
+      const months = {}, labels = [];
       for (let i = count - 1; i >= 0; i--) {
         const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
         const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-        labels.push(MONTHS_SHORT[d.getMonth()]);
-        months[key] = 0; incomeMonths[key] = 0;
+        labels.push(MONTHS_SHORT[d.getMonth()]); months[key] = 0;
       }
       txs.forEach(tx => { const key = (tx.transaction_date || '').slice(0, 7); if (months[key] !== undefined) months[key] += parseFloat(tx.amount || 0); });
-      incomeTxs.forEach(tx => { const key = (tx.transaction_date || '').slice(0, 7); if (incomeMonths[key] !== undefined) incomeMonths[key] += parseFloat(tx.amount || 0); });
-      return { labels, data: Object.values(months), incomeData: Object.values(incomeMonths), scrollable: false };
+      return { labels, data: Object.values(months).map(v => Math.max(0.01, v)), scrollable: false };
     }
 
-    // 'all' — monthly buckets
-    if (!txs.length) return { labels: ['No data'], data: [0], incomeData: [0], scrollable: false };
-    const monthSet = {}, incomeSet = {};
+    if (!txs.length) return { labels: ['No data'], data: [0.01], scrollable: false };
+    const monthSet = {};
     txs.forEach(tx => { const key = (tx.transaction_date || '').slice(0, 7); if (key) monthSet[key] = (monthSet[key] || 0) + parseFloat(tx.amount || 0); });
-    incomeTxs.forEach(tx => { const key = (tx.transaction_date || '').slice(0, 7); if (key) incomeSet[key] = (incomeSet[key] || 0) + parseFloat(tx.amount || 0); });
     const sorted = Object.keys(monthSet).sort();
     return {
       labels: sorted.map(k => MONTHS_SHORT[parseInt(k.split('-')[1]) - 1]),
-      data: sorted.map(k => monthSet[k]),
-      incomeData: sorted.map(k => incomeSet[k] || 0),
-      scrollable: false,
+      data: sorted.map(k => Math.max(0.01, monthSet[k])),
+      scrollable: sorted.length > 6,
     };
   };
 
@@ -1278,7 +1263,7 @@ export default function App() {
         <StatusBar barStyle="light-content" backgroundColor={C.bg} />
         <Animated.View style={{ opacity: splashOpacity, transform: [{ scale: splashScale }], alignItems: 'center' }}>
           <View style={s.splashIcon}><Text style={s.splashIconText}>W</Text></View>
-          <Text style={s.splashTitle}>WealthPal AI</Text>
+          <Text style={s.splashTitle}>Finlit</Text>
           <Text style={s.splashSub}>Your Smart Finance Companion</Text>
           <ActivityIndicator color={C.accent} style={{ marginTop: 32 }} />
         </Animated.View>
@@ -1296,7 +1281,7 @@ export default function App() {
         <ScrollView contentContainerStyle={s.authScroll}>
           <View style={s.authTop}>
             <View style={s.splashIcon}><Text style={s.splashIconText}>W</Text></View>
-            <Text style={s.authTitle}>WealthPal AI</Text>
+            <Text style={s.authTitle}>Finlit</Text>
             <Text style={s.authSub}>Sign in to your account</Text>
           </View>
           {!!error && <View style={s.errBox}><Text style={s.errText}>{error}</Text></View>}
@@ -1322,7 +1307,7 @@ export default function App() {
         <ScrollView contentContainerStyle={s.authScroll}>
           <View style={s.authTop}>
             <Text style={s.authTitle}>Create Account</Text>
-            <Text style={s.authSub}>Join WealthPal AI today</Text>
+            <Text style={s.authSub}>Join Finlit today</Text>
           </View>
           {!!error && <View style={s.errBox}><Text style={s.errText}>{error}</Text></View>}
           <View style={s.nameRow}>
@@ -1364,7 +1349,7 @@ export default function App() {
           </View>
           <View style={{ backgroundColor: C.surface, borderRadius: 16, padding: 20, marginBottom: 24, borderWidth: 1, borderColor: C.border }}>
             <Text style={{ color: C.text, fontSize: 14, lineHeight: 22 }}>
-              1. Open the email from WealthPal AI{'\n'}
+              1. Open the email from Finlit{'\n'}
               2. Click the verification link{'\n'}
               3. Come back here and sign in
             </Text>
@@ -1516,37 +1501,98 @@ export default function App() {
           </View>
         )}
 
-        {/* Upcoming transactions from recurring */}
+        {/* Upcoming bills — monthly calendar */}
         {recurringTxs.length > 0 && (() => {
           const today = new Date();
-          const upcoming = [];
-          for (let d = 0; d < 14; d++) {
-            const day = new Date(today); day.setDate(today.getDate() + d);
-            const dayNum = day.getDate();
-            const dayKey = day.toISOString().split('T')[0];
+          const todayNum = today.getDate();
+          const year = today.getFullYear();
+          const month = today.getMonth();
+          const daysInMonth = new Date(year, month + 1, 0).getDate();
+          const firstDow = new Date(year, month, 1).getDay(); // 0=Sun
+
+          // Build bill map: dayNum -> [recurring items]
+          const billMap = {};
+          const endOfMonth = new Date(year, month, daysInMonth);
+          for (let dayNum = 1; dayNum <= daysInMonth; dayNum++) {
+            const d = new Date(year, month, dayNum);
             recurringTxs.forEach(r => {
-              const matches = r.frequency === 'monthly' && r.day_of_month === dayNum;
-              const weeklyMatch = r.frequency === 'weekly' && r.start_date && ((Math.round((day - new Date(r.start_date + 'T00:00:00')) / 86400000) % 7) === 0);
-              const biweeklyMatch = r.frequency === 'biweekly' && r.start_date && ((Math.round((day - new Date(r.start_date + 'T00:00:00')) / 86400000) % 14) === 0);
-              if (matches || weeklyMatch || biweeklyMatch) upcoming.push({ ...r, due: dayKey, daysAway: d });
+              const monthlyHit = r.frequency === 'monthly' && r.day_of_month === dayNum;
+              const startD = r.start_date ? new Date(r.start_date + 'T00:00:00') : null;
+              const diffDays = startD ? Math.round((d - startD) / 86400000) : -1;
+              const weeklyHit = r.frequency === 'weekly' && diffDays >= 0 && diffDays % 7 === 0;
+              const biweeklyHit = r.frequency === 'biweekly' && diffDays >= 0 && diffDays % 14 === 0;
+              if (monthlyHit || weeklyHit || biweeklyHit) {
+                if (!billMap[dayNum]) billMap[dayNum] = [];
+                billMap[dayNum].push(r);
+              }
             });
           }
-          if (!upcoming.length) return null;
+          if (!Object.keys(billMap).length) return null;
+
+          const totalMonthly = recurringTxs.filter(r => r.frequency === 'monthly').reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+          const DAY_LABELS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+
           return (
             <View style={s.section}>
-              <Text style={s.sectionTitle}>Upcoming Bills</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -16, paddingHorizontal: 16 }}>
-                {upcoming.slice(0, 8).map((item, i) => {
-                  const d = new Date(item.due + 'T00:00:00');
-                  return (
-                    <View key={i} style={{ width: 100, backgroundColor: C.surface, borderRadius: 14, padding: 12, marginRight: 10, borderWidth: 1, borderColor: item.daysAway === 0 ? C.accent : C.border, alignItems: 'center' }}>
-                      <Text style={{ color: item.daysAway === 0 ? C.accent : C.textMuted, fontSize: 10, fontWeight: '700', marginBottom: 2 }}>{item.daysAway === 0 ? 'TODAY' : item.daysAway === 1 ? 'TMW' : `${MONTHS_SHORT[d.getMonth()]} ${d.getDate()}`}</Text>
-                      <Text style={{ color: C.text, fontSize: 11, fontWeight: '700', textAlign: 'center', marginBottom: 4 }} numberOfLines={2}>{item.name}</Text>
-                      <Text style={{ color: C.red, fontSize: 13, fontWeight: '800' }}>-${fmtMoney(item.amount)}</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <Text style={s.sectionTitle}>Bills — {MONTHS_SHORT[month]} {year}</Text>
+                <Text style={{ color: C.red, fontSize: 12, fontWeight: '700' }}>${fmtMoney(totalMonthly)}/mo</Text>
+              </View>
+              {/* Day headers */}
+              <View style={{ flexDirection: 'row', marginBottom: 4 }}>
+                {DAY_LABELS.map(d => (
+                  <View key={d} style={{ flex: 1, alignItems: 'center' }}>
+                    <Text style={{ color: C.textMuted, fontSize: 9, fontWeight: '600' }}>{d}</Text>
+                  </View>
+                ))}
+              </View>
+              {/* Calendar grid */}
+              {Array.from({ length: Math.ceil((firstDow + daysInMonth) / 7) }, (_, week) => (
+                <View key={week} style={{ flexDirection: 'row', marginBottom: 2 }}>
+                  {Array.from({ length: 7 }, (_, dow) => {
+                    const cellDay = week * 7 + dow - firstDow + 1;
+                    if (cellDay < 1 || cellDay > daysInMonth) return <View key={dow} style={{ flex: 1, height: 46 }} />;
+                    const bills = billMap[cellDay] || [];
+                    const isToday = cellDay === todayNum;
+                    const isPast = cellDay < todayNum;
+                    const hasBill = bills.length > 0;
+                    return (
+                      <View key={dow} style={{ flex: 1, height: 46, alignItems: 'center', paddingTop: 2 }}>
+                        <View style={{
+                          width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center',
+                          backgroundColor: isToday ? C.accent : hasBill ? (isPast ? 'rgba(239,68,68,0.1)' : 'rgba(239,68,68,0.15)') : 'transparent',
+                          borderWidth: hasBill ? 1 : 0,
+                          borderColor: hasBill ? (isPast ? C.textMuted : C.red) : 'transparent',
+                        }}>
+                          <Text style={{ color: isToday ? '#fff' : isPast ? C.textMuted : C.text, fontSize: 11, fontWeight: isToday || hasBill ? '700' : '400' }}>{cellDay}</Text>
+                        </View>
+                        {hasBill && (
+                          <View style={{ flexDirection: 'row', gap: 1, marginTop: 1 }}>
+                            {bills.slice(0, 3).map((_, bi) => (
+                              <View key={bi} style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: isPast ? C.textMuted : C.red }} />
+                            ))}
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              ))}
+              {/* Bill list for upcoming */}
+              {Object.entries(billMap)
+                .filter(([d]) => parseInt(d) >= todayNum)
+                .sort(([a], [b]) => a - b)
+                .slice(0, 4)
+                .map(([d, bills]) => bills.map((r, i) => (
+                  <View key={`${d}-${i}`} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 7, borderTopWidth: 1, borderColor: C.border }}>
+                    <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: 'rgba(239,68,68,0.12)', justifyContent: 'center', alignItems: 'center', marginRight: 10 }}>
+                      <Text style={{ color: C.red, fontSize: 11, fontWeight: '800' }}>{d}</Text>
                     </View>
-                  );
-                })}
-              </ScrollView>
+                    <Text style={{ color: C.text, fontSize: 13, fontWeight: '600', flex: 1 }}>{r.name}</Text>
+                    <Text style={{ color: C.red, fontSize: 13, fontWeight: '700' }}>-${fmtMoney(r.amount)}</Text>
+                  </View>
+                )))
+              }
             </View>
           );
         })()}
@@ -1629,7 +1675,7 @@ export default function App() {
             {!userPayday && (
               <TouchableOpacity
                 style={[s.quickCard, { borderColor: '#f59e0b' }]}
-                onPress={() => setPaydayModalVisible(true)}
+                onPress={() => { setPaydayNextDate(userPayday?.nextDate ?? ''); setPaydayFreq(userPayday?.frequency ?? 'biweekly'); setPaydayModalVisible(true); }}
                 activeOpacity={0.8}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
@@ -1650,7 +1696,7 @@ export default function App() {
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                 <Icon char="✦" color={C.accent} size={40} radius={12} />
                 <View style={{ flex: 1 }}>
-                  <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>Ask WealthPal AI</Text>
+                  <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>Ask Finlit</Text>
                   <Text style={{ color: C.textSub, fontSize: 12 }}>Get personalized advice based on your real spending data.</Text>
                 </View>
                 <Text style={{ color: C.accent, fontSize: 20 }}>›</Text>
@@ -1670,7 +1716,7 @@ export default function App() {
   const renderInsights = () => {
     const filteredTx = getFilteredTx();
     const catData = getCatData();
-    const { labels: chartLabels, data: chartRawData, incomeData: chartIncomeData, scrollable: chartScrollable } = getChartData();
+    const { labels: chartLabels, data: chartRawData, scrollable: chartScrollable } = getChartData();
     const chartData = chartRawData.map(v => Math.max(0.01, v));
     const total = filteredTx.reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
     const avg = filteredTx.length ? total / filteredTx.length : 0;
@@ -1784,74 +1830,121 @@ export default function App() {
               ))}
             </View>
           </View>
-          <View style={s.chartCard}>
-            {chartType !== 'pie' && (
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                <Text style={{ color: C.textMuted, fontSize: 11 }}>
-                  Total: ${fmtMoney(chartData.reduce((s, v) => s + (v === 0.01 ? 0 : v), 0))}
-                </Text>
-                <View style={{ flexDirection: 'row', gap: 10 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: C.red }} />
-                    <Text style={{ color: C.textMuted, fontSize: 10 }}>Spend</Text>
-                  </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: C.green }} />
-                    <Text style={{ color: C.textMuted, fontSize: 10 }}>Income</Text>
-                  </View>
-                </View>
-              </View>
-            )}
-            {chartType === 'line' && (() => {
-              const allVals = [...chartData, ...(chartIncomeData || [])];
-              const lm = niceChartMax(allVals);
-              const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 32) : SW - 64;
+          {/* Chart card — spending trend */}
+          <View style={[s.chartCard, { paddingBottom: 8 }]}>
+            {(() => {
+              const spendVals = chartData.map(v => v === 0.01 ? 0 : v);
+              const totalSpend = spendVals.reduce((s, v) => s + v, 0);
+              const nonZero = spendVals.filter(v => v > 0);
+              const dailyAvg = nonZero.length ? totalSpend / nonZero.length : 0;
+              const peak = Math.max(...spendVals);
+              // Trend: compare first half vs second half
+              const half = Math.floor(spendVals.length / 2);
+              const firstHalf = spendVals.slice(0, half).reduce((s, v) => s + v, 0);
+              const secondHalf = spendVals.slice(half).reduce((s, v) => s + v, 0);
+              const trendPct = firstHalf > 0 ? Math.round(((secondHalf - firstHalf) / firstHalf) * 100) : null;
+              const trendUp = trendPct !== null && trendPct > 5;
+              const trendDown = trendPct !== null && trendPct < -5;
+
               return (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable}>
-                  <LineChart
-                    data={{ labels: chartLabels, datasets: [
-                      { data: chartData, color: () => C.red },
-                      { data: (chartIncomeData || []).map(v => Math.max(0.01, v)), color: () => C.green, withDots: false },
-                      { data: chartData.map(() => lm), withDots: false, color: () => 'rgba(0,0,0,0)' },
-                    ]}}
-                    width={chartW} height={200} bezier
-                    chartConfig={{ ...CHART_CFG, decimalPlaces: 0 }}
-                    formatYLabel={fmtYLabel}
-                    style={{ borderRadius: 10, marginLeft: -16 }} withInnerLines={false}
-                    yAxisLabel="" yAxisSuffix="" segments={4}
-                  />
-                </ScrollView>
+                <>
+                  {/* Stat pills */}
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+                    <View style={{ flex: 1, backgroundColor: C.bg, borderRadius: 10, padding: 10, alignItems: 'center', borderWidth: 1, borderColor: C.border }}>
+                      <Text style={{ color: C.textMuted, fontSize: 10, marginBottom: 2 }}>TOTAL</Text>
+                      <Text style={{ color: C.text, fontSize: 14, fontWeight: '800' }}>${fmtMoney(totalSpend)}</Text>
+                    </View>
+                    <View style={{ flex: 1, backgroundColor: C.bg, borderRadius: 10, padding: 10, alignItems: 'center', borderWidth: 1, borderColor: C.border }}>
+                      <Text style={{ color: C.textMuted, fontSize: 10, marginBottom: 2 }}>DAILY AVG</Text>
+                      <Text style={{ color: C.text, fontSize: 14, fontWeight: '800' }}>${fmtMoney(dailyAvg)}</Text>
+                    </View>
+                    <View style={{ flex: 1, backgroundColor: C.bg, borderRadius: 10, padding: 10, alignItems: 'center', borderWidth: 1, borderColor: C.border }}>
+                      <Text style={{ color: C.textMuted, fontSize: 10, marginBottom: 2 }}>TREND</Text>
+                      <Text style={{ color: trendUp ? C.red : trendDown ? C.green : C.textMuted, fontSize: 14, fontWeight: '800' }}>
+                        {trendPct === null ? '—' : trendUp ? `+${trendPct}%` : `${trendPct}%`}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Chart */}
+                  {chartType !== 'pie' && (() => {
+                    const lm = niceChartMax([...chartData, dailyAvg * 1.2]);
+                    const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 36) : SW - 64;
+                    const avgLine = chartData.map(() => Math.max(0.01, dailyAvg));
+                    return (
+                      <ScrollView horizontal showsHorizontalScrollIndicator={chartScrollable} scrollEnabled={chartScrollable}
+                        style={{ marginHorizontal: -8 }}>
+                        {chartType === 'line' ? (
+                          <LineChart
+                            data={{ labels: chartLabels, datasets: [
+                              { data: chartData, color: (o) => `rgba(${hexToRgb(C.accent)},${o})`, strokeWidth: 2.5 },
+                              { data: avgLine, withDots: false, color: () => `rgba(${hexToRgb(C.textMuted)},0.5)`, strokeWidth: 1, strokeDasharray: [4, 4] },
+                              { data: chartData.map(() => Math.max(0.01, lm)), withDots: false, color: () => 'rgba(0,0,0,0)' },
+                            ]}}
+                            width={chartW} height={190} bezier
+                            chartConfig={{
+                              ...CHART_CFG,
+                              backgroundGradientFrom: C.surface,
+                              backgroundGradientTo: C.surface,
+                              backgroundGradientFromOpacity: 1,
+                              backgroundGradientToOpacity: 1,
+                              fillShadowGradient: C.accent,
+                              fillShadowGradientOpacity: 0.18,
+                              decimalPlaces: 0,
+                              propsForDots: { r: '3.5', strokeWidth: '2', stroke: C.accent },
+                              propsForLabels: { fontSize: 9 },
+                            }}
+                            formatYLabel={fmtYLabel}
+                            style={{ borderRadius: 12, marginLeft: -8 }}
+                            withInnerLines={false} withOuterLines={false}
+                            yAxisLabel="" yAxisSuffix="" segments={4}
+                          />
+                        ) : (
+                          <BarChart
+                            data={{ labels: chartLabels, datasets: [{ data: chartData }] }}
+                            width={chartW} height={190}
+                            chartConfig={{
+                              ...CHART_CFG,
+                              decimalPlaces: 0,
+                              barPercentage: chartScrollable ? 0.6 : 0.7,
+                              propsForLabels: { fontSize: 9 },
+                            }}
+                            formatYLabel={fmtYLabel}
+                            style={{ borderRadius: 12, marginLeft: -8 }}
+                            withInnerLines={false} fromZero
+                            yAxisLabel="" yAxisSuffix="" segments={4}
+                          />
+                        )}
+                      </ScrollView>
+                    );
+                  })()}
+                  {chartType === 'pie' && catData && (
+                    <PieChart
+                      data={catData.map(([cat, amt], i) => ({
+                        name: cat.replace(/_/g, ' ').slice(0, 12),
+                        population: Math.round(amt * 100) / 100,
+                        color: CAT_COLORS[i % CAT_COLORS.length],
+                        legendFontColor: C.textSub, legendFontSize: 11,
+                      }))}
+                      width={SW - 64} height={190} chartConfig={CHART_CFG} accessor="population"
+                      backgroundColor="transparent" paddingLeft="8" absolute={false}
+                    />
+                  )}
+
+                  {/* Peak day callout */}
+                  {peak > 0 && chartType !== 'pie' && (() => {
+                    const peakIdx = spendVals.indexOf(peak);
+                    return (
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderColor: C.border }}>
+                        <Text style={{ color: C.textMuted, fontSize: 11 }}>Peak day: <Text style={{ color: C.text, fontWeight: '700' }}>{chartLabels[peakIdx]}</Text></Text>
+                        <Text style={{ color: C.red, fontSize: 11, fontWeight: '700' }}>${fmtMoney(peak)}</Text>
+                        {chartScrollable && <Text style={{ color: C.textMuted, fontSize: 10 }}>← scroll →</Text>}
+                      </View>
+                    );
+                  })()}
+                </>
               );
             })()}
-            {chartType === 'bar' && (() => {
-              const allVals = [...chartData, ...(chartIncomeData || [])];
-              const lm = niceChartMax(allVals);
-              const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 32) : SW - 64;
-              return (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable}>
-                  <BarChart
-                    data={{ labels: chartLabels, datasets: [{ data: chartData }] }}
-                    width={chartW} height={200}
-                    chartConfig={{ ...CHART_CFG, decimalPlaces: 0 }}
-                    formatYLabel={fmtYLabel}
-                    style={{ borderRadius: 10, marginLeft: -16 }} withInnerLines={false}
-                    fromZero yAxisLabel="" yAxisSuffix="" segments={4}
-                  />
-                </ScrollView>
-              );
-            })()}
-            {chartType === 'pie' && catData && (
-              <PieChart
-                data={catData.map(([cat, amt], i) => ({
-                  name: cat.replace(/_/g, ' ').slice(0, 12),
-                  population: Math.round(amt * 100) / 100,
-                  color: CAT_COLORS[i % CAT_COLORS.length],
-                  legendFontColor: C.textSub, legendFontSize: 11,
-                }))}
-                width={SW - 64} height={200} chartConfig={CHART_CFG} accessor="population"
-                backgroundColor="transparent" paddingLeft="8" absolute={false}
-              />
-            )}
           </View>
         </View>
 
@@ -2629,7 +2722,7 @@ export default function App() {
         <Icon char="C" color="#06b6d4" size={64} radius={20} />
         <Text style={[s.emptyTitle, { marginTop: 20 }]}>Coming Soon</Text>
         <Text style={[s.emptyText, { marginBottom: 8 }]}>Credit score monitoring will be available in a future update. We'll notify you when it's ready.</Text>
-        <Text style={{ color: C.textMuted, fontSize: 12, textAlign: 'center' }}>WealthPal AI · Powered by secure credit bureau data</Text>
+        <Text style={{ color: C.textMuted, fontSize: 12, textAlign: 'center' }}>Finlit · Powered by secure credit bureau data</Text>
       </View>
       <View style={{ height: 24 }} />
     </ScrollView>
@@ -3278,7 +3371,7 @@ export default function App() {
         renderItem={({ item }) => (
           <View style={[s.bubble, item.role === 'user' ? s.userBubble : s.aiBubble]}>
             {item.role === 'assistant' && (
-              <Text style={s.bubbleName}>WealthPal AI</Text>
+              <Text style={s.bubbleName}>Finlit</Text>
             )}
             <Text style={[s.bubbleText, item.role === 'user' && { color: '#fff' }]}>{item.text}</Text>
           </View>
@@ -3287,7 +3380,7 @@ export default function App() {
       {loadingChat && (
         <View style={[s.aiBubble, s.bubble, { marginHorizontal: 16, marginBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
           <ActivityIndicator size="small" color={C.accent} />
-          <Text style={{ color: C.textSub, fontSize: 13 }}>WealthPal AI is thinking…</Text>
+          <Text style={{ color: C.textSub, fontSize: 13 }}>Finlit is thinking…</Text>
         </View>
       )}
       <View style={s.chatBar}>
@@ -3528,14 +3621,14 @@ export default function App() {
             </TouchableOpacity>
             <TouchableOpacity style={s.drawerRow}>
               <Icon char="★" color={C.amber} size={32} />
-              <Text style={[s.drawerRowText, { flex: 1, marginLeft: 12 }]}>Rate WealthPal AI</Text>
+              <Text style={[s.drawerRowText, { flex: 1, marginLeft: 12 }]}>Rate Finlit</Text>
               <Text style={s.chevron}>›</Text>
             </TouchableOpacity>
             <TouchableOpacity style={s.drawerRow}>
               <Icon char="i" color={C.textSub} size={32} />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={s.drawerRowText}>About</Text>
-                <Text style={s.drawerRowSub}>Version 1.0.3</Text>
+                <Text style={s.drawerRowSub}>Version 1.0.4</Text>
               </View>
               <Text style={s.chevron}>›</Text>
             </TouchableOpacity>
@@ -3599,7 +3692,7 @@ export default function App() {
         <View style={s.modalOverlay}>
           <View style={[s.modalCard, { alignItems: 'center' }]}>
             <Text style={{ fontSize: 40, marginBottom: 12 }}>★</Text>
-            <Text style={[s.modalTitle, { textAlign: 'center' }]}>WealthPal Premium</Text>
+            <Text style={[s.modalTitle, { textAlign: 'center' }]}>Finlit Premium</Text>
             <Text style={{ color: C.textSub, fontSize: 14, textAlign: 'center', lineHeight: 22, marginBottom: 20 }}>
               Unlock unlimited AI requests, bank account connection via Plaid, and all premium features.
             </Text>
@@ -3734,13 +3827,13 @@ export default function App() {
           <View style={s.modalCard}>
             <Text style={s.modalTitle}>Android Home Widget</Text>
             <View style={{ backgroundColor: C.bg, borderRadius: 14, padding: 16, marginBottom: 20, borderWidth: 1, borderColor: C.border }}>
-              <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700', marginBottom: 6 }}>◱  WealthPal AI Bubble</Text>
+              <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700', marginBottom: 6 }}>◱  Finlit Bubble</Text>
               <Text style={{ color: C.textSub, fontSize: 13, lineHeight: 20 }}>
                 A floating AI chat bubble on your Android home screen with quick access to your account balance, recent transactions, and spending insights — powered by the same AI as the app.
               </Text>
             </View>
             <Text style={{ color: C.textSub, fontSize: 13, lineHeight: 20, marginBottom: 24 }}>
-              This feature is available in the next app update. To get it, download the latest version of WealthPal AI from the Play Store once the update is live.
+              This feature is available in the next app update. To get it, download the latest version of Finlit from the Play Store once the update is live.
             </Text>
             <TouchableOpacity style={s.btn} onPress={() => { setWidgetInfoVisible(false); setWidgetEnabled(false); }}>
               <Text style={s.btnText}>Got it</Text>
@@ -4394,7 +4487,7 @@ export default function App() {
               {[
                 { q: 'How do I connect my bank?', a: 'Tap the ⚙ gear icon → Connect Bank. This is a Premium feature that uses Plaid to securely link your accounts.' },
                 { q: 'How does the AI work?', a: 'The AI uses your real transaction history to answer financial questions. Free users get 6 requests per 12 hours; Premium is unlimited.' },
-                { q: 'Why are some transactions income?', a: 'WealthPal automatically excludes income (payroll, transfers in) from spending totals. You can verify categories in the Transactions tab.' },
+                { q: 'Why are some transactions income?', a: 'Finlit automatically excludes income (payroll, transfers in) from spending totals. You can verify categories in the Transactions tab.' },
                 { q: 'How is payday detected?', a: 'The app analyzes patterns in your income transactions to estimate when your next payday is. It appears as a banner on the Home tab.' },
                 { q: 'What is the Paycycle budget period?', a: 'Paycycle resets your budget tracking at the start of each pay period, so your limits match your actual income cycle.' },
                 { q: 'How does auto sync work?', a: 'Set a daily sync time in Settings → Auto Sync. The app syncs once per day at that hour. There is a 23-hour lockout to prevent abuse.' },
@@ -4531,33 +4624,34 @@ export default function App() {
         <View style={s.modalOverlay}>
           <View style={s.modalCard}>
             <Text style={s.modalTitle}>Set Your Payday</Text>
-            <Text style={{ color: C.textSub, fontSize: 13, marginBottom: 18 }}>This tells WealthPal when your pay cycle resets for paycycle budgets.</Text>
+            <Text style={{ color: C.textSub, fontSize: 13, marginBottom: 18 }}>This tells Finlit when your pay cycle resets for paycycle budgets.</Text>
+            <Text style={s.label}>Next Payday Date</Text>
+            <TextInput
+              style={[s.input, { marginBottom: 18 }]}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={C.textMuted}
+              value={paydayNextDate}
+              onChangeText={setPaydayNextDate}
+              keyboardType="numeric"
+              maxLength={10}
+            />
             <Text style={s.label}>Pay Frequency</Text>
-            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 18 }}>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 22 }}>
               {[['weekly','Weekly'],['biweekly','Every 2 Wks'],['monthly','Monthly']].map(([k, l]) => (
                 <TouchableOpacity key={k}
-                  style={{ flex: 1, paddingVertical: 10, borderRadius: 12, alignItems: 'center', backgroundColor: (userPayday?.frequency ?? 'biweekly') === k ? C.accent : C.surface, borderWidth: 1, borderColor: (userPayday?.frequency ?? 'biweekly') === k ? C.accent : C.border }}
-                  onPress={() => setUserPayday(p => ({ dayOfMonth: p?.dayOfMonth ?? 1, frequency: k }))}
+                  style={{ flex: 1, paddingVertical: 10, borderRadius: 12, alignItems: 'center', backgroundColor: paydayFreq === k ? C.accent : C.surface, borderWidth: 1, borderColor: paydayFreq === k ? C.accent : C.border }}
+                  onPress={() => setPaydayFreq(k)}
                 >
-                  <Text style={{ color: (userPayday?.frequency ?? 'biweekly') === k ? '#fff' : C.textSub, fontWeight: '600', fontSize: 12 }}>{l}</Text>
+                  <Text style={{ color: paydayFreq === k ? '#fff' : C.textSub, fontWeight: '600', fontSize: 12 }}>{l}</Text>
                 </TouchableOpacity>
               ))}
             </View>
-            <Text style={s.label}>Day of Month You Get Paid</Text>
-            <ScrollView style={{ maxHeight: 160, marginBottom: 18 }} showsVerticalScrollIndicator={true} nestedScrollEnabled={true}>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
-                  <TouchableOpacity key={d}
-                    style={{ width: 44, height: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: (userPayday?.dayOfMonth ?? 1) === d ? C.accent : C.surface, borderWidth: 1, borderColor: (userPayday?.dayOfMonth ?? 1) === d ? C.accent : C.border }}
-                    onPress={() => setUserPayday(p => ({ frequency: p?.frequency ?? 'biweekly', dayOfMonth: d }))}
-                  >
-                    <Text style={{ color: (userPayday?.dayOfMonth ?? 1) === d ? '#fff' : C.text, fontWeight: '700', fontSize: 14 }}>{d}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </ScrollView>
             <TouchableOpacity style={s.btn} onPress={() => {
-              const pd = userPayday || { dayOfMonth: 1, frequency: 'biweekly' };
+              if (!paydayNextDate || !/^\d{4}-\d{2}-\d{2}$/.test(paydayNextDate)) {
+                Alert.alert('Invalid Date', 'Enter your next payday in YYYY-MM-DD format (e.g. 2026-06-01).');
+                return;
+              }
+              const pd = { nextDate: paydayNextDate, frequency: paydayFreq };
               setUserPayday(pd);
               AsyncStorage.setItem('userPayday', JSON.stringify(pd));
               setPaydayModalVisible(false);
