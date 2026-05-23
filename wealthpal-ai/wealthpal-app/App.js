@@ -388,8 +388,17 @@ export default function App() {
   const [authToken, setAuthToken] = useState(null);
   const authTokenRef = useRef(null);
 
-  // Payday detection
+  // Payday detection (auto from transactions)
   const [paydayInfo, setPaydayInfo] = useState(null); // { nextDate, daysUntil }
+  // User-set payday preference
+  const [userPayday, setUserPayday] = useState(null); // { dayOfMonth: 1-28, frequency: 'weekly'|'biweekly'|'monthly' }
+  const [paydayModalVisible, setPaydayModalVisible] = useState(false);
+  const [pendingVerifyEmail, setPendingVerifyEmail] = useState('');
+  // Post-sync transaction review
+  const [postSyncTxs, setPostSyncTxs] = useState([]);
+  const [postSyncVisible, setPostSyncVisible] = useState(false);
+  const [postSyncIdx, setPostSyncIdx] = useState(0);
+  const [postSyncCat, setPostSyncCat] = useState('');
 
   // Currency
   const [currency, setCurrency] = useState('USD');
@@ -543,6 +552,7 @@ export default function App() {
   useEffect(() => {
     AsyncStorage.getItem('customCategories').then(v => { if (v) { try { setCustomCategories(JSON.parse(v)); } catch {} } });
     AsyncStorage.getItem('categoryRules').then(v => { if (v) { try { setCategoryRules(JSON.parse(v)); } catch {} } });
+    AsyncStorage.getItem('userPayday').then(v => { if (v) { try { setUserPayday(JSON.parse(v)); } catch {} } });
     AsyncStorage.multiGet([
       'themeBg', 'themeAccent', 'displayName',
       'notifOverall', 'notifDaily', 'notifWeekly', 'notifMonthly', 'notifBudget',
@@ -646,6 +656,12 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error || 'Signup failed'); return; }
+      // If email confirmation is required, show verify screen
+      if (data.needs_verification) {
+        setPendingVerifyEmail(email);
+        setScreen('verify_email');
+        return;
+      }
       const uid = data.user.id;
       const token = data.session?.access_token;
       if (token) { setAuthToken(token); authTokenRef.current = token; }
@@ -730,6 +746,15 @@ export default function App() {
         if (data.total === 0) setSyncError('Plaid returned 0 transactions. Try reconnecting your bank.');
         else if (data.synced === 0 && data.total > 0) setSyncError(`Failed to save transactions (0/${data.total} saved). Check server logs.`);
         else setSyncError('');
+        const txRes = await fetch(`${API_URL}/api/transactions/${userIdRef.current}`);
+        const txData = txRes.ok ? await txRes.json() : {};
+        const fresh = (txData.transactions || []).filter(tx => !isIncomeTx(tx)).slice(0, 10);
+        if (fresh.length > 0) {
+          setPostSyncTxs(fresh);
+          setPostSyncIdx(0);
+          setPostSyncCat(getEffectiveCategory(fresh[0]));
+          setPostSyncVisible(true);
+        }
         await fetchTransactions();
         autoUpdateGoals();
       }
@@ -1109,6 +1134,19 @@ export default function App() {
     if (period === 'weekly') { const d = new Date(now); d.setDate(d.getDate() - 6); return d.toISOString().split('T')[0]; }
     if (period === 'biweekly') { const d = new Date(now); d.setDate(d.getDate() - 13); return d.toISOString().split('T')[0]; }
     if (period === 'paycycle') {
+      // 1) User-set payday takes priority
+      if (userPayday) {
+        const freqDays = userPayday.frequency === 'weekly' ? 7 : userPayday.frequency === 'biweekly' ? 14 : 30;
+        // Find last payday anchor: most recent occurrence of dayOfMonth
+        const anchor = new Date(now.getFullYear(), now.getMonth(), userPayday.dayOfMonth);
+        if (anchor > now) anchor.setMonth(anchor.getMonth() - 1);
+        const msPerCycle = freqDays * 86400000;
+        const elapsed = now.getTime() - anchor.getTime();
+        const cycleOffset = elapsed % msPerCycle;
+        const cycleStart = new Date(now.getTime() - cycleOffset);
+        return cycleStart.toISOString().split('T')[0];
+      }
+      // 2) Budget-level paycycle_start override
       if (paycycleStart) {
         const freqDays = paycycleFreq === 'weekly' ? 7 : paycycleFreq === 'biweekly' ? 14 : 30;
         const anchor = new Date(paycycleStart);
@@ -1118,9 +1156,9 @@ export default function App() {
         const cycleStart = new Date(now.getTime() - cycleOffset);
         return cycleStart.toISOString().split('T')[0];
       }
-      // Fall back to auto-detected pay cycle if available
+      // 3) Auto-detected pay cycle from income transactions
       if (paydayInfo) {
-        const nextPayday = new Date(paydayInfo.nextDate + 'T00:00:00Z');
+        const nextPayday = new Date(paydayInfo.nextDate + 'T00:00:00');
         const cycleStart = new Date(nextPayday.getTime() - paydayInfo.frequencyDays * 86400000);
         return cycleStart.toISOString().split('T')[0];
       }
@@ -1171,61 +1209,63 @@ export default function App() {
     const txs = selectedCategory
       ? getFilteredTx().filter(tx => tx.category === selectedCategory)
       : getFilteredTx();
-    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const incomeTxs = transactions.filter(tx => isIncomeTx(tx));
     const now = new Date();
 
+    const dayKey = (d) => {
+      const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
+      return `${y}-${m}-${day}`;
+    };
+
     if (insightsRange === '7d') {
-      const labels = [], data = [];
+      const labels = [], data = [], incomeData = [];
       for (let i = 6; i >= 0; i--) {
         const d = new Date(now); d.setDate(d.getDate() - i);
-        const key = d.toISOString().split('T')[0];
-        labels.push(['Su','Mo','Tu','We','Th','Fr','Sa'][d.getDay()]);
+        const key = dayKey(d);
+        labels.push(`${d.getMonth()+1}/${d.getDate()}`);
         data.push(txs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
+        incomeData.push(incomeTxs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
       }
-      return { labels, data };
+      return { labels, data, incomeData, scrollable: true };
     }
 
     if (insightsRange === '30d') {
-      const labels = [], data = [];
-      for (let i = 3; i >= 0; i--) {
-        const end = new Date(now); end.setDate(end.getDate() - i * 7);
-        const start = new Date(end); start.setDate(start.getDate() - 7);
-        labels.push(`${end.getMonth()+1}/${end.getDate()}`);
-        data.push(txs.filter(tx => {
-          const t = new Date(tx.transaction_date).getTime();
-          return t > start.getTime() && t <= end.getTime() + 86400000;
-        }).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
+      const labels = [], data = [], incomeData = [];
+      for (let i = 29; i >= 0; i--) {
+        const d = new Date(now); d.setDate(d.getDate() - i);
+        const key = dayKey(d);
+        labels.push(`${d.getMonth()+1}/${d.getDate()}`);
+        data.push(txs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
+        incomeData.push(incomeTxs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
       }
-      return { labels, data };
+      return { labels, data, incomeData, scrollable: true };
     }
 
     if (insightsRange === '3m' || insightsRange === '6m') {
       const count = insightsRange === '3m' ? 3 : 6;
-      const months = {}, labels = [];
+      const months = {}, incomeMonths = {}, labels = [];
       for (let i = count - 1; i >= 0; i--) {
         const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
         const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-        labels.push(monthNames[d.getMonth()]);
-        months[key] = 0;
+        labels.push(MONTHS_SHORT[d.getMonth()]);
+        months[key] = 0; incomeMonths[key] = 0;
       }
-      txs.forEach(tx => {
-        const key = (tx.transaction_date || '').slice(0, 7);
-        if (months[key] !== undefined) months[key] += parseFloat(tx.amount || 0);
-      });
-      return { labels, data: Object.values(months) };
+      txs.forEach(tx => { const key = (tx.transaction_date || '').slice(0, 7); if (months[key] !== undefined) months[key] += parseFloat(tx.amount || 0); });
+      incomeTxs.forEach(tx => { const key = (tx.transaction_date || '').slice(0, 7); if (incomeMonths[key] !== undefined) incomeMonths[key] += parseFloat(tx.amount || 0); });
+      return { labels, data: Object.values(months), incomeData: Object.values(incomeMonths), scrollable: false };
     }
 
-    // 'all' — monthly buckets for all available data
-    if (!txs.length) return { labels: ['No data'], data: [0] };
-    const monthSet = {};
-    txs.forEach(tx => {
-      const key = (tx.transaction_date || '').slice(0, 7);
-      if (key) monthSet[key] = (monthSet[key] || 0) + parseFloat(tx.amount || 0);
-    });
+    // 'all' — monthly buckets
+    if (!txs.length) return { labels: ['No data'], data: [0], incomeData: [0], scrollable: false };
+    const monthSet = {}, incomeSet = {};
+    txs.forEach(tx => { const key = (tx.transaction_date || '').slice(0, 7); if (key) monthSet[key] = (monthSet[key] || 0) + parseFloat(tx.amount || 0); });
+    incomeTxs.forEach(tx => { const key = (tx.transaction_date || '').slice(0, 7); if (key) incomeSet[key] = (incomeSet[key] || 0) + parseFloat(tx.amount || 0); });
     const sorted = Object.keys(monthSet).sort();
     return {
-      labels: sorted.map(k => monthNames[parseInt(k.split('-')[1]) - 1]),
+      labels: sorted.map(k => MONTHS_SHORT[parseInt(k.split('-')[1]) - 1]),
       data: sorted.map(k => monthSet[k]),
+      incomeData: sorted.map(k => incomeSet[k] || 0),
+      scrollable: false,
     };
   };
 
@@ -1305,6 +1345,43 @@ export default function App() {
           </TouchableOpacity>
           <TouchableOpacity onPress={() => { setScreen('login'); setError(''); }} style={s.linkRow}>
             <Text style={s.linkText}>Already have an account? <Text style={s.linkAccent}>Sign in</Text></Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  if (screen === 'verify_email') {
+    return (
+      <View style={s.bg}>
+        <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+        <ScrollView contentContainerStyle={s.authScroll}>
+          <View style={s.authTop}>
+            <View style={[s.splashIcon, { backgroundColor: C.green }]}><Text style={s.splashIconText}>✓</Text></View>
+            <Text style={s.authTitle}>Check Your Email</Text>
+            <Text style={s.authSub}>We sent a verification link to</Text>
+            <Text style={{ color: C.accent, fontWeight: '700', fontSize: 15, marginTop: 4 }}>{pendingVerifyEmail}</Text>
+          </View>
+          <View style={{ backgroundColor: C.surface, borderRadius: 16, padding: 20, marginBottom: 24, borderWidth: 1, borderColor: C.border }}>
+            <Text style={{ color: C.text, fontSize: 14, lineHeight: 22 }}>
+              1. Open the email from WealthPal AI{'\n'}
+              2. Click the verification link{'\n'}
+              3. Come back here and sign in
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={[s.btn, { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border }]}
+            onPress={async () => {
+              try {
+                await fetch(`${API_URL}/api/auth/resend-verification`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: pendingVerifyEmail }) });
+                Alert.alert('Sent', 'Verification email resent. Check your inbox.');
+              } catch { Alert.alert('Error', 'Could not resend. Try again.'); }
+            }}
+          >
+            <Text style={{ color: C.text, fontWeight: '600' }}>Resend Email</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => { setScreen('login'); setError(''); }} style={s.linkRow}>
+            <Text style={s.linkText}>Already verified? <Text style={s.linkAccent}>Sign in</Text></Text>
           </TouchableOpacity>
         </ScrollView>
       </View>
@@ -1439,6 +1516,41 @@ export default function App() {
           </View>
         )}
 
+        {/* Upcoming transactions from recurring */}
+        {recurringTxs.length > 0 && (() => {
+          const today = new Date();
+          const upcoming = [];
+          for (let d = 0; d < 14; d++) {
+            const day = new Date(today); day.setDate(today.getDate() + d);
+            const dayNum = day.getDate();
+            const dayKey = day.toISOString().split('T')[0];
+            recurringTxs.forEach(r => {
+              const matches = r.frequency === 'monthly' && r.day_of_month === dayNum;
+              const weeklyMatch = r.frequency === 'weekly' && r.start_date && ((Math.round((day - new Date(r.start_date + 'T00:00:00')) / 86400000) % 7) === 0);
+              const biweeklyMatch = r.frequency === 'biweekly' && r.start_date && ((Math.round((day - new Date(r.start_date + 'T00:00:00')) / 86400000) % 14) === 0);
+              if (matches || weeklyMatch || biweeklyMatch) upcoming.push({ ...r, due: dayKey, daysAway: d });
+            });
+          }
+          if (!upcoming.length) return null;
+          return (
+            <View style={s.section}>
+              <Text style={s.sectionTitle}>Upcoming Bills</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -16, paddingHorizontal: 16 }}>
+                {upcoming.slice(0, 8).map((item, i) => {
+                  const d = new Date(item.due + 'T00:00:00');
+                  return (
+                    <View key={i} style={{ width: 100, backgroundColor: C.surface, borderRadius: 14, padding: 12, marginRight: 10, borderWidth: 1, borderColor: item.daysAway === 0 ? C.accent : C.border, alignItems: 'center' }}>
+                      <Text style={{ color: item.daysAway === 0 ? C.accent : C.textMuted, fontSize: 10, fontWeight: '700', marginBottom: 2 }}>{item.daysAway === 0 ? 'TODAY' : item.daysAway === 1 ? 'TMW' : `${MONTHS_SHORT[d.getMonth()]} ${d.getDate()}`}</Text>
+                      <Text style={{ color: C.text, fontSize: 11, fontWeight: '700', textAlign: 'center', marginBottom: 4 }} numberOfLines={2}>{item.name}</Text>
+                      <Text style={{ color: C.red, fontSize: 13, fontWeight: '800' }}>-${fmtMoney(item.amount)}</Text>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          );
+        })()}
+
         {/* Recommendations */}
         {linkedAccount && (
           <View style={s.section}>
@@ -1514,6 +1626,22 @@ export default function App() {
                 </TouchableOpacity>
               ) : null;
             })()}
+            {!userPayday && (
+              <TouchableOpacity
+                style={[s.quickCard, { borderColor: '#f59e0b' }]}
+                onPress={() => setPaydayModalVisible(true)}
+                activeOpacity={0.8}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                  <Icon char="📅" color="#f59e0b" size={40} radius={12} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>Set Your Payday</Text>
+                    <Text style={{ color: C.textSub, fontSize: 12 }}>Tell us when you get paid so paycycle budgets work automatically.</Text>
+                  </View>
+                  <Text style={{ color: '#f59e0b', fontSize: 20 }}>›</Text>
+                </View>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               style={[s.quickCard, { borderColor: C.accent }]}
               onPress={() => setActiveTab('chat')}
@@ -1542,7 +1670,7 @@ export default function App() {
   const renderInsights = () => {
     const filteredTx = getFilteredTx();
     const catData = getCatData();
-    const { labels: chartLabels, data: chartRawData } = getChartData();
+    const { labels: chartLabels, data: chartRawData, incomeData: chartIncomeData, scrollable: chartScrollable } = getChartData();
     const chartData = chartRawData.map(v => Math.max(0.01, v));
     const total = filteredTx.reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
     const avg = filteredTx.length ? total / filteredTx.length : 0;
@@ -1658,37 +1786,58 @@ export default function App() {
           </View>
           <View style={s.chartCard}>
             {chartType !== 'pie' && (
-              <Text style={{ color: C.textMuted, fontSize: 11, alignSelf: 'flex-end', marginBottom: 4 }}>
-                Total: ${fmtMoney(chartData.reduce((s, v) => s + (v === 0.01 ? 0 : v), 0))}
-              </Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <Text style={{ color: C.textMuted, fontSize: 11 }}>
+                  Total: ${fmtMoney(chartData.reduce((s, v) => s + (v === 0.01 ? 0 : v), 0))}
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: C.red }} />
+                    <Text style={{ color: C.textMuted, fontSize: 10 }}>Spend</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: C.green }} />
+                    <Text style={{ color: C.textMuted, fontSize: 10 }}>Income</Text>
+                  </View>
+                </View>
+              </View>
             )}
             {chartType === 'line' && (() => {
-              const lm = niceChartMax(chartData);
+              const allVals = [...chartData, ...(chartIncomeData || [])];
+              const lm = niceChartMax(allVals);
+              const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 32) : SW - 64;
               return (
-                <LineChart
-                  data={{ labels: chartLabels, datasets: [
-                    { data: chartData },
-                    { data: chartData.map(() => lm), withDots: false, color: () => 'rgba(0,0,0,0)' },
-                  ]}}
-                  width={SW - 64} height={200} bezier
-                  chartConfig={{ ...CHART_CFG, decimalPlaces: 0 }}
-                  formatYLabel={fmtYLabel}
-                  style={{ borderRadius: 10, marginLeft: -16 }} withInnerLines={false} withDots
-                  yAxisLabel="" yAxisSuffix="" segments={4}
-                />
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable}>
+                  <LineChart
+                    data={{ labels: chartLabels, datasets: [
+                      { data: chartData, color: () => C.red },
+                      { data: (chartIncomeData || []).map(v => Math.max(0.01, v)), color: () => C.green, withDots: false },
+                      { data: chartData.map(() => lm), withDots: false, color: () => 'rgba(0,0,0,0)' },
+                    ]}}
+                    width={chartW} height={200} bezier
+                    chartConfig={{ ...CHART_CFG, decimalPlaces: 0 }}
+                    formatYLabel={fmtYLabel}
+                    style={{ borderRadius: 10, marginLeft: -16 }} withInnerLines={false}
+                    yAxisLabel="" yAxisSuffix="" segments={4}
+                  />
+                </ScrollView>
               );
             })()}
             {chartType === 'bar' && (() => {
-              const lm = niceChartMax(chartData);
+              const allVals = [...chartData, ...(chartIncomeData || [])];
+              const lm = niceChartMax(allVals);
+              const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 32) : SW - 64;
               return (
-                <BarChart
-                  data={{ labels: chartLabels, datasets: [{ data: chartData }] }}
-                  width={SW - 64} height={200}
-                  chartConfig={{ ...CHART_CFG, decimalPlaces: 0 }}
-                  formatYLabel={fmtYLabel}
-                  style={{ borderRadius: 10, marginLeft: -16 }} withInnerLines={false}
-                  fromZero yAxisLabel="" yAxisSuffix="" segments={4}
-                />
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable}>
+                  <BarChart
+                    data={{ labels: chartLabels, datasets: [{ data: chartData }] }}
+                    width={chartW} height={200}
+                    chartConfig={{ ...CHART_CFG, decimalPlaces: 0 }}
+                    formatYLabel={fmtYLabel}
+                    style={{ borderRadius: 10, marginLeft: -16 }} withInnerLines={false}
+                    fromZero yAxisLabel="" yAxisSuffix="" segments={4}
+                  />
+                </ScrollView>
               );
             })()}
             {chartType === 'pie' && catData && (
@@ -2006,7 +2155,7 @@ export default function App() {
             </TouchableOpacity>
             <TouchableOpacity
               style={{ borderRadius: 9, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: C.border }}
-              onPress={async () => { await fetch(`${API_URL}/api/goals/${goal.id}`, { method: 'DELETE' }); fetchGoals(); }}
+              onPress={() => Alert.alert('Delete Goal', `Delete "${goal.title}"?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await fetch(`${API_URL}/api/goals/${goal.id}`, { method: 'DELETE' }); fetchGoals(); } }])}
             >
               <Text style={{ color: C.textMuted, fontSize: 13 }}>✕</Text>
             </TouchableOpacity>
@@ -2162,7 +2311,7 @@ export default function App() {
             </TouchableOpacity>
             <TouchableOpacity
               style={{ borderRadius: 9, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: C.border }}
-              onPress={async () => { await fetch(`${API_URL}/api/goals/${goal.id}`, { method: 'DELETE' }); fetchGoals(); }}
+              onPress={() => Alert.alert('Delete Goal', `Delete "${goal.title}"?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await fetch(`${API_URL}/api/goals/${goal.id}`, { method: 'DELETE' }); fetchGoals(); } }])}
             >
               <Text style={{ color: C.textMuted, fontSize: 13 }}>✕</Text>
             </TouchableOpacity>
@@ -2302,7 +2451,7 @@ export default function App() {
                     <TouchableOpacity onPress={() => { setEditingBudget(b); setNewBudgetCat(b.category); setNewBudgetLimit(String(b.monthly_limit)); setNewBudgetPeriod(budgetGlobalPeriod); setNewBudgetPaycycleStart(b.paycycle_start || ''); setNewBudgetPaycycleFreq(b.paycycle_freq || 'biweekly'); setAddBudgetVisible(true); }}>
                       <Text style={{ color: C.accent, fontSize: 12, fontWeight: '600' }}>Edit</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity onPress={async () => { await fetch(`${API_URL}/api/budgets/${b.id}`, { method: 'DELETE' }); fetchBudgets(); }}>
+                    <TouchableOpacity onPress={() => Alert.alert('Delete Budget', `Delete ${b.category.replace(/_/g,' ')} budget?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await fetch(`${API_URL}/api/budgets/${b.id}`, { method: 'DELETE' }); fetchBudgets(); } }])}>
                       <Text style={{ color: C.red, fontSize: 12, fontWeight: '600' }}>Delete</Text>
                     </TouchableOpacity>
                   </View>
@@ -2387,10 +2536,7 @@ export default function App() {
                     </Text>
                   </View>
                   <TouchableOpacity
-                    onPress={async () => {
-                      await fetch(`${API_URL}/api/recurring/${r.id}`, { method: 'DELETE' });
-                      fetchRecurring();
-                    }}
+                    onPress={() => Alert.alert('Delete Recurring', `Delete "${r.name}"?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await fetch(`${API_URL}/api/recurring/${r.id}`, { method: 'DELETE' }); fetchRecurring(); } }])}
                   >
                     <Text style={{ color: C.red, fontSize: 12, fontWeight: '600' }}>✕</Text>
                   </TouchableOpacity>
@@ -2593,12 +2739,20 @@ export default function App() {
                     </View>
                   </View>
                   {m.email !== email && (
-                    <TouchableOpacity onPress={async () => { await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, { method: 'DELETE' }); fetchGroupDetail(currentGroup.id); }}>
+                    <TouchableOpacity onPress={() => Alert.alert('Remove Member', `Remove ${m.email} from this group?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Remove', style: 'destructive', onPress: async () => { await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, { method: 'DELETE' }); fetchGroupDetail(currentGroup.id); } }])}>
                       <Text style={{ color: C.red, fontSize: 11, fontWeight: '600' }}>Remove</Text>
                     </TouchableOpacity>
                   )}
                 </View>
               ))}
+
+              {/* Delete Group */}
+              <TouchableOpacity
+                style={{ marginTop: 16, marginBottom: 4, paddingVertical: 12, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: C.red, backgroundColor: 'rgba(239,68,68,0.08)' }}
+                onPress={() => Alert.alert('Delete Group', `Delete "${currentGroup.name}" and all its data? This cannot be undone.`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await fetch(`${API_URL}/api/groups/${currentGroup.id}`, { method: 'DELETE' }); setCurrentGroup(null); fetchGroups(); setGroupSettingsOpen(false); } }])}
+              >
+                <Text style={{ color: C.red, fontWeight: '700', fontSize: 14 }}>Delete Group</Text>
+              </TouchableOpacity>
 
               {/* Invite */}
               <Text style={[s.label, { marginTop: 10 }]}>Invite by Email</Text>
@@ -2753,7 +2907,7 @@ export default function App() {
                   </View>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                     <Text style={{ color: C.textMuted, fontSize: 11 }}>{periodLabel} · {pct >= 100 ? `$${fmtMoney(groupSpent - limit)} over` : `$${fmtMoney(Math.max(0, limit - groupSpent))} left`}</Text>
-                    <TouchableOpacity onPress={async () => { await fetch(`${API_URL}/api/groups/${currentGroup.id}/budgets/${b.id}`, { method: 'DELETE' }); fetchGroupDetail(currentGroup.id); }}>
+                    <TouchableOpacity onPress={() => Alert.alert('Delete Budget', `Delete ${(b.category||'').replace(/_/g,' ')} budget?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await fetch(`${API_URL}/api/groups/${currentGroup.id}/budgets/${b.id}`, { method: 'DELETE' }); fetchGroupDetail(currentGroup.id); } }])}>
                       <Text style={{ color: C.red, fontSize: 12 }}>Delete</Text>
                     </TouchableOpacity>
                   </View>
@@ -3088,7 +3242,7 @@ export default function App() {
                     <TouchableOpacity onPress={() => { setEditingBudget(b); setNewBudgetCat(b.category); setNewBudgetLimit(String(b.monthly_limit)); setNewBudgetPeriod(budgetGlobalPeriod); setAddBudgetVisible(true); }}>
                       <Text style={{ color: C.accent, fontSize: 12, fontWeight: '600' }}>Edit</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity onPress={async () => { await fetch(`${API_URL}/api/budgets/${b.id}`, { method: 'DELETE' }); fetchBudgets(); }}>
+                    <TouchableOpacity onPress={() => Alert.alert('Delete Budget', `Delete ${b.category.replace(/_/g,' ')} budget?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await fetch(`${API_URL}/api/budgets/${b.id}`, { method: 'DELETE' }); fetchBudgets(); } }])}>
                       <Text style={{ color: C.red, fontSize: 12, fontWeight: '600' }}>Delete</Text>
                     </TouchableOpacity>
                   </View>
@@ -3381,7 +3535,7 @@ export default function App() {
               <Icon char="i" color={C.textSub} size={32} />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={s.drawerRowText}>About</Text>
-                <Text style={s.drawerRowSub}>Version 1.0.2</Text>
+                <Text style={s.drawerRowSub}>Version 1.0.3</Text>
               </View>
               <Text style={s.chevron}>›</Text>
             </TouchableOpacity>
@@ -3859,7 +4013,7 @@ export default function App() {
               {!editingBudget && (
                 <>
                   <Text style={s.label}>Category</Text>
-                  <ScrollView style={{ maxHeight: 180, marginBottom: 10 }} showsVerticalScrollIndicator={false}>
+                  <ScrollView style={{ maxHeight: 200, marginBottom: 10 }} showsVerticalScrollIndicator={true} nestedScrollEnabled={true}>
                     {[...PLAID_CATEGORIES, ...customCategories.map(c => ({ key: c, label: c, icon: '★' }))].map(cat => (
                       <TouchableOpacity
                         key={cat.key}
@@ -3906,41 +4060,12 @@ export default function App() {
                 </View>
               )}
 
-              {/* Budget period */}
-              <Text style={s.label}>Budget Period</Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-                {[['weekly','Weekly'],['biweekly','Biweekly'],['monthly','Monthly'],['paycycle','Paycycle']].map(([k, l]) => (
-                  <TouchableOpacity
-                    key={k}
-                    onPress={() => setNewBudgetPeriod(k)}
-                    style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, alignItems: 'center', backgroundColor: newBudgetPeriod === k ? C.accent : C.surface, borderWidth: 1, borderColor: newBudgetPeriod === k ? C.accent : C.border }}
-                  >
-                    <Text style={{ color: newBudgetPeriod === k ? '#fff' : C.textSub, fontWeight: '600', fontSize: 12 }}>{l}</Text>
-                  </TouchableOpacity>
-                ))}
+              {/* Period is auto-set from the active budget tab */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14, backgroundColor: C.surface, borderRadius: 10, padding: 10, borderWidth: 1, borderColor: C.border }}>
+                <Text style={{ color: C.textMuted, fontSize: 12 }}>Period:</Text>
+                <Text style={{ color: C.accent, fontSize: 12, fontWeight: '700', textTransform: 'capitalize' }}>{newBudgetPeriod}</Text>
+                <Text style={{ color: C.textMuted, fontSize: 11, flex: 1 }}>(from active tab)</Text>
               </View>
-              {newBudgetPeriod === 'paycycle' && (
-                <View style={{ backgroundColor: C.bg, borderRadius: 12, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: C.border }}>
-                  <Text style={[s.label, { marginBottom: 8 }]}>Pay Frequency</Text>
-                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
-                    {[['weekly','Weekly'],['biweekly','Every 2 Wks'],['monthly','Monthly']].map(([k, l]) => (
-                      <TouchableOpacity key={k} onPress={() => setNewBudgetPaycycleFreq(k)}
-                        style={{ flex: 1, paddingVertical: 8, borderRadius: 10, alignItems: 'center', backgroundColor: newBudgetPaycycleFreq === k ? C.accent : C.surface2, borderWidth: 1, borderColor: newBudgetPaycycleFreq === k ? C.accent : C.border }}>
-                        <Text style={{ color: newBudgetPaycycleFreq === k ? '#fff' : C.textSub, fontWeight: '600', fontSize: 11 }}>{l}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                  <Text style={[s.label, { marginBottom: 8 }]}>Next Payday (YYYY-MM-DD)</Text>
-                  <TextInput
-                    style={[s.input, { marginBottom: 0 }]}
-                    placeholder="e.g. 2025-06-01"
-                    placeholderTextColor={C.textMuted}
-                    value={newBudgetPaycycleStart}
-                    onChangeText={setNewBudgetPaycycleStart}
-                  />
-                  <Text style={{ color: C.textMuted, fontSize: 11, marginTop: 6 }}>Your budget resets each paycycle starting from this date.</Text>
-                </View>
-              )}
               <View style={{ marginBottom: 6 }} />
 
               {/* Limit */}
@@ -4398,6 +4523,115 @@ export default function App() {
               </TouchableOpacity>
             </View>
           </ScrollView>
+        </View>
+      </Modal>
+
+      {/* Payday Setup Modal */}
+      <Modal visible={paydayModalVisible} animationType="slide" transparent onRequestClose={() => setPaydayModalVisible(false)}>
+        <View style={s.modalOverlay}>
+          <View style={s.modalCard}>
+            <Text style={s.modalTitle}>Set Your Payday</Text>
+            <Text style={{ color: C.textSub, fontSize: 13, marginBottom: 18 }}>This tells WealthPal when your pay cycle resets for paycycle budgets.</Text>
+            <Text style={s.label}>Pay Frequency</Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 18 }}>
+              {[['weekly','Weekly'],['biweekly','Every 2 Wks'],['monthly','Monthly']].map(([k, l]) => (
+                <TouchableOpacity key={k}
+                  style={{ flex: 1, paddingVertical: 10, borderRadius: 12, alignItems: 'center', backgroundColor: (userPayday?.frequency ?? 'biweekly') === k ? C.accent : C.surface, borderWidth: 1, borderColor: (userPayday?.frequency ?? 'biweekly') === k ? C.accent : C.border }}
+                  onPress={() => setUserPayday(p => ({ dayOfMonth: p?.dayOfMonth ?? 1, frequency: k }))}
+                >
+                  <Text style={{ color: (userPayday?.frequency ?? 'biweekly') === k ? '#fff' : C.textSub, fontWeight: '600', fontSize: 12 }}>{l}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={s.label}>Day of Month You Get Paid</Text>
+            <ScrollView style={{ maxHeight: 160, marginBottom: 18 }} showsVerticalScrollIndicator={true} nestedScrollEnabled={true}>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
+                  <TouchableOpacity key={d}
+                    style={{ width: 44, height: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: (userPayday?.dayOfMonth ?? 1) === d ? C.accent : C.surface, borderWidth: 1, borderColor: (userPayday?.dayOfMonth ?? 1) === d ? C.accent : C.border }}
+                    onPress={() => setUserPayday(p => ({ frequency: p?.frequency ?? 'biweekly', dayOfMonth: d }))}
+                  >
+                    <Text style={{ color: (userPayday?.dayOfMonth ?? 1) === d ? '#fff' : C.text, fontWeight: '700', fontSize: 14 }}>{d}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+            <TouchableOpacity style={s.btn} onPress={() => {
+              const pd = userPayday || { dayOfMonth: 1, frequency: 'biweekly' };
+              setUserPayday(pd);
+              AsyncStorage.setItem('userPayday', JSON.stringify(pd));
+              setPaydayModalVisible(false);
+            }}>
+              <Text style={s.btnText}>Save Payday</Text>
+            </TouchableOpacity>
+            {userPayday && (
+              <TouchableOpacity style={s.linkRow} onPress={() => { setUserPayday(null); AsyncStorage.removeItem('userPayday'); setPaydayModalVisible(false); }}>
+                <Text style={[s.linkText, { color: C.red }]}>Clear Payday</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={s.linkRow} onPress={() => setPaydayModalVisible(false)}>
+              <Text style={s.linkText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Post-Sync Transaction Review Modal */}
+      <Modal visible={postSyncVisible} animationType="slide" transparent onRequestClose={() => setPostSyncVisible(false)}>
+        <View style={s.modalOverlay}>
+          <View style={s.modalCard}>
+            {postSyncTxs.length > 0 && (() => {
+              const tx = postSyncTxs[postSyncIdx];
+              return (
+                <>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                    <Text style={s.modalTitle}>Review Transaction</Text>
+                    <Text style={{ color: C.textMuted, fontSize: 12 }}>{postSyncIdx + 1} / {postSyncTxs.length}</Text>
+                  </View>
+                  <Text style={{ color: C.textSub, fontSize: 12, marginBottom: 16 }}>Confirm or correct the category for each new transaction.</Text>
+                  <View style={{ backgroundColor: C.surface, borderRadius: 12, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: C.border }}>
+                    <Text style={{ color: C.text, fontSize: 15, fontWeight: '700' }}>{tx.merchant_name || tx.description || 'Unknown'}</Text>
+                    <Text style={{ color: C.textMuted, fontSize: 12, marginTop: 2 }}>{fmtDate(tx.transaction_date)} · ${fmtMoney(tx.amount)}</Text>
+                  </View>
+                  <Text style={s.label}>Category</Text>
+                  <ScrollView style={{ maxHeight: 180, marginBottom: 16 }} showsVerticalScrollIndicator={true} nestedScrollEnabled={true}>
+                    {PLAID_CATEGORIES.map(cat => (
+                      <TouchableOpacity key={cat.key} onPress={() => setPostSyncCat(cat.key)}
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 9, paddingHorizontal: 12, borderRadius: 10, marginBottom: 3, backgroundColor: postSyncCat === cat.key ? C.accent : C.surface, borderWidth: 1, borderColor: postSyncCat === cat.key ? C.accent : C.border }}>
+                        <Text style={{ color: postSyncCat === cat.key ? '#fff' : C.textSub, fontSize: 13, fontWeight: '700', width: 22 }}>{cat.icon}</Text>
+                        <Text style={{ color: postSyncCat === cat.key ? '#fff' : C.text, fontSize: 13, flex: 1 }}>{cat.label}</Text>
+                        {postSyncCat === cat.key && <Text style={{ color: '#fff' }}>✓</Text>}
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <TouchableOpacity style={[s.btn, { flex: 1, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border }]}
+                      onPress={() => {
+                        const next = postSyncIdx + 1;
+                        if (next >= postSyncTxs.length) { setPostSyncVisible(false); }
+                        else { setPostSyncIdx(next); setPostSyncCat(getEffectiveCategory(postSyncTxs[next])); }
+                      }}>
+                      <Text style={{ color: C.text, fontWeight: '600' }}>Skip</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[s.btn, { flex: 1 }]}
+                      onPress={async () => {
+                        if (postSyncCat && postSyncCat !== getEffectiveCategory(tx)) {
+                          const merchant = (tx.merchant_name || tx.description || '').toLowerCase();
+                          const updated = { ...categoryRules, [merchant]: postSyncCat };
+                          saveCategoryRules(updated);
+                          if (tx.id) await fetch(`${API_URL}/api/transactions/${tx.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category: postSyncCat }) });
+                        }
+                        const next = postSyncIdx + 1;
+                        if (next >= postSyncTxs.length) { setPostSyncVisible(false); }
+                        else { setPostSyncIdx(next); setPostSyncCat(getEffectiveCategory(postSyncTxs[next])); }
+                      }}>
+                      <Text style={s.btnText}>Confirm</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              );
+            })()}
+          </View>
         </View>
       </Modal>
 
