@@ -179,11 +179,12 @@ function fmtMoney(n) {
   return parts.join('.');
 }
 
+const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 function fmtDate(d) {
   if (!d) return '';
-  const s = String(d);
-  const dateStr = s.includes('T') ? s : s + 'T00:00:00';
-  return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const parts = String(d).slice(0, 10).split('-');
+  if (parts.length < 3) return String(d);
+  return `${MONTHS_SHORT[parseInt(parts[1], 10) - 1]} ${parseInt(parts[2], 10)}`;
 }
 
 export default function App() {
@@ -3380,7 +3381,7 @@ export default function App() {
               <Icon char="i" color={C.textSub} size={32} />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={s.drawerRowText}>About</Text>
-                <Text style={s.drawerRowSub}>Version 1.0.1</Text>
+                <Text style={s.drawerRowSub}>Version 1.0.2</Text>
               </View>
               <Text style={s.chevron}>›</Text>
             </TouchableOpacity>
