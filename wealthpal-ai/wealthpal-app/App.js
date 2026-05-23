@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   SafeAreaView, View, Text, TouchableOpacity, StyleSheet,
-  ScrollView, TextInput, FlatList, ActivityIndicator,
+  ScrollView, TextInput, FlatList, ActivityIndicator, Image,
   Animated, Dimensions, Switch, StatusBar, Modal, RefreshControl, Share, Alert,
 } from 'react-native';
 import { create, open } from 'react-native-plaid-link-sdk';
@@ -242,7 +242,7 @@ export default function App() {
   const overlayO = useRef(new Animated.Value(0)).current;
 
   // Theme — dark or light mode, brand blue accent always
-  const BRAND_BLUE = '#2563eb';
+  const BRAND_BLUE = '#3b82f6';
   const [isDarkMode, setIsDarkMode] = useState(true);
   const themeBg = isDarkMode ? '#060c17' : '#f1f5f9';
   const themeAccent = BRAND_BLUE;
@@ -1284,13 +1284,14 @@ export default function App() {
   // ════════════════════════════════════════════════════
   if (showSplash) {
     return (
-      <View style={s.splashBg}>
-        <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+      <View style={{ flex: 1, backgroundColor: '#060c17', justifyContent: 'center', alignItems: 'center' }}>
+        <StatusBar barStyle="light-content" backgroundColor="#060c17" />
         <Animated.View style={{ opacity: splashOpacity, transform: [{ scale: splashScale }], alignItems: 'center' }}>
-          <View style={s.splashIcon}><Text style={s.splashIconText}>W</Text></View>
-          <Text style={s.splashTitle}>Finlit</Text>
-          <Text style={s.splashSub}>Your Smart Finance Companion</Text>
-          <ActivityIndicator color={C.accent} style={{ marginTop: 32 }} />
+          <Image
+            source={require('./assets/ChatGPT Image May 23, 2026, 01_22_15 PM.png')}
+            style={{ width: 260, height: 260, resizeMode: 'contain', borderRadius: 52 }}
+          />
+          <ActivityIndicator color={BRAND_BLUE} style={{ marginTop: 40 }} />
         </Animated.View>
       </View>
     );
@@ -1301,25 +1302,30 @@ export default function App() {
   // ════════════════════════════════════════════════════
   if (screen === 'login') {
     return (
-      <View style={s.bg}>
-        <StatusBar barStyle="light-content" backgroundColor={C.bg} />
-        <ScrollView contentContainerStyle={s.authScroll}>
-          <View style={s.authTop}>
-            <View style={s.splashIcon}><Text style={s.splashIconText}>W</Text></View>
-            <Text style={s.authTitle}>Finlit</Text>
-            <Text style={s.authSub}>Sign in to your account</Text>
+      <View style={{ flex: 1, backgroundColor: C.bg }}>
+        <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={C.bg} />
+        <ScrollView contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 28 }} keyboardShouldPersistTaps="handled">
+          <View style={{ alignItems: 'center', paddingTop: 64, paddingBottom: 36 }}>
+            <View style={{ shadowColor: BRAND_BLUE, shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.4, shadowRadius: 24, elevation: 16 }}>
+              <Image
+                source={require('./assets/ChatGPT Image May 23, 2026, 01_22_15 PM.png')}
+                style={{ width: 210, height: 210, resizeMode: 'contain', borderRadius: 42 }}
+              />
+            </View>
+            <Text style={{ color: C.textSub, fontSize: 14, marginTop: 16, letterSpacing: 0.3 }}>Your smart finance companion</Text>
           </View>
           {!!error && <View style={s.errBox}><Text style={s.errText}>{error}</Text></View>}
-          <Text style={s.label}>Email</Text>
+          <Text style={[s.label, { marginTop: 4 }]}>Email</Text>
           <TextInput style={s.input} placeholder="you@example.com" placeholderTextColor={C.textMuted} value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" editable={!loading} />
           <Text style={s.label}>Password</Text>
           <TextInput style={s.input} placeholder="••••••••" placeholderTextColor={C.textMuted} value={password} onChangeText={setPassword} secureTextEntry editable={!loading} />
-          <TouchableOpacity style={[s.btn, loading && s.btnOff]} onPress={handleLogin} disabled={loading}>
+          <TouchableOpacity style={[s.btn, { marginTop: 10 }, loading && s.btnOff]} onPress={handleLogin} disabled={loading}>
             {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Sign In</Text>}
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => { setScreen('signup'); setError(''); }} style={s.linkRow}>
+          <TouchableOpacity onPress={() => { setScreen('signup'); setError(''); }} style={[s.linkRow, { marginTop: 4 }]}>
             <Text style={s.linkText}>Don't have an account? <Text style={s.linkAccent}>Sign up</Text></Text>
           </TouchableOpacity>
+          <View style={{ height: 48 }} />
         </ScrollView>
       </View>
     );
@@ -1327,12 +1333,16 @@ export default function App() {
 
   if (screen === 'signup') {
     return (
-      <View style={s.bg}>
-        <StatusBar barStyle="light-content" backgroundColor={C.bg} />
-        <ScrollView contentContainerStyle={s.authScroll}>
-          <View style={s.authTop}>
-            <Text style={s.authTitle}>Create Account</Text>
-            <Text style={s.authSub}>Join Finlit today</Text>
+      <View style={{ flex: 1, backgroundColor: C.bg }}>
+        <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={C.bg} />
+        <ScrollView contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 28 }} keyboardShouldPersistTaps="handled">
+          <View style={{ alignItems: 'center', paddingTop: 44, paddingBottom: 24 }}>
+            <Image
+              source={require('./assets/ChatGPT Image May 23, 2026, 01_22_15 PM.png')}
+              style={{ width: 130, height: 130, resizeMode: 'contain', borderRadius: 26 }}
+            />
+            <Text style={{ color: C.text, fontSize: 22, fontWeight: '700', marginTop: 16 }}>Create Account</Text>
+            <Text style={{ color: C.textSub, fontSize: 14, marginTop: 4 }}>Join Finlit today</Text>
           </View>
           {!!error && <View style={s.errBox}><Text style={s.errText}>{error}</Text></View>}
           <View style={s.nameRow}>
@@ -1356,6 +1366,7 @@ export default function App() {
           <TouchableOpacity onPress={() => { setScreen('login'); setError(''); }} style={s.linkRow}>
             <Text style={s.linkText}>Already have an account? <Text style={s.linkAccent}>Sign in</Text></Text>
           </TouchableOpacity>
+          <View style={{ height: 48 }} />
         </ScrollView>
       </View>
     );
@@ -1853,32 +1864,18 @@ export default function App() {
           </View>
           <View style={s.chartCard}>
             {chartType !== 'pie' && (
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                <Text style={{ color: C.textMuted, fontSize: 11 }}>
-                  Total: ${fmtMoney(chartData.reduce((s, v) => s + (v === 0.01 ? 0 : v), 0))}
-                </Text>
-                <View style={{ flexDirection: 'row', gap: 10 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: C.red }} />
-                    <Text style={{ color: C.textMuted, fontSize: 10 }}>Spend</Text>
-                  </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: C.green }} />
-                    <Text style={{ color: C.textMuted, fontSize: 10 }}>Income</Text>
-                  </View>
-                </View>
-              </View>
+              <Text style={{ color: C.textMuted, fontSize: 11, marginBottom: 4 }}>
+                Total: ${fmtMoney(chartData.reduce((s, v) => s + (v === 0.01 ? 0 : v), 0))}
+              </Text>
             )}
             {chartType === 'line' && (() => {
-              const allVals = [...chartData, ...(chartIncomeData || [])];
-              const lm = niceChartMax(allVals);
+              const lm = niceChartMax(chartData);
               const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 32) : SW - 64;
               return (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable}>
                   <LineChart
                     data={{ labels: chartLabels, datasets: [
-                      { data: chartData, color: () => C.red },
-                      { data: (chartIncomeData || []).map(v => Math.max(0.01, v)), color: () => C.green, withDots: false },
+                      { data: chartData, color: () => C.accent },
                       { data: chartData.map(() => lm), withDots: false, color: () => 'rgba(0,0,0,0)' },
                     ]}}
                     width={chartW} height={200} bezier
@@ -1891,8 +1888,6 @@ export default function App() {
               );
             })()}
             {chartType === 'bar' && (() => {
-              const allVals = [...chartData, ...(chartIncomeData || [])];
-              const lm = niceChartMax(allVals);
               const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 32) : SW - 64;
               return (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable}>
@@ -3600,7 +3595,7 @@ export default function App() {
               <Icon char="i" color={C.textSub} size={32} />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={s.drawerRowText}>About</Text>
-                <Text style={s.drawerRowSub}>Version 1.0.5</Text>
+                <Text style={s.drawerRowSub}>Version 1.0.6</Text>
               </View>
               <Text style={s.chevron}>›</Text>
             </TouchableOpacity>
