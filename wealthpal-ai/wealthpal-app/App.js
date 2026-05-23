@@ -241,14 +241,25 @@ export default function App() {
   const drawerX = useRef(new Animated.Value(320)).current;
   const overlayO = useRef(new Animated.Value(0)).current;
 
-  // Theme — Primary=background, Secondary=accent
-  const [themeBg, setThemeBg] = useState('#060c17');
-  const [themeAccent, setThemeAccent] = useState('#7c3aed');
+  // Theme — dark or light mode, brand blue accent always
+  const BRAND_BLUE = '#2563eb';
+  const [isDarkMode, setIsDarkMode] = useState(true);
+  const themeBg = isDarkMode ? '#060c17' : '#f1f5f9';
+  const themeAccent = BRAND_BLUE;
 
   const C = useMemo(() => {
-    const surfaces = deriveSurfaces(themeBg);
-    return { ...BASE, ...surfaces, bg: themeBg, accent: themeAccent, blue: '#3b82f6' };
-  }, [themeBg, themeAccent]);
+    if (!isDarkMode) {
+      return {
+        ...BASE,
+        bg: '#f1f5f9', surface: '#ffffff', surface2: '#e2e8f0', border: '#cbd5e1',
+        text: '#0f172a', textSub: '#475569', textMuted: '#94a3b8',
+        accent: BRAND_BLUE, blue: BRAND_BLUE,
+        green: '#059669', red: '#dc2626', amber: '#d97706',
+      };
+    }
+    const surfaces = deriveSurfaces('#060c17');
+    return { ...BASE, ...surfaces, bg: '#060c17', accent: BRAND_BLUE, blue: BRAND_BLUE };
+  }, [isDarkMode]);
   const CAT_COLORS = useMemo(() => [C.accent, C.blue, C.green, C.amber, C.red], [C]);
   const CHART_CFG = useMemo(() => ({
     backgroundColor: C.surface, backgroundGradientFrom: C.surface, backgroundGradientTo: C.surface,
@@ -555,14 +566,13 @@ export default function App() {
     AsyncStorage.getItem('customCategories').then(v => { if (v) { try { setCustomCategories(JSON.parse(v)); } catch {} } });
     AsyncStorage.getItem('categoryRules').then(v => { if (v) { try { setCategoryRules(JSON.parse(v)); } catch {} } });
     AsyncStorage.getItem('userPayday').then(v => { if (v) { try { setUserPayday(JSON.parse(v)); } catch {} } });
+    AsyncStorage.getItem('isDarkMode').then(v => { if (v !== null) setIsDarkMode(v !== 'false'); });
     AsyncStorage.multiGet([
-      'themeBg', 'themeAccent', 'displayName',
+      'displayName',
       'notifOverall', 'notifDaily', 'notifWeekly', 'notifMonthly', 'notifBudget',
       'currency', 'autoSyncHour', 'autoSyncEnabled', 'lastSyncTime',
     ]).then(pairs => {
       const m = Object.fromEntries(pairs.map(([k, v]) => [k, v]));
-      if (m.themeBg) setThemeBg(m.themeBg);
-      if (m.themeAccent) setThemeAccent(m.themeAccent);
       if (m.displayName) setDisplayName(m.displayName);
       if (m.notifOverall !== null) setNotifOverall(m.notifOverall === 'true');
       if (m.notifDaily !== null) setNotifDaily(m.notifDaily === 'true');
@@ -576,8 +586,7 @@ export default function App() {
     });
   }, []);
 
-  const changeBg = (color) => { setThemeBg(color); AsyncStorage.setItem('themeBg', color); };
-  const changeAccent = (color) => { setThemeAccent(color); AsyncStorage.setItem('themeAccent', color); };
+  const toggleDarkMode = (val) => { setIsDarkMode(val); AsyncStorage.setItem('isDarkMode', val ? 'true' : 'false'); };
 
   // ── Splash ──────────────────────────────────────────
   useEffect(() => {
@@ -639,6 +648,7 @@ export default function App() {
       fetchGoals(uid);
       fetchGroups(uid);
       fetchBudgets(uid);
+      fetchRecurring();
       fetch(`${API_URL}/api/users/${uid}/subscription`).then(r => r.json()).then(d => setIsSubscribed(d.is_subscribed === true)).catch(() => {});
     } catch { setError('Could not connect to server'); }
     finally { setLoading(false); }
@@ -683,6 +693,7 @@ export default function App() {
       fetchGoals(uid);
       fetchGroups(uid);
       fetchBudgets(uid);
+      fetchRecurring();
       fetch(`${API_URL}/api/users/${uid}/subscription`).then(r => r.json()).then(d => setIsSubscribed(d.is_subscribed === true)).catch(() => {});
       // Show tutorial for new users
       setTimeout(() => { setTutorialStep(0); setTutorialVisible(true); }, 600);
@@ -769,6 +780,7 @@ export default function App() {
     setRefreshing(true);
     await fetchAccounts();
     await fetchTransactions();
+    fetchRecurring();
     setRefreshing(false);
   };
   const refreshGoals = async () => {
@@ -1208,49 +1220,62 @@ export default function App() {
     const txs = selectedCategory
       ? getFilteredTx().filter(tx => tx.category === selectedCategory)
       : getFilteredTx();
+    const incomeTxs = transactions.filter(tx => isIncomeTx(tx));
     const now = new Date();
-    const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const dayKey = (d) => {
+      const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
+      return `${y}-${m}-${day}`;
+    };
 
     if (insightsRange === '7d') {
-      const labels = [], data = [];
+      const labels = [], data = [], incomeData = [];
       for (let i = 6; i >= 0; i--) {
         const d = new Date(now); d.setDate(d.getDate() - i);
+        const key = dayKey(d);
         labels.push(`${d.getMonth()+1}/${d.getDate()}`);
-        data.push(txs.filter(tx => tx.transaction_date === dayKey(d)).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
+        data.push(txs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
+        incomeData.push(incomeTxs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
       }
-      return { labels, data: data.map(v => Math.max(0.01, v)), scrollable: false };
+      return { labels, data, incomeData, scrollable: true };
     }
 
     if (insightsRange === '30d') {
-      const labels = [], data = [];
+      const labels = [], data = [], incomeData = [];
       for (let i = 29; i >= 0; i--) {
         const d = new Date(now); d.setDate(d.getDate() - i);
-        labels.push(i % 5 === 0 || i === 0 ? `${d.getMonth()+1}/${d.getDate()}` : '');
-        data.push(txs.filter(tx => tx.transaction_date === dayKey(d)).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
+        const key = dayKey(d);
+        labels.push(`${d.getMonth()+1}/${d.getDate()}`);
+        data.push(txs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
+        incomeData.push(incomeTxs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
       }
-      return { labels, data: data.map(v => Math.max(0.01, v)), scrollable: true };
+      return { labels, data, incomeData, scrollable: true };
     }
 
     if (insightsRange === '3m' || insightsRange === '6m') {
       const count = insightsRange === '3m' ? 3 : 6;
-      const months = {}, labels = [];
+      const months = {}, incomeMonths = {}, labels = [];
       for (let i = count - 1; i >= 0; i--) {
         const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
         const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-        labels.push(MONTHS_SHORT[d.getMonth()]); months[key] = 0;
+        labels.push(MONTHS_SHORT[d.getMonth()]);
+        months[key] = 0; incomeMonths[key] = 0;
       }
       txs.forEach(tx => { const key = (tx.transaction_date || '').slice(0, 7); if (months[key] !== undefined) months[key] += parseFloat(tx.amount || 0); });
-      return { labels, data: Object.values(months).map(v => Math.max(0.01, v)), scrollable: false };
+      incomeTxs.forEach(tx => { const key = (tx.transaction_date || '').slice(0, 7); if (incomeMonths[key] !== undefined) incomeMonths[key] += parseFloat(tx.amount || 0); });
+      return { labels, data: Object.values(months), incomeData: Object.values(incomeMonths), scrollable: false };
     }
 
-    if (!txs.length) return { labels: ['No data'], data: [0.01], scrollable: false };
-    const monthSet = {};
+    // 'all' — monthly buckets
+    if (!txs.length) return { labels: ['No data'], data: [0], incomeData: [0], scrollable: false };
+    const monthSet = {}, incomeSet = {};
     txs.forEach(tx => { const key = (tx.transaction_date || '').slice(0, 7); if (key) monthSet[key] = (monthSet[key] || 0) + parseFloat(tx.amount || 0); });
+    incomeTxs.forEach(tx => { const key = (tx.transaction_date || '').slice(0, 7); if (key) incomeSet[key] = (incomeSet[key] || 0) + parseFloat(tx.amount || 0); });
     const sorted = Object.keys(monthSet).sort();
     return {
       labels: sorted.map(k => MONTHS_SHORT[parseInt(k.split('-')[1]) - 1]),
-      data: sorted.map(k => Math.max(0.01, monthSet[k])),
-      scrollable: sorted.length > 6,
+      data: sorted.map(k => monthSet[k]),
+      incomeData: sorted.map(k => incomeSet[k] || 0),
+      scrollable: false,
     };
   };
 
@@ -1508,11 +1533,9 @@ export default function App() {
           const year = today.getFullYear();
           const month = today.getMonth();
           const daysInMonth = new Date(year, month + 1, 0).getDate();
-          const firstDow = new Date(year, month, 1).getDay(); // 0=Sun
+          const firstDow = new Date(year, month, 1).getDay();
 
-          // Build bill map: dayNum -> [recurring items]
           const billMap = {};
-          const endOfMonth = new Date(year, month, daysInMonth);
           for (let dayNum = 1; dayNum <= daysInMonth; dayNum++) {
             const d = new Date(year, month, dayNum);
             recurringTxs.forEach(r => {
@@ -1531,65 +1554,63 @@ export default function App() {
 
           const totalMonthly = recurringTxs.filter(r => r.frequency === 'monthly').reduce((s, r) => s + parseFloat(r.amount || 0), 0);
           const DAY_LABELS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+          const BILL_BLUE = BRAND_BLUE;
 
           return (
             <View style={s.section}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                 <Text style={s.sectionTitle}>Bills — {MONTHS_SHORT[month]} {year}</Text>
-                <Text style={{ color: C.red, fontSize: 12, fontWeight: '700' }}>${fmtMoney(totalMonthly)}/mo</Text>
+                <Text style={{ color: BILL_BLUE, fontSize: 12, fontWeight: '700' }}>${fmtMoney(totalMonthly)}/mo</Text>
               </View>
-              {/* Day headers */}
-              <View style={{ flexDirection: 'row', marginBottom: 4 }}>
+              {/* Day-of-week headers */}
+              <View style={{ flexDirection: 'row', marginBottom: 6 }}>
                 {DAY_LABELS.map(d => (
                   <View key={d} style={{ flex: 1, alignItems: 'center' }}>
-                    <Text style={{ color: C.textMuted, fontSize: 9, fontWeight: '600' }}>{d}</Text>
+                    <Text style={{ color: C.textMuted, fontSize: 10, fontWeight: '600', letterSpacing: 0.3 }}>{d}</Text>
                   </View>
                 ))}
               </View>
               {/* Calendar grid */}
               {Array.from({ length: Math.ceil((firstDow + daysInMonth) / 7) }, (_, week) => (
-                <View key={week} style={{ flexDirection: 'row', marginBottom: 2 }}>
+                <View key={week} style={{ flexDirection: 'row', marginBottom: 4 }}>
                   {Array.from({ length: 7 }, (_, dow) => {
                     const cellDay = week * 7 + dow - firstDow + 1;
-                    if (cellDay < 1 || cellDay > daysInMonth) return <View key={dow} style={{ flex: 1, height: 46 }} />;
+                    if (cellDay < 1 || cellDay > daysInMonth) return <View key={dow} style={{ flex: 1 }} />;
                     const bills = billMap[cellDay] || [];
                     const isToday = cellDay === todayNum;
                     const isPast = cellDay < todayNum;
                     const hasBill = bills.length > 0;
                     return (
-                      <View key={dow} style={{ flex: 1, height: 46, alignItems: 'center', paddingTop: 2 }}>
+                      <View key={dow} style={{ flex: 1, alignItems: 'center', paddingVertical: 1 }}>
                         <View style={{
-                          width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center',
-                          backgroundColor: isToday ? C.accent : hasBill ? (isPast ? 'rgba(239,68,68,0.1)' : 'rgba(239,68,68,0.15)') : 'transparent',
-                          borderWidth: hasBill ? 1 : 0,
-                          borderColor: hasBill ? (isPast ? C.textMuted : C.red) : 'transparent',
+                          width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center',
+                          backgroundColor: isToday ? BILL_BLUE : hasBill && !isPast ? BILL_BLUE + '22' : 'transparent',
                         }}>
-                          <Text style={{ color: isToday ? '#fff' : isPast ? C.textMuted : C.text, fontSize: 11, fontWeight: isToday || hasBill ? '700' : '400' }}>{cellDay}</Text>
+                          <Text style={{
+                            color: isToday ? '#fff' : hasBill && !isPast ? BILL_BLUE : isPast ? C.textMuted : C.textSub,
+                            fontSize: 12, fontWeight: isToday || (hasBill && !isPast) ? '700' : '400',
+                          }}>{cellDay}</Text>
                         </View>
-                        {hasBill && (
-                          <View style={{ flexDirection: 'row', gap: 1, marginTop: 1 }}>
-                            {bills.slice(0, 3).map((_, bi) => (
-                              <View key={bi} style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: isPast ? C.textMuted : C.red }} />
-                            ))}
-                          </View>
+                        {hasBill && !isToday && (
+                          <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: isPast ? C.textMuted : BILL_BLUE, marginTop: 1 }} />
                         )}
                       </View>
                     );
                   })}
                 </View>
               ))}
-              {/* Bill list for upcoming */}
+              {/* Upcoming bill list */}
               {Object.entries(billMap)
                 .filter(([d]) => parseInt(d) >= todayNum)
-                .sort(([a], [b]) => a - b)
+                .sort(([a], [b]) => parseInt(a) - parseInt(b))
                 .slice(0, 4)
                 .map(([d, bills]) => bills.map((r, i) => (
-                  <View key={`${d}-${i}`} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 7, borderTopWidth: 1, borderColor: C.border }}>
-                    <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: 'rgba(239,68,68,0.12)', justifyContent: 'center', alignItems: 'center', marginRight: 10 }}>
-                      <Text style={{ color: C.red, fontSize: 11, fontWeight: '800' }}>{d}</Text>
+                  <View key={`${d}-${i}`} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderTopWidth: 1, borderColor: C.border }}>
+                    <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: BILL_BLUE + '18', justifyContent: 'center', alignItems: 'center', marginRight: 10 }}>
+                      <Text style={{ color: BILL_BLUE, fontSize: 11, fontWeight: '800' }}>{d}</Text>
                     </View>
                     <Text style={{ color: C.text, fontSize: 13, fontWeight: '600', flex: 1 }}>{r.name}</Text>
-                    <Text style={{ color: C.red, fontSize: 13, fontWeight: '700' }}>-${fmtMoney(r.amount)}</Text>
+                    <Text style={{ color: BILL_BLUE, fontSize: 13, fontWeight: '700' }}>-${fmtMoney(r.amount)}</Text>
                   </View>
                 )))
               }
@@ -1716,7 +1737,7 @@ export default function App() {
   const renderInsights = () => {
     const filteredTx = getFilteredTx();
     const catData = getCatData();
-    const { labels: chartLabels, data: chartRawData, scrollable: chartScrollable } = getChartData();
+    const { labels: chartLabels, data: chartRawData, incomeData: chartIncomeData, scrollable: chartScrollable } = getChartData();
     const chartData = chartRawData.map(v => Math.max(0.01, v));
     const total = filteredTx.reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
     const avg = filteredTx.length ? total / filteredTx.length : 0;
@@ -1830,121 +1851,74 @@ export default function App() {
               ))}
             </View>
           </View>
-          {/* Chart card — spending trend */}
-          <View style={[s.chartCard, { paddingBottom: 8 }]}>
-            {(() => {
-              const spendVals = chartData.map(v => v === 0.01 ? 0 : v);
-              const totalSpend = spendVals.reduce((s, v) => s + v, 0);
-              const nonZero = spendVals.filter(v => v > 0);
-              const dailyAvg = nonZero.length ? totalSpend / nonZero.length : 0;
-              const peak = Math.max(...spendVals);
-              // Trend: compare first half vs second half
-              const half = Math.floor(spendVals.length / 2);
-              const firstHalf = spendVals.slice(0, half).reduce((s, v) => s + v, 0);
-              const secondHalf = spendVals.slice(half).reduce((s, v) => s + v, 0);
-              const trendPct = firstHalf > 0 ? Math.round(((secondHalf - firstHalf) / firstHalf) * 100) : null;
-              const trendUp = trendPct !== null && trendPct > 5;
-              const trendDown = trendPct !== null && trendPct < -5;
-
-              return (
-                <>
-                  {/* Stat pills */}
-                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
-                    <View style={{ flex: 1, backgroundColor: C.bg, borderRadius: 10, padding: 10, alignItems: 'center', borderWidth: 1, borderColor: C.border }}>
-                      <Text style={{ color: C.textMuted, fontSize: 10, marginBottom: 2 }}>TOTAL</Text>
-                      <Text style={{ color: C.text, fontSize: 14, fontWeight: '800' }}>${fmtMoney(totalSpend)}</Text>
-                    </View>
-                    <View style={{ flex: 1, backgroundColor: C.bg, borderRadius: 10, padding: 10, alignItems: 'center', borderWidth: 1, borderColor: C.border }}>
-                      <Text style={{ color: C.textMuted, fontSize: 10, marginBottom: 2 }}>DAILY AVG</Text>
-                      <Text style={{ color: C.text, fontSize: 14, fontWeight: '800' }}>${fmtMoney(dailyAvg)}</Text>
-                    </View>
-                    <View style={{ flex: 1, backgroundColor: C.bg, borderRadius: 10, padding: 10, alignItems: 'center', borderWidth: 1, borderColor: C.border }}>
-                      <Text style={{ color: C.textMuted, fontSize: 10, marginBottom: 2 }}>TREND</Text>
-                      <Text style={{ color: trendUp ? C.red : trendDown ? C.green : C.textMuted, fontSize: 14, fontWeight: '800' }}>
-                        {trendPct === null ? '—' : trendUp ? `+${trendPct}%` : `${trendPct}%`}
-                      </Text>
-                    </View>
+          <View style={s.chartCard}>
+            {chartType !== 'pie' && (
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <Text style={{ color: C.textMuted, fontSize: 11 }}>
+                  Total: ${fmtMoney(chartData.reduce((s, v) => s + (v === 0.01 ? 0 : v), 0))}
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: C.red }} />
+                    <Text style={{ color: C.textMuted, fontSize: 10 }}>Spend</Text>
                   </View>
-
-                  {/* Chart */}
-                  {chartType !== 'pie' && (() => {
-                    const lm = niceChartMax([...chartData, dailyAvg * 1.2]);
-                    const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 36) : SW - 64;
-                    const avgLine = chartData.map(() => Math.max(0.01, dailyAvg));
-                    return (
-                      <ScrollView horizontal showsHorizontalScrollIndicator={chartScrollable} scrollEnabled={chartScrollable}
-                        style={{ marginHorizontal: -8 }}>
-                        {chartType === 'line' ? (
-                          <LineChart
-                            data={{ labels: chartLabels, datasets: [
-                              { data: chartData, color: (o) => `rgba(${hexToRgb(C.accent)},${o})`, strokeWidth: 2.5 },
-                              { data: avgLine, withDots: false, color: () => `rgba(${hexToRgb(C.textMuted)},0.5)`, strokeWidth: 1, strokeDasharray: [4, 4] },
-                              { data: chartData.map(() => Math.max(0.01, lm)), withDots: false, color: () => 'rgba(0,0,0,0)' },
-                            ]}}
-                            width={chartW} height={190} bezier
-                            chartConfig={{
-                              ...CHART_CFG,
-                              backgroundGradientFrom: C.surface,
-                              backgroundGradientTo: C.surface,
-                              backgroundGradientFromOpacity: 1,
-                              backgroundGradientToOpacity: 1,
-                              fillShadowGradient: C.accent,
-                              fillShadowGradientOpacity: 0.18,
-                              decimalPlaces: 0,
-                              propsForDots: { r: '3.5', strokeWidth: '2', stroke: C.accent },
-                              propsForLabels: { fontSize: 9 },
-                            }}
-                            formatYLabel={fmtYLabel}
-                            style={{ borderRadius: 12, marginLeft: -8 }}
-                            withInnerLines={false} withOuterLines={false}
-                            yAxisLabel="" yAxisSuffix="" segments={4}
-                          />
-                        ) : (
-                          <BarChart
-                            data={{ labels: chartLabels, datasets: [{ data: chartData }] }}
-                            width={chartW} height={190}
-                            chartConfig={{
-                              ...CHART_CFG,
-                              decimalPlaces: 0,
-                              barPercentage: chartScrollable ? 0.6 : 0.7,
-                              propsForLabels: { fontSize: 9 },
-                            }}
-                            formatYLabel={fmtYLabel}
-                            style={{ borderRadius: 12, marginLeft: -8 }}
-                            withInnerLines={false} fromZero
-                            yAxisLabel="" yAxisSuffix="" segments={4}
-                          />
-                        )}
-                      </ScrollView>
-                    );
-                  })()}
-                  {chartType === 'pie' && catData && (
-                    <PieChart
-                      data={catData.map(([cat, amt], i) => ({
-                        name: cat.replace(/_/g, ' ').slice(0, 12),
-                        population: Math.round(amt * 100) / 100,
-                        color: CAT_COLORS[i % CAT_COLORS.length],
-                        legendFontColor: C.textSub, legendFontSize: 11,
-                      }))}
-                      width={SW - 64} height={190} chartConfig={CHART_CFG} accessor="population"
-                      backgroundColor="transparent" paddingLeft="8" absolute={false}
-                    />
-                  )}
-
-                  {/* Peak day callout */}
-                  {peak > 0 && chartType !== 'pie' && (() => {
-                    const peakIdx = spendVals.indexOf(peak);
-                    return (
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderColor: C.border }}>
-                        <Text style={{ color: C.textMuted, fontSize: 11 }}>Peak day: <Text style={{ color: C.text, fontWeight: '700' }}>{chartLabels[peakIdx]}</Text></Text>
-                        <Text style={{ color: C.red, fontSize: 11, fontWeight: '700' }}>${fmtMoney(peak)}</Text>
-                        {chartScrollable && <Text style={{ color: C.textMuted, fontSize: 10 }}>← scroll →</Text>}
-                      </View>
-                    );
-                  })()}
-                </>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: C.green }} />
+                    <Text style={{ color: C.textMuted, fontSize: 10 }}>Income</Text>
+                  </View>
+                </View>
+              </View>
+            )}
+            {chartType === 'line' && (() => {
+              const allVals = [...chartData, ...(chartIncomeData || [])];
+              const lm = niceChartMax(allVals);
+              const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 32) : SW - 64;
+              return (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable}>
+                  <LineChart
+                    data={{ labels: chartLabels, datasets: [
+                      { data: chartData, color: () => C.red },
+                      { data: (chartIncomeData || []).map(v => Math.max(0.01, v)), color: () => C.green, withDots: false },
+                      { data: chartData.map(() => lm), withDots: false, color: () => 'rgba(0,0,0,0)' },
+                    ]}}
+                    width={chartW} height={200} bezier
+                    chartConfig={{ ...CHART_CFG, decimalPlaces: 0 }}
+                    formatYLabel={fmtYLabel}
+                    style={{ borderRadius: 10, marginLeft: -16 }} withInnerLines={false}
+                    yAxisLabel="" yAxisSuffix="" segments={4}
+                  />
+                </ScrollView>
               );
             })()}
+            {chartType === 'bar' && (() => {
+              const allVals = [...chartData, ...(chartIncomeData || [])];
+              const lm = niceChartMax(allVals);
+              const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 32) : SW - 64;
+              return (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable}>
+                  <BarChart
+                    data={{ labels: chartLabels, datasets: [{ data: chartData }] }}
+                    width={chartW} height={200}
+                    chartConfig={{ ...CHART_CFG, decimalPlaces: 0 }}
+                    formatYLabel={fmtYLabel}
+                    style={{ borderRadius: 10, marginLeft: -16 }} withInnerLines={false}
+                    fromZero yAxisLabel="" yAxisSuffix="" segments={4}
+                  />
+                </ScrollView>
+              );
+            })()}
+            {chartType === 'pie' && catData && (
+              <PieChart
+                data={catData.map(([cat, amt], i) => ({
+                  name: cat.replace(/_/g, ' ').slice(0, 12),
+                  population: Math.round(amt * 100) / 100,
+                  color: CAT_COLORS[i % CAT_COLORS.length],
+                  legendFontColor: C.textSub, legendFontSize: 11,
+                }))}
+                width={SW - 64} height={200} chartConfig={CHART_CFG} accessor="population"
+                backgroundColor="transparent" paddingLeft="8" absolute={false}
+              />
+            )}
           </View>
         </View>
 
@@ -3588,24 +3562,22 @@ export default function App() {
             </TouchableOpacity>
           </View>
 
-          {/* Customize */}
+          {/* Appearance */}
           <View style={s.drawerGroup}>
-            <Text style={s.drawerGroupLabel}>Customize</Text>
-            <TouchableOpacity
-              style={s.drawerRow}
-              onPress={() => { closeDrawer(); setTimeout(() => setCustomizeVisible(true), 300); }}
-            >
-              <Icon char="◐" color={C.accent} size={32} />
+            <Text style={s.drawerGroupLabel}>Appearance</Text>
+            <View style={[s.drawerRow, { paddingVertical: 14 }]}>
+              <Icon char={isDarkMode ? '🌙' : '☀'} color={C.accent} size={32} />
               <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={s.drawerRowText}>Theme & Colors</Text>
-                <Text style={s.drawerRowSub}>Background, accent color</Text>
+                <Text style={s.drawerRowText}>{isDarkMode ? 'Dark Mode' : 'Light Mode'}</Text>
+                <Text style={s.drawerRowSub}>Tap to switch</Text>
               </View>
-              <View style={{ flexDirection: 'row', gap: 4, marginRight: 8 }}>
-                <View style={{ width: 14, height: 14, borderRadius: 7, backgroundColor: themeBg, borderWidth: 1, borderColor: C.border }} />
-                <View style={{ width: 14, height: 14, borderRadius: 7, backgroundColor: themeAccent }} />
-              </View>
-              <Text style={s.chevron}>›</Text>
-            </TouchableOpacity>
+              <Switch
+                value={isDarkMode}
+                onValueChange={toggleDarkMode}
+                trackColor={{ false: '#cbd5e1', true: BRAND_BLUE + '80' }}
+                thumbColor={isDarkMode ? BRAND_BLUE : '#94a3b8'}
+              />
+            </View>
           </View>
 
           {/* Support */}
@@ -3628,7 +3600,7 @@ export default function App() {
               <Icon char="i" color={C.textSub} size={32} />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={s.drawerRowText}>About</Text>
-                <Text style={s.drawerRowSub}>Version 1.0.4</Text>
+                <Text style={s.drawerRowSub}>Version 1.0.5</Text>
               </View>
               <Text style={s.chevron}>›</Text>
             </TouchableOpacity>
@@ -3773,53 +3745,6 @@ export default function App() {
         </View>
       </Modal>
 
-      {/* Customize Modal */}
-      <Modal visible={customizeVisible} animationType="slide" transparent onRequestClose={() => setCustomizeVisible(false)}>
-        <View style={s.modalOverlay}>
-          <View style={s.modalCard}>
-            <Text style={s.modalTitle}>Theme & Colors</Text>
-
-            <Text style={[s.label, { marginBottom: 12 }]}>Primary (Background)</Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 24 }}>
-              {BG_OPTIONS.map(({ hex, label }) => (
-                <TouchableOpacity
-                  key={hex}
-                  onPress={() => changeBg(hex)}
-                  style={{ alignItems: 'center', gap: 6 }}
-                >
-                  <View style={{
-                    width: 44, height: 44, borderRadius: 22, backgroundColor: hex,
-                    borderWidth: themeBg === hex ? 3 : 1.5,
-                    borderColor: themeBg === hex ? C.accent : C.border,
-                  }} />
-                  <Text style={{ color: C.textMuted, fontSize: 10 }}>{label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={[s.label, { marginBottom: 12 }]}>Secondary (Accent)</Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 28 }}>
-              {ACCENT_OPTIONS.map(color => (
-                <View
-                  key={color}
-                  style={{
-                    width: 44, height: 44, borderRadius: 22, backgroundColor: color,
-                    borderWidth: themeAccent === color ? 3 : 1.5,
-                    borderColor: themeAccent === color ? '#fff' : 'transparent',
-                    overflow: 'hidden',
-                  }}
-                >
-                  <TouchableOpacity style={{ flex: 1 }} onPress={() => changeAccent(color)} />
-                </View>
-              ))}
-            </View>
-
-            <TouchableOpacity style={s.btn} onPress={() => setCustomizeVisible(false)}>
-              <Text style={s.btnText}>Done</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
 
       {/* Widget Info Modal */}
       <Modal visible={widgetInfoVisible} animationType="slide" transparent onRequestClose={() => setWidgetInfoVisible(false)}>
