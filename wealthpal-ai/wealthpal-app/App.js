@@ -242,7 +242,9 @@ export default function App() {
   const overlayO = useRef(new Animated.Value(0)).current;
 
   // Theme — dark or light mode, brand blue accent always
-  const BRAND_BLUE = '#3b82f6';
+  const BRAND_BLUE = '#16B7F6';
+  // Brand gradient palette: deep blue → cyan → teal → mint
+  const GRAD = ['#1E5EFF', '#16B7F6', '#1EDFD5', '#51F0C0'];
   const [isDarkMode, setIsDarkMode] = useState(true);
   const themeBg = isDarkMode ? '#060c17' : '#f1f5f9';
   const themeAccent = BRAND_BLUE;
@@ -253,14 +255,19 @@ export default function App() {
         ...BASE,
         bg: '#f1f5f9', surface: '#ffffff', surface2: '#e2e8f0', border: '#cbd5e1',
         text: '#0f172a', textSub: '#475569', textMuted: '#94a3b8',
-        accent: BRAND_BLUE, blue: BRAND_BLUE,
+        accent: BRAND_BLUE, blue: '#1E5EFF',
         green: '#059669', red: '#dc2626', amber: '#d97706',
       };
     }
     const surfaces = deriveSurfaces('#060c17');
-    return { ...BASE, ...surfaces, bg: '#060c17', accent: BRAND_BLUE, blue: BRAND_BLUE };
+    return { ...BASE, ...surfaces, bg: '#060c17', accent: BRAND_BLUE, blue: '#1E5EFF' };
   }, [isDarkMode]);
-  const CAT_COLORS = useMemo(() => [C.accent, C.blue, C.green, C.amber, C.red], [C]);
+  // Gradient-based category colors: cycle through the full palette
+  const CAT_COLORS = useMemo(() => [
+    '#1E5EFF', '#16B7F6', '#1EDFD5', '#51F0C0',
+    C.amber, C.red, '#a855f7', '#f97316',
+    '#1E5EFF', '#16B7F6', '#1EDFD5', '#51F0C0',
+  ], [C]);
   const CHART_CFG = useMemo(() => ({
     backgroundColor: C.surface, backgroundGradientFrom: C.surface, backgroundGradientTo: C.surface,
     decimalPlaces: 0,
@@ -1288,8 +1295,8 @@ export default function App() {
         <StatusBar barStyle="light-content" backgroundColor="#060c17" />
         <Animated.View style={{ opacity: splashOpacity, transform: [{ scale: splashScale }], alignItems: 'center' }}>
           <Image
-            source={require('./assets/ChatGPT Image May 23, 2026, 01_22_15 PM.png')}
-            style={{ width: 260, height: 260, resizeMode: 'contain', borderRadius: 52 }}
+            source={require('./assets/ChatGPT Image May 23, 2026, 02_15_23 PM.png')}
+            style={{ width: 300, height: 180, resizeMode: 'contain' }}
           />
           <ActivityIndicator color={BRAND_BLUE} style={{ marginTop: 40 }} />
         </Animated.View>
@@ -1306,12 +1313,10 @@ export default function App() {
         <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={C.bg} />
         <ScrollView contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 28 }} keyboardShouldPersistTaps="handled">
           <View style={{ alignItems: 'center', paddingTop: 64, paddingBottom: 36 }}>
-            <View style={{ shadowColor: BRAND_BLUE, shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.4, shadowRadius: 24, elevation: 16 }}>
-              <Image
-                source={require('./assets/ChatGPT Image May 23, 2026, 01_22_15 PM.png')}
-                style={{ width: 210, height: 210, resizeMode: 'contain', borderRadius: 42 }}
-              />
-            </View>
+            <Image
+              source={require('./assets/ChatGPT Image May 23, 2026, 02_15_23 PM.png')}
+              style={{ width: 280, height: 168, resizeMode: 'contain' }}
+            />
             <Text style={{ color: C.textSub, fontSize: 14, marginTop: 16, letterSpacing: 0.3 }}>Your smart finance companion</Text>
           </View>
           {!!error && <View style={s.errBox}><Text style={s.errText}>{error}</Text></View>}
@@ -1338,8 +1343,8 @@ export default function App() {
         <ScrollView contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 28 }} keyboardShouldPersistTaps="handled">
           <View style={{ alignItems: 'center', paddingTop: 44, paddingBottom: 24 }}>
             <Image
-              source={require('./assets/ChatGPT Image May 23, 2026, 01_22_15 PM.png')}
-              style={{ width: 130, height: 130, resizeMode: 'contain', borderRadius: 26 }}
+              source={require('./assets/ChatGPT Image May 23, 2026, 02_15_23 PM.png')}
+              style={{ width: 200, height: 120, resizeMode: 'contain' }}
             />
             <Text style={{ color: C.text, fontSize: 22, fontWeight: '700', marginTop: 16 }}>Create Account</Text>
             <Text style={{ color: C.textSub, fontSize: 14, marginTop: 4 }}>Join Finlit today</Text>
@@ -3595,7 +3600,7 @@ export default function App() {
               <Icon char="i" color={C.textSub} size={32} />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={s.drawerRowText}>About</Text>
-                <Text style={s.drawerRowSub}>Version 1.0.6</Text>
+                <Text style={s.drawerRowSub}>Version 1.0.7</Text>
               </View>
               <Text style={s.chevron}>›</Text>
             </TouchableOpacity>
