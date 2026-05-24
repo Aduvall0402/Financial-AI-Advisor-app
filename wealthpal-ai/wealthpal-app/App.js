@@ -92,21 +92,21 @@ function hexToRgb(hex) {
 }
 
 const PLAID_CATEGORIES = [
-  { key: 'GROCERY', label: 'Groceries', icon: '🛒' },
-  { key: 'DINING', label: 'Dining', icon: '🍽️' },
-  { key: 'GENERAL_MERCHANDISE', label: 'Shopping', icon: '🛍️' },
-  { key: 'TRANSPORTATION', label: 'Transportation', icon: '🚗' },
-  { key: 'TRAVEL', label: 'Travel', icon: '✈️' },
-  { key: 'ENTERTAINMENT', label: 'Entertainment', icon: '🎬' },
-  { key: 'PERSONAL_CARE', label: 'Personal Care', icon: '💆' },
-  { key: 'MEDICAL', label: 'Medical', icon: '🏥' },
-  { key: 'RENT_AND_UTILITIES', label: 'Rent & Utilities', icon: '🏠' },
-  { key: 'HOME_IMPROVEMENT', label: 'Home Improvement', icon: '🔧' },
-  { key: 'GENERAL_SERVICES', label: 'General Services', icon: '⚙️' },
-  { key: 'LOAN_PAYMENTS', label: 'Loan Payments', icon: '💳' },
-  { key: 'BANK_FEES', label: 'Bank Fees', icon: '🏦' },
-  { key: 'OTHER', label: 'Other', icon: '📦' },
-  { key: 'IGNORED', label: 'Ignored', icon: '🚫' },
+  { key: 'GROCERY', label: 'Groceries', icon: 'G' },
+  { key: 'DINING', label: 'Dining', icon: 'D' },
+  { key: 'GENERAL_MERCHANDISE', label: 'Shopping', icon: 'S' },
+  { key: 'TRANSPORTATION', label: 'Transportation', icon: 'T' },
+  { key: 'TRAVEL', label: 'Travel', icon: '✈' },
+  { key: 'ENTERTAINMENT', label: 'Entertainment', icon: 'E' },
+  { key: 'PERSONAL_CARE', label: 'Personal Care', icon: 'P' },
+  { key: 'MEDICAL', label: 'Medical', icon: '+' },
+  { key: 'RENT_AND_UTILITIES', label: 'Rent & Utilities', icon: 'U' },
+  { key: 'HOME_IMPROVEMENT', label: 'Home Improvement', icon: 'H' },
+  { key: 'GENERAL_SERVICES', label: 'General Services', icon: 'S' },
+  { key: 'LOAN_PAYMENTS', label: 'Loan Payments', icon: '$' },
+  { key: 'BANK_FEES', label: 'Bank Fees', icon: 'B' },
+  { key: 'OTHER', label: 'Other', icon: 'O' },
+  { key: 'IGNORED', label: 'Ignored', icon: '/' },
 ];
 
 const GROCERY_KEYWORDS = ['walmart','kroger','safeway','whole foods','trader joe','aldi','costco','publix','albertsons','wegmans','heb ','stop & shop','grocery','supermarket','food mart','fresh market','sprouts','meijer','winn-dixie','food lion','ingles','harris teeter','market basket','food 4 less','smart & final','stater bros','giant food','acme','shoprite','food city'];
@@ -145,13 +145,13 @@ const CAT_LETTERS = {
 
 const CAT_BG = {
   Groceries: '#059669', Grocery: '#059669', GROCERY: '#059669',
-  Dining: '#d97706', DINING: '#d97706', Restaurants: '#d97706',
-  'Food and Drink': '#d97706', Food: '#d97706',
+  Dining: '#ea580c', DINING: '#ea580c', Restaurants: '#ea580c',
+  'Food and Drink': '#ea580c', Food: '#ea580c',
   Gas: '#2563eb', Transportation: '#2563eb',
   Travel: '#7c3aed', Shopping: '#db2777', Entertainment: '#dc2626',
   Subscriptions: '#0891b2', Utilities: '#65a30d', Health: '#059669',
   Healthcare: '#059669', Other: '#475569',
-  FOOD_AND_DRINK: '#d97706', GENERAL_MERCHANDISE: '#db2777', TRANSPORTATION: '#2563eb',
+  FOOD_AND_DRINK: '#ea580c', GENERAL_MERCHANDISE: '#db2777', TRANSPORTATION: '#2563eb',
   TRAVEL: '#7c3aed', ENTERTAINMENT: '#dc2626', PERSONAL_CARE: '#0891b2',
   MEDICAL: '#059669', RENT_AND_UTILITIES: '#65a30d', HOME_IMPROVEMENT: '#b45309',
   GENERAL_SERVICES: '#6366f1', LOAN_PAYMENTS: '#ef4444', BANK_FEES: '#64748b',
@@ -170,15 +170,6 @@ function Icon({ char, color = '#7c3aed', size = 36, radius }) {
 
 // Category icon for transaction rows
 function CatIcon({ category }) {
-  const catDef = PLAID_CATEGORIES.find(c => c.key === category);
-  if (catDef) {
-    const bg = CAT_BG[category] || '#475569';
-    return (
-      <View style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: bg, justifyContent: 'center', alignItems: 'center' }}>
-        <Text style={{ fontSize: 20, lineHeight: 24 }}>{catDef.icon}</Text>
-      </View>
-    );
-  }
   const letter = CAT_LETTERS[category] || (category?.[0]?.toUpperCase() || '?');
   const bg = CAT_BG[category] || '#475569';
   return <Icon char={letter} color={bg} size={42} radius={12} />;
@@ -805,8 +796,7 @@ export default function App() {
         if (data.dbAccounts?.length) {
           const map = {};
           data.dbAccounts.forEach((item, idx) => {
-            const names = item.accounts?.map(a => a.name).join(', ') || `Bank ${idx + 1}`;
-            map[item.id] = names;
+            map[item.id] = item.institutionName || `Bank ${idx + 1}`;
           });
           setDbAccountMap(map);
         }
@@ -1975,8 +1965,7 @@ export default function App() {
               const minVal = realVals.length > 0 ? Math.min(...realVals) : 0;
               const floorVal = Math.max(0, minVal * 0.6);
               const chartH = 200;
-              const chartW = chartScrollable ? Math.max(SW - 116, chartLabels.length * 32) : SW - 116;
-              const YAXIS_W = 44;
+              const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 32) : SW - 64;
               const yStep = (lm - floorVal) / 4;
               const yLabels = [lm, lm-yStep, lm-2*yStep, lm-3*yStep, floorVal];
               return (
@@ -1990,25 +1979,18 @@ export default function App() {
                       </View>
                     </View>
                   )}
-                  <View style={{ flexDirection: 'row' }}>
-                    <View style={{ width: YAXIS_W, height: chartH, justifyContent: 'space-between', paddingTop: 10, paddingBottom: 18, paddingRight: 4 }}>
-                      {yLabels.map((val, i) => (
-                        <Text key={i} style={{ color: C.textMuted, fontSize: 10, textAlign: 'right' }}>
-                          {fmtYLabel(String(Math.round(val)))}
-                        </Text>
-                      ))}
-                    </View>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable} style={{ flex: 1 }}>
+                  <View style={{ position: 'relative' }}>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable}>
                       <LineChart
                         data={{ labels: chartLabels, datasets: [
                           { data: chartData, color: () => C.accent },
                           { data: chartData.map(() => lm), withDots: false, color: () => 'rgba(0,0,0,0)' },
                           { data: chartData.map(() => floorVal), withDots: false, color: () => 'rgba(0,0,0,0)' },
                         ]}}
-                        width={chartW + 56} height={chartH} bezier
+                        width={chartW} height={chartH} bezier
                         chartConfig={{ ...CHART_CFG, decimalPlaces: 0 }}
-                        style={{ borderRadius: 10, marginLeft: -56 }} withInnerLines={false}
-                        withVerticalLabels={false}
+                        formatYLabel={fmtYLabel}
+                        style={{ borderRadius: 10, marginLeft: -16 }} withInnerLines={false}
                         yAxisLabel="" yAxisSuffix="" segments={4}
                         onDataPointClick={({ value, index }) => {
                           const realVal = value < 0.02 ? 0 : value;
@@ -2016,23 +1998,42 @@ export default function App() {
                         }}
                       />
                     </ScrollView>
+                    {chartScrollable && (
+                      <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: 46, height: chartH, backgroundColor: C.surface, justifyContent: 'space-between', paddingTop: 8, paddingBottom: 22, alignItems: 'flex-end', paddingRight: 4 }}>
+                        {yLabels.map((val, i) => (
+                          <Text key={i} style={{ color: C.textMuted, fontSize: 9 }}>{fmtYLabel(String(Math.round(val)))}</Text>
+                        ))}
+                      </View>
+                    )}
                   </View>
                 </View>
               );
             })()}
             {chartType === 'bar' && (() => {
+              const lm = niceChartMax(chartData);
+              const chartH = 200;
               const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 32) : SW - 64;
+              const yLabels = [lm, lm*0.75, lm*0.5, lm*0.25, 0];
               return (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable}>
-                  <BarChart
-                    data={{ labels: chartLabels, datasets: [{ data: chartData }] }}
-                    width={chartW} height={200}
-                    chartConfig={{ ...CHART_CFG, decimalPlaces: 0 }}
-                    formatYLabel={fmtYLabel}
-                    style={{ borderRadius: 10, marginLeft: -16 }} withInnerLines={false}
-                    fromZero yAxisLabel="" yAxisSuffix="" segments={4}
-                  />
-                </ScrollView>
+                <View style={{ position: 'relative' }}>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable}>
+                    <BarChart
+                      data={{ labels: chartLabels, datasets: [{ data: chartData }] }}
+                      width={chartW} height={chartH}
+                      chartConfig={{ ...CHART_CFG, decimalPlaces: 0 }}
+                      formatYLabel={fmtYLabel}
+                      style={{ borderRadius: 10, marginLeft: -16 }} withInnerLines={false}
+                      fromZero yAxisLabel="" yAxisSuffix="" segments={4}
+                    />
+                  </ScrollView>
+                  {chartScrollable && (
+                    <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: 46, height: chartH, backgroundColor: C.surface, justifyContent: 'space-between', paddingTop: 8, paddingBottom: 22, alignItems: 'flex-end', paddingRight: 4 }}>
+                      {yLabels.map((val, i) => (
+                        <Text key={i} style={{ color: C.textMuted, fontSize: 9 }}>{fmtYLabel(String(Math.round(val)))}</Text>
+                      ))}
+                    </View>
+                  )}
+                </View>
               );
             })()}
             {chartType === 'pie' && catData && (
@@ -2272,8 +2273,10 @@ export default function App() {
                   <Text style={s.txMerchant} numberOfLines={1}>{item.merchant_name || item.description || 'Unknown'}</Text>
                   <Text style={s.txMeta} numberOfLines={1}>
                     {fmtDate(item.transaction_date)} · {PLAID_CATEGORIES.find(c=>c.key===getEffectiveCategory(item))?.label || (getEffectiveCategory(item)||'Other').replace(/_/g,' ')}
-                    {dbAccountMap[item.account_id] ? ` · ${dbAccountMap[item.account_id].split(',')[0].trim()}` : ''}
                   </Text>
+                  {dbAccountMap[item.account_id] ? (
+                    <Text style={{ color: C.textMuted, fontSize: 11, marginTop: 1 }} numberOfLines={1}>{dbAccountMap[item.account_id]}</Text>
+                  ) : null}
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
                   <Text style={s.txAmt}>-${fmtMoney(item.amount)}</Text>
@@ -3963,7 +3966,7 @@ export default function App() {
                 const assumed = [...PLAID_CATEGORIES, ...customCategories.map(c => ({ key: c, label: c, icon: '★' }))].find(c => c.key === editTxFields.category);
                 return assumed ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: C.accent + '18', borderRadius: 10, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: C.accent + '44' }}>
-                    <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700', flex: 1 }}>✓ {assumed.icon} {assumed.label}</Text>
+                    <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700', flex: 1 }}>✓ {assumed.label}</Text>
                     <Text style={{ color: C.textMuted, fontSize: 11 }}>Detected — tap below to change</Text>
                   </View>
                 ) : null;
@@ -3972,7 +3975,7 @@ export default function App() {
                 {[...PLAID_CATEGORIES, ...customCategories.map(c => ({ key: c, label: c, icon: '★' }))].map(cat => (
                   <TouchableOpacity key={cat.key} onPress={() => setEditTxFields(p => ({...p, category: cat.key}))}
                     style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 11, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: editTxFields.category === cat.key ? C.accent + '18' : 'transparent' }}>
-                    <Text style={{ color: editTxFields.category === cat.key ? C.accent : C.text, fontSize: 14, fontWeight: editTxFields.category === cat.key ? '700' : '400' }}>{cat.icon} {cat.label}</Text>
+                    <Text style={{ color: editTxFields.category === cat.key ? C.accent : C.text, fontSize: 14, fontWeight: editTxFields.category === cat.key ? '700' : '400' }}>{cat.label}</Text>
                     {editTxFields.category === cat.key && <Text style={{ color: C.accent, fontWeight: '700' }}>✓</Text>}
                   </TouchableOpacity>
                 ))}
@@ -4079,7 +4082,7 @@ export default function App() {
                 const detected = [...PLAID_CATEGORIES, ...customCategories.map(c => ({ key: c, label: c, icon: '★' }))].find(c => c.key === receiptFields.category);
                 return detected ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: C.accent + '18', borderRadius: 10, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: C.accent + '44' }}>
-                    <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700', flex: 1 }}>✓ {detected.icon} {detected.label}</Text>
+                    <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700', flex: 1 }}>✓ {detected.label}</Text>
                     <Text style={{ color: C.textMuted, fontSize: 11 }}>Detected — tap below to change</Text>
                   </View>
                 ) : null;
@@ -4088,7 +4091,7 @@ export default function App() {
                 {[...PLAID_CATEGORIES, ...customCategories.map(c => ({ key: c, label: c, icon: '★' }))].map(cat => (
                   <TouchableOpacity key={cat.key} onPress={() => setReceiptFields(p => ({...p, category: cat.key}))}
                     style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 11, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: receiptFields.category === cat.key ? C.accent + '18' : 'transparent' }}>
-                    <Text style={{ color: receiptFields.category === cat.key ? C.accent : C.text, fontSize: 14, fontWeight: receiptFields.category === cat.key ? '700' : '400' }}>{cat.icon} {cat.label}</Text>
+                    <Text style={{ color: receiptFields.category === cat.key ? C.accent : C.text, fontSize: 14, fontWeight: receiptFields.category === cat.key ? '700' : '400' }}>{cat.label}</Text>
                     {receiptFields.category === cat.key && <Text style={{ color: C.accent, fontWeight: '700' }}>✓</Text>}
                   </TouchableOpacity>
                 ))}
@@ -4170,7 +4173,7 @@ export default function App() {
                             {PLAID_CATEGORIES.map(cat => (
                               <TouchableOpacity key={cat.key} onPress={() => setNewGoal(p => ({...p, category: cat.key}))}
                                 style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 9, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: C.border }}>
-                                <Text style={{ color: newGoal.category === cat.key ? C.accent : C.text, fontSize: 13 }}>{cat.icon} {cat.label}</Text>
+                                <Text style={{ color: newGoal.category === cat.key ? C.accent : C.text, fontSize: 13 }}>{cat.label}</Text>
                                 {newGoal.category === cat.key && <Text style={{ color: C.accent }}>✓</Text>}
                               </TouchableOpacity>
                             ))}

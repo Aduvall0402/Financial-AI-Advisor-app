@@ -7,6 +7,7 @@ import multer from "multer";
 import fs from "fs";
 import supabase from "./supabase";
 import * as plaidService from "./plaidService";
+import { plaidClient } from "./plaidService";
 import * as openaiService from "./openaiService";
 import * as auth from "./auth";
 
@@ -154,13 +155,22 @@ app.get("/api/plaid/accounts/:userId", async (req: Request, res: Response) => {
     }
     // Aggregate accounts from all linked Plaid items, keyed by DB row id
     const allAccounts: any[] = [];
-    const dbAccounts: { id: string; plaid_item_id: string; accounts: any[] }[] = [];
+    const dbAccounts: { id: string; plaid_item_id: string; accounts: any[]; institutionName: string }[] = [];
     for (const row of data) {
       if (!row.plaid_access_token) continue;
       try {
         const accounts = await plaidService.getAccounts(row.plaid_access_token);
         allAccounts.push(...accounts);
-        dbAccounts.push({ id: row.id, plaid_item_id: row.plaid_account_id, accounts });
+        let institutionName = '';
+        try {
+          const itemResp = await plaidClient.itemGet({ access_token: row.plaid_access_token });
+          const institutionId = itemResp.data.item.institution_id;
+          if (institutionId) {
+            const instResp = await plaidClient.institutionsGetById({ institution_id: institutionId, country_codes: ['US'] as any });
+            institutionName = instResp.data.institution.name;
+          }
+        } catch { /* institution name is optional */ }
+        dbAccounts.push({ id: row.id, plaid_item_id: row.plaid_account_id, accounts, institutionName });
       } catch { /* skip failed items */ }
     }
     if (!allAccounts.length) return res.status(404).json({ error: "No connected account found" });
