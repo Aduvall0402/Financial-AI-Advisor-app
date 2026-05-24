@@ -146,23 +146,25 @@ app.get("/api/plaid/accounts/:userId", async (req: Request, res: Response) => {
     const { userId } = req.params;
     const { data, error } = await supabase
       .from("accounts")
-      .select("plaid_access_token, plaid_account_id")
+      .select("id, plaid_access_token, plaid_account_id")
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
     if (error || !data?.length) {
       return res.status(404).json({ error: "No connected account found" });
     }
-    // Aggregate accounts from all linked Plaid items
+    // Aggregate accounts from all linked Plaid items, keyed by DB row id
     const allAccounts: any[] = [];
+    const dbAccounts: { id: string; plaid_item_id: string; accounts: any[] }[] = [];
     for (const row of data) {
       if (!row.plaid_access_token) continue;
       try {
         const accounts = await plaidService.getAccounts(row.plaid_access_token);
         allAccounts.push(...accounts);
+        dbAccounts.push({ id: row.id, plaid_item_id: row.plaid_account_id, accounts });
       } catch { /* skip failed items */ }
     }
     if (!allAccounts.length) return res.status(404).json({ error: "No connected account found" });
-    res.json({ accounts: allAccounts, itemId: data[0].plaid_account_id });
+    res.json({ accounts: allAccounts, itemId: data[0].plaid_account_id, dbAccounts });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "Failed to fetch accounts" });
   }

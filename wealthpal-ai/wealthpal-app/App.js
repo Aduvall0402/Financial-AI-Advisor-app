@@ -22,7 +22,7 @@ const INCOME_CATEGORIES = new Set([
   'Payroll', 'PAYROLL', 'INTEREST_EARNED', 'Interest',
   'Refund', 'REFUND', 'LOAN_PROCEEDS',
 ]);
-const isIncomeTx = (tx) => INCOME_CATEGORIES.has(tx.category) || INCOME_CATEGORIES.has((tx.category || '').toUpperCase());
+const isIncomeTx = (tx) => tx.category === 'IGNORED' || INCOME_CATEGORIES.has(tx.category) || INCOME_CATEGORIES.has((tx.category || '').toUpperCase());
 
 // Categories to additionally exclude from "largest purchase" (fixed costs / non-discretionary)
 const SKIP_LARGEST_PURCHASE = new Set([
@@ -92,20 +92,21 @@ function hexToRgb(hex) {
 }
 
 const PLAID_CATEGORIES = [
-  { key: 'GROCERY', label: 'Groceries', icon: 'G' },
-  { key: 'DINING', label: 'Dining', icon: 'D' },
-  { key: 'GENERAL_MERCHANDISE', label: 'Shopping', icon: 'S' },
-  { key: 'TRANSPORTATION', label: 'Transportation', icon: 'T' },
-  { key: 'TRAVEL', label: 'Travel', icon: '✈' },
-  { key: 'ENTERTAINMENT', label: 'Entertainment', icon: 'E' },
-  { key: 'PERSONAL_CARE', label: 'Personal Care', icon: 'P' },
-  { key: 'MEDICAL', label: 'Medical', icon: '+' },
-  { key: 'RENT_AND_UTILITIES', label: 'Rent & Utilities', icon: 'U' },
-  { key: 'HOME_IMPROVEMENT', label: 'Home Improvement', icon: 'H' },
-  { key: 'GENERAL_SERVICES', label: 'General Services', icon: 'G' },
-  { key: 'LOAN_PAYMENTS', label: 'Loan Payments', icon: '$' },
-  { key: 'BANK_FEES', label: 'Bank Fees', icon: 'B' },
-  { key: 'OTHER', label: 'Other', icon: 'O' },
+  { key: 'GROCERY', label: 'Groceries', icon: '🛒' },
+  { key: 'DINING', label: 'Dining', icon: '🍽️' },
+  { key: 'GENERAL_MERCHANDISE', label: 'Shopping', icon: '🛍️' },
+  { key: 'TRANSPORTATION', label: 'Transportation', icon: '🚗' },
+  { key: 'TRAVEL', label: 'Travel', icon: '✈️' },
+  { key: 'ENTERTAINMENT', label: 'Entertainment', icon: '🎬' },
+  { key: 'PERSONAL_CARE', label: 'Personal Care', icon: '💆' },
+  { key: 'MEDICAL', label: 'Medical', icon: '🏥' },
+  { key: 'RENT_AND_UTILITIES', label: 'Rent & Utilities', icon: '🏠' },
+  { key: 'HOME_IMPROVEMENT', label: 'Home Improvement', icon: '🔧' },
+  { key: 'GENERAL_SERVICES', label: 'General Services', icon: '⚙️' },
+  { key: 'LOAN_PAYMENTS', label: 'Loan Payments', icon: '💳' },
+  { key: 'BANK_FEES', label: 'Bank Fees', icon: '🏦' },
+  { key: 'OTHER', label: 'Other', icon: '📦' },
+  { key: 'IGNORED', label: 'Ignored', icon: '🚫' },
 ];
 
 const GROCERY_KEYWORDS = ['walmart','kroger','safeway','whole foods','trader joe','aldi','costco','publix','albertsons','wegmans','heb ','stop & shop','grocery','supermarket','food mart','fresh market','sprouts','meijer','winn-dixie','food lion','ingles','harris teeter','market basket','food 4 less','smart & final','stater bros','giant food','acme','shoprite','food city'];
@@ -154,6 +155,7 @@ const CAT_BG = {
   TRAVEL: '#7c3aed', ENTERTAINMENT: '#dc2626', PERSONAL_CARE: '#0891b2',
   MEDICAL: '#059669', RENT_AND_UTILITIES: '#65a30d', HOME_IMPROVEMENT: '#b45309',
   GENERAL_SERVICES: '#6366f1', LOAN_PAYMENTS: '#ef4444', BANK_FEES: '#64748b',
+  IGNORED: '#374151',
 };
 
 // Icon component — colored rounded square with a letter/symbol
@@ -168,6 +170,15 @@ function Icon({ char, color = '#7c3aed', size = 36, radius }) {
 
 // Category icon for transaction rows
 function CatIcon({ category }) {
+  const catDef = PLAID_CATEGORIES.find(c => c.key === category);
+  if (catDef) {
+    const bg = CAT_BG[category] || '#475569';
+    return (
+      <View style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: bg, justifyContent: 'center', alignItems: 'center' }}>
+        <Text style={{ fontSize: 20, lineHeight: 24 }}>{catDef.icon}</Text>
+      </View>
+    );
+  }
   const letter = CAT_LETTERS[category] || (category?.[0]?.toUpperCase() || '?');
   const bg = CAT_BG[category] || '#475569';
   return <Icon char={letter} color={bg} size={42} radius={12} />;
@@ -324,6 +335,7 @@ export default function App() {
 
   // Chart type for insights
   const [chartType, setChartType] = useState('line');
+  const [chartTooltip, setChartTooltip] = useState(null); // { index, value, x, y }
 
   // Insights filters
   const [insightsRange, setInsightsRange] = useState('30d');
@@ -398,6 +410,9 @@ export default function App() {
   const [txSortDropdownVisible, setTxSortDropdownVisible] = useState(false);
   const [txFilterCategory, setTxFilterCategory] = useState('all');
   const [txFilterDropdownVisible, setTxFilterDropdownVisible] = useState(false);
+  const [txFilterAccount, setTxFilterAccount] = useState('all');
+  const [txFilterAccountVisible, setTxFilterAccountVisible] = useState(false);
+  const [dbAccountMap, setDbAccountMap] = useState({}); // db_uuid → display label
 
   // Transactions bulk select
   const [selectedTxIds, setSelectedTxIds] = useState(new Set());
@@ -530,6 +545,7 @@ export default function App() {
     let txs = txFilterCategory === 'all'
       ? [...transactions]
       : transactions.filter(tx => tx.category === txFilterCategory);
+    if (txFilterAccount !== 'all') txs = txs.filter(tx => tx.account_id === txFilterAccount);
     if (txSearch.trim()) {
       const q = txSearch.trim().toLowerCase();
       txs = txs.filter(tx =>
@@ -546,7 +562,7 @@ export default function App() {
       case 'category':    return txs.sort((a, b) => (a.category || '').localeCompare(b.category || ''));
       default:            return txs.sort((a, b) => new Date(b.transaction_date) - new Date(a.transaction_date));
     }
-  }, [transactions, txSortBy, txFilterCategory, txSearch]);
+  }, [transactions, txSortBy, txFilterCategory, txFilterAccount, txSearch]);
 
   // Insights dropdown
   const [insightsDropdownVisible, setInsightsDropdownVisible] = useState(false);
@@ -785,6 +801,15 @@ export default function App() {
         setSelectedAccount(data.accounts[0]);
         setLinkedAccount(data.itemId);
         setAccountsError(false);
+        // Build a map from DB UUID → display label (e.g. "Chase Checking, Savings")
+        if (data.dbAccounts?.length) {
+          const map = {};
+          data.dbAccounts.forEach((item, idx) => {
+            const names = item.accounts?.map(a => a.name).join(', ') || `Bank ${idx + 1}`;
+            map[item.id] = names;
+          });
+          setDbAccountMap(map);
+        }
       } else {
         setAccountsError(true);
       }
@@ -1949,22 +1974,50 @@ export default function App() {
               const realVals = chartData.filter(v => v > 0.01);
               const minVal = realVals.length > 0 ? Math.min(...realVals) : 0;
               const floorVal = Math.max(0, minVal * 0.6);
-              const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 32) : SW - 64;
+              const chartH = 200;
+              const chartW = chartScrollable ? Math.max(SW - 116, chartLabels.length * 32) : SW - 116;
+              const YAXIS_W = 44;
+              const yStep = (lm - floorVal) / 4;
+              const yLabels = [lm, lm-yStep, lm-2*yStep, lm-3*yStep, floorVal];
               return (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable}>
-                  <LineChart
-                    data={{ labels: chartLabels, datasets: [
-                      { data: chartData, color: () => C.accent },
-                      { data: chartData.map(() => lm), withDots: false, color: () => 'rgba(0,0,0,0)' },
-                      { data: chartData.map(() => floorVal), withDots: false, color: () => 'rgba(0,0,0,0)' },
-                    ]}}
-                    width={chartW} height={200} bezier
-                    chartConfig={{ ...CHART_CFG, decimalPlaces: 0 }}
-                    formatYLabel={fmtYLabel}
-                    style={{ borderRadius: 10, marginLeft: -16 }} withInnerLines={false}
-                    yAxisLabel="" yAxisSuffix="" segments={4}
-                  />
-                </ScrollView>
+                <View>
+                  {chartTooltip && (
+                    <View style={{ alignItems: 'center', marginBottom: 6 }}>
+                      <View style={{ backgroundColor: C.accent + '22', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1, borderColor: C.accent }}>
+                        <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700' }}>
+                          {chartLabels[chartTooltip.index]}: ${fmtMoney(chartTooltip.value)}
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+                  <View style={{ flexDirection: 'row' }}>
+                    <View style={{ width: YAXIS_W, height: chartH, justifyContent: 'space-between', paddingTop: 10, paddingBottom: 18, paddingRight: 4 }}>
+                      {yLabels.map((val, i) => (
+                        <Text key={i} style={{ color: C.textMuted, fontSize: 10, textAlign: 'right' }}>
+                          {fmtYLabel(String(Math.round(val)))}
+                        </Text>
+                      ))}
+                    </View>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable} style={{ flex: 1 }}>
+                      <LineChart
+                        data={{ labels: chartLabels, datasets: [
+                          { data: chartData, color: () => C.accent },
+                          { data: chartData.map(() => lm), withDots: false, color: () => 'rgba(0,0,0,0)' },
+                          { data: chartData.map(() => floorVal), withDots: false, color: () => 'rgba(0,0,0,0)' },
+                        ]}}
+                        width={chartW + 56} height={chartH} bezier
+                        chartConfig={{ ...CHART_CFG, decimalPlaces: 0 }}
+                        style={{ borderRadius: 10, marginLeft: -56 }} withInnerLines={false}
+                        withVerticalLabels={false}
+                        yAxisLabel="" yAxisSuffix="" segments={4}
+                        onDataPointClick={({ value, index }) => {
+                          const realVal = value < 0.02 ? 0 : value;
+                          setChartTooltip(prev => prev?.index === index ? null : { value: realVal, index });
+                        }}
+                      />
+                    </ScrollView>
+                  </View>
+                </View>
               );
             })()}
             {chartType === 'bar' && (() => {
@@ -2098,14 +2151,8 @@ export default function App() {
                 </>
               ) : (
                 <>
-                  <TouchableOpacity style={s.syncBtn} onPress={() => setTxSearchActive(true)}>
-                    <Text style={s.syncText}>🔍</Text>
-                  </TouchableOpacity>
                   <TouchableOpacity style={s.syncBtn} onPress={exportCSV}>
                     <Text style={s.syncText}>↓ CSV</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={s.syncBtn} onPress={syncTransactions} disabled={syncing || loadingTx}>
-                    {syncing ? <ActivityIndicator size="small" color={C.accent} /> : <Text style={s.syncText}>↻ Sync</Text>}
                   </TouchableOpacity>
                   <TouchableOpacity style={s.syncBtn} disabled={receiptScanLoading} onPress={() => Alert.alert('Scan Receipt', 'Choose a source', [
                     { text: 'Camera', onPress: () => handleScanReceipt(true) },
@@ -2113,6 +2160,9 @@ export default function App() {
                     { text: 'Cancel', style: 'cancel' },
                   ])}>
                     {receiptScanLoading ? <ActivityIndicator size="small" color={C.accent} /> : <Text style={s.syncText}>📷</Text>}
+                  </TouchableOpacity>
+                  <TouchableOpacity style={s.syncBtn} onPress={() => setTxSearchActive(true)}>
+                    <Text style={s.syncText}>🔍</Text>
                   </TouchableOpacity>
                 </>
               )}
@@ -2139,21 +2189,30 @@ export default function App() {
         <View style={{ flexDirection: 'row', gap: 8, marginHorizontal: 16, marginBottom: 8 }}>
           <TouchableOpacity
             onPress={() => setTxSortDropdownVisible(true)}
-            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: C.surface, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11, borderWidth: 1, borderColor: C.border }}
+            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: C.surface, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: C.border }}
           >
-            <Text style={{ color: C.textSub, fontSize: 13, marginRight: 4 }}>Sort:</Text>
-            <Text style={{ color: C.text, fontSize: 13, fontWeight: '600', flex: 1 }}>{SORT_LABELS[txSortBy]}</Text>
-            <Text style={{ color: C.textSub, fontSize: 16, lineHeight: 18 }}>▾</Text>
+            <Text style={{ color: C.textSub, fontSize: 12, marginRight: 3 }}>Sort</Text>
+            <Text style={{ color: C.text, fontSize: 12, fontWeight: '600', flex: 1 }} numberOfLines={1}>{SORT_LABELS[txSortBy].split(':')[0]}</Text>
+            <Text style={{ color: C.textSub, fontSize: 14 }}>▾</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => setTxFilterDropdownVisible(true)}
-            style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: txFilterCategory !== 'all' ? C.accent + '22' : C.surface, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11, borderWidth: 1, borderColor: txFilterCategory !== 'all' ? C.accent : C.border }}
+            style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: txFilterCategory !== 'all' ? C.accent + '22' : C.surface, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: txFilterCategory !== 'all' ? C.accent : C.border }}
           >
-            <Text style={{ color: txFilterCategory !== 'all' ? C.accent : C.textSub, fontSize: 13, fontWeight: txFilterCategory !== 'all' ? '700' : '400' }}>
-              {txFilterCategory === 'all' ? '⊟ Filter' : `⊟ ${txFilterCategory.replace(/_/g,' ').slice(0,10)}`}
+            <Text style={{ color: txFilterCategory !== 'all' ? C.accent : C.textSub, fontSize: 12, fontWeight: txFilterCategory !== 'all' ? '700' : '400' }}>
+              {txFilterCategory === 'all' ? '⊟ Category' : `⊟ ${PLAID_CATEGORIES.find(c=>c.key===txFilterCategory)?.label || txFilterCategory.replace(/_/g,' ')}`}
             </Text>
-            <Text style={{ color: txFilterCategory !== 'all' ? C.accent : C.textSub, fontSize: 16, lineHeight: 18, marginLeft: 4 }}>▾</Text>
           </TouchableOpacity>
+          {Object.keys(dbAccountMap).length > 1 && (
+            <TouchableOpacity
+              onPress={() => setTxFilterAccountVisible(true)}
+              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: txFilterAccount !== 'all' ? C.accent + '22' : C.surface, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: txFilterAccount !== 'all' ? C.accent : C.border }}
+            >
+              <Text style={{ color: txFilterAccount !== 'all' ? C.accent : C.textSub, fontSize: 12, fontWeight: txFilterAccount !== 'all' ? '700' : '400' }}>
+                🏦 {txFilterAccount === 'all' ? 'Bank' : 'Filtered'}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
       {!!syncError && (
@@ -2211,7 +2270,10 @@ export default function App() {
                 <CatIcon category={getEffectiveCategory(item)} />
                 <View style={{ flex: 1 }}>
                   <Text style={s.txMerchant} numberOfLines={1}>{item.merchant_name || item.description || 'Unknown'}</Text>
-                  <Text style={s.txMeta}>{fmtDate(item.transaction_date)} · {(getEffectiveCategory(item) || 'Other').replace(/_/g, ' ')}</Text>
+                  <Text style={s.txMeta} numberOfLines={1}>
+                    {fmtDate(item.transaction_date)} · {PLAID_CATEGORIES.find(c=>c.key===getEffectiveCategory(item))?.label || (getEffectiveCategory(item)||'Other').replace(/_/g,' ')}
+                    {dbAccountMap[item.account_id] ? ` · ${dbAccountMap[item.account_id].split(',')[0].trim()}` : ''}
+                  </Text>
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
                   <Text style={s.txAmt}>-${fmtMoney(item.amount)}</Text>
@@ -2364,7 +2426,7 @@ export default function App() {
       { id: 'budget', label: 'Budget', icon: '◎', color: C.green, desc: 'Spending limits by category' },
       { id: 'recurring', label: 'Recurring', icon: '↻', color: '#06b6d4', desc: 'Bills, subscriptions & repeating payments' },
       { id: 'networth', label: 'Net Worth', icon: '▲', color: '#1EDFD5', desc: 'Assets minus liabilities', comingSoon: true },
-      { id: 'creditscore', label: 'Credit Score', icon: 'C', color: '#f97316', desc: 'Monitor your credit health' },
+      { id: 'creditscore', label: 'Credit Score', icon: '★', color: '#f97316', desc: 'Monitor your credit health', comingSoon: true },
     ];
     return (
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}>
@@ -3906,7 +3968,7 @@ export default function App() {
                   </View>
                 ) : null;
               })()}
-              <ScrollView style={{ maxHeight: 160, marginBottom: 12, borderWidth: 1, borderColor: C.border, borderRadius: 12 }} showsVerticalScrollIndicator={false}>
+              <ScrollView style={{ maxHeight: 160, marginBottom: 12, borderWidth: 1, borderColor: C.border, borderRadius: 12 }} showsVerticalScrollIndicator={false} nestedScrollEnabled={true}>
                 {[...PLAID_CATEGORIES, ...customCategories.map(c => ({ key: c, label: c, icon: '★' }))].map(cat => (
                   <TouchableOpacity key={cat.key} onPress={() => setEditTxFields(p => ({...p, category: cat.key}))}
                     style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 11, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: editTxFields.category === cat.key ? C.accent + '18' : 'transparent' }}>
@@ -4022,7 +4084,7 @@ export default function App() {
                   </View>
                 ) : null;
               })()}
-              <ScrollView style={{ maxHeight: 160, marginBottom: 12, borderWidth: 1, borderColor: C.border, borderRadius: 12 }} showsVerticalScrollIndicator={false}>
+              <ScrollView style={{ maxHeight: 160, marginBottom: 12, borderWidth: 1, borderColor: C.border, borderRadius: 12 }} showsVerticalScrollIndicator={false} nestedScrollEnabled={true}>
                 {[...PLAID_CATEGORIES, ...customCategories.map(c => ({ key: c, label: c, icon: '★' }))].map(cat => (
                   <TouchableOpacity key={cat.key} onPress={() => setReceiptFields(p => ({...p, category: cat.key}))}
                     style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 11, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: receiptFields.category === cat.key ? C.accent + '18' : 'transparent' }}>
@@ -4449,6 +4511,32 @@ export default function App() {
               </TouchableOpacity>
             ))}
             <TouchableOpacity style={[s.linkRow, { marginTop: 4 }]} onPress={() => setTxSortDropdownVisible(false)}>
+              <Text style={s.linkText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Transaction Account Filter Dropdown Modal */}
+      <Modal visible={txFilterAccountVisible} animationType="fade" transparent onRequestClose={() => setTxFilterAccountVisible(false)}>
+        <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setTxFilterAccountVisible(false)}>
+          <View style={[s.modalCard, { paddingBottom: 8 }]}>
+            <Text style={s.modalTitle}>Filter by Account</Text>
+            <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
+              {[['all', 'All Accounts'], ...Object.entries(dbAccountMap)].map(([id, label]) => (
+                <TouchableOpacity
+                  key={id}
+                  onPress={() => { setTxFilterAccount(id); setTxFilterAccountVisible(false); }}
+                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: C.border }}
+                >
+                  <Text style={{ color: txFilterAccount === id ? C.accent : C.text, fontSize: 15, fontWeight: txFilterAccount === id ? '700' : '400' }}>
+                    {id === 'all' ? 'All Accounts' : label}
+                  </Text>
+                  {txFilterAccount === id && <Text style={{ color: C.accent, fontSize: 16 }}>✓</Text>}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity style={[s.linkRow, { marginTop: 4 }]} onPress={() => setTxFilterAccountVisible(false)}>
               <Text style={s.linkText}>Cancel</Text>
             </TouchableOpacity>
           </View>
