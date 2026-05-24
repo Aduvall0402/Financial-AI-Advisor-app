@@ -56,8 +56,8 @@ const BASE = {
   red: '#ef4444',
   amber: '#f59e0b',
   text: '#eef2ff',
-  textSub: '#9bb5d0',
-  textMuted: '#5a7a9e',
+  textSub: '#7dd8f0',
+  textMuted: '#4ab0ce',
 };
 
 // Primary = background dark color, Secondary = accent/highlight color
@@ -254,7 +254,7 @@ export default function App() {
       return {
         ...BASE,
         bg: '#f1f5f9', surface: '#ffffff', surface2: '#e2e8f0', border: '#cbd5e1',
-        text: '#0f172a', textSub: '#475569', textMuted: '#94a3b8',
+        text: '#0f172a', textSub: '#0369a1', textMuted: '#0e7490',
         accent: BRAND_BLUE, blue: '#1E5EFF',
         green: '#059669', red: '#dc2626', amber: '#d97706',
       };
@@ -311,7 +311,7 @@ export default function App() {
     { icon: '⌂', color: '#7c3aed', title: 'Welcome to Finlit', body: 'Your smart financial companion. We\'ll walk you through the key features to get you started.' },
     { icon: 'B', color: '#3b82f6', title: 'Connect Your Bank', body: 'Tap the ⚙ gear icon in the top right and select "Connect Bank" to securely link your accounts via Plaid.' },
     { icon: '≡', color: '#10b981', title: 'View Transactions', body: 'The Txns tab shows all your transactions. Use Sort to organize by date, amount, or category. Tap any transaction to edit it.' },
-    { icon: '◈', color: '#f59e0b', title: 'Get Insights', body: 'The Insights tab shows spending charts and breakdowns by category. Tap categories to filter the chart.' },
+    { icon: '◈', color: BRAND_BLUE, title: 'Get Insights', body: 'The Insights tab shows spending charts and breakdowns by category. Tap categories to filter the chart.' },
     { icon: '✦', color: '#ec4899', title: 'Ask the AI', body: 'The AI tab is your personal finance advisor. Ask anything — "How much did I spend last week?" or "Where can I cut back?"' },
     { icon: '☰', color: '#06b6d4', title: 'More Features', body: 'The More tab has Goals, Groups, Budget, Net Worth, and Credit Score. Set budgets and goals to stay on track!' },
   ];
@@ -1293,6 +1293,13 @@ export default function App() {
     return (
       <View style={{ flex: 1, backgroundColor: '#060c17', justifyContent: 'center', alignItems: 'center' }}>
         <StatusBar barStyle="light-content" backgroundColor="#060c17" />
+        {/* Background decorative pattern */}
+        <View style={{ position: 'absolute', top: -120, right: -120, width: 380, height: 380, borderRadius: 190, backgroundColor: '#1E5EFF', opacity: 0.07 }} />
+        <View style={{ position: 'absolute', top: 40, right: -60, width: 200, height: 200, borderRadius: 100, borderWidth: 1.5, borderColor: '#16B7F6', opacity: 0.18 }} />
+        <View style={{ position: 'absolute', top: 120, left: -80, width: 260, height: 260, borderRadius: 130, backgroundColor: '#1EDFD5', opacity: 0.05 }} />
+        <View style={{ position: 'absolute', bottom: -80, left: -80, width: 320, height: 320, borderRadius: 160, backgroundColor: '#16B7F6', opacity: 0.07 }} />
+        <View style={{ position: 'absolute', bottom: 80, right: -40, width: 180, height: 180, borderRadius: 90, borderWidth: 1.5, borderColor: '#1EDFD5', opacity: 0.15 }} />
+        <View style={{ position: 'absolute', bottom: 200, left: 30, width: 100, height: 100, borderRadius: 50, borderWidth: 1, borderColor: '#51F0C0', opacity: 0.2 }} />
         <Animated.View style={{ opacity: splashOpacity, transform: [{ scale: splashScale }], alignItems: 'center' }}>
           <Image
             source={require('./assets/ChatGPT Image May 23, 2026, 02_15_23 PM.png')}
@@ -1311,6 +1318,13 @@ export default function App() {
     return (
       <View style={{ flex: 1, backgroundColor: C.bg }}>
         <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={C.bg} />
+        {/* Background decorative pattern */}
+        <View style={{ position: 'absolute', top: -100, right: -100, width: 340, height: 340, borderRadius: 170, backgroundColor: '#1E5EFF', opacity: isDarkMode ? 0.07 : 0.05 }} />
+        <View style={{ position: 'absolute', top: 60, right: -50, width: 180, height: 180, borderRadius: 90, borderWidth: 1.5, borderColor: '#16B7F6', opacity: isDarkMode ? 0.18 : 0.25 }} />
+        <View style={{ position: 'absolute', top: 160, left: -70, width: 230, height: 230, borderRadius: 115, backgroundColor: '#1EDFD5', opacity: isDarkMode ? 0.05 : 0.06 }} />
+        <View style={{ position: 'absolute', bottom: -60, left: -60, width: 280, height: 280, borderRadius: 140, backgroundColor: '#16B7F6', opacity: isDarkMode ? 0.07 : 0.06 }} />
+        <View style={{ position: 'absolute', bottom: 100, right: -30, width: 150, height: 150, borderRadius: 75, borderWidth: 1.5, borderColor: '#1EDFD5', opacity: isDarkMode ? 0.15 : 0.2 }} />
+        <View style={{ position: 'absolute', bottom: 260, left: 20, width: 80, height: 80, borderRadius: 40, borderWidth: 1, borderColor: '#51F0C0', opacity: isDarkMode ? 0.2 : 0.25 }} />
         <ScrollView contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 28 }} keyboardShouldPersistTaps="handled">
           <View style={{ alignItems: 'center', paddingTop: 64, paddingBottom: 36 }}>
             <Image
@@ -1340,6 +1354,13 @@ export default function App() {
     return (
       <View style={{ flex: 1, backgroundColor: C.bg }}>
         <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={C.bg} />
+        {/* Background decorative pattern */}
+        <View style={{ position: 'absolute', top: -100, right: -100, width: 340, height: 340, borderRadius: 170, backgroundColor: '#1E5EFF', opacity: isDarkMode ? 0.07 : 0.05 }} />
+        <View style={{ position: 'absolute', top: 60, right: -50, width: 180, height: 180, borderRadius: 90, borderWidth: 1.5, borderColor: '#16B7F6', opacity: isDarkMode ? 0.18 : 0.25 }} />
+        <View style={{ position: 'absolute', top: 160, left: -70, width: 230, height: 230, borderRadius: 115, backgroundColor: '#1EDFD5', opacity: isDarkMode ? 0.05 : 0.06 }} />
+        <View style={{ position: 'absolute', bottom: -60, left: -60, width: 280, height: 280, borderRadius: 140, backgroundColor: '#16B7F6', opacity: isDarkMode ? 0.07 : 0.06 }} />
+        <View style={{ position: 'absolute', bottom: 100, right: -30, width: 150, height: 150, borderRadius: 75, borderWidth: 1.5, borderColor: '#1EDFD5', opacity: isDarkMode ? 0.15 : 0.2 }} />
+        <View style={{ position: 'absolute', bottom: 260, left: 20, width: 80, height: 80, borderRadius: 40, borderWidth: 1, borderColor: '#51F0C0', opacity: isDarkMode ? 0.2 : 0.25 }} />
         <ScrollView contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 28 }} keyboardShouldPersistTaps="handled">
           <View style={{ alignItems: 'center', paddingTop: 44, paddingBottom: 24 }}>
             <Image
@@ -1435,7 +1456,7 @@ export default function App() {
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshAll} tintColor={C.accent} />}
       >
-        {/* Balance card — compact, dark */}
+        {/* Balance card */}
         <View style={s.balanceCard}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <View style={{ flex: 1 }}>
@@ -1449,7 +1470,7 @@ export default function App() {
           </View>
         </View>
 
-        {/* Account pills — compact horizontal selector */}
+        {/* Account pills */}
         {accounts.length > 1 && (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14, marginTop: -4 }}>
             {accounts.map(acc => (
@@ -1542,7 +1563,7 @@ export default function App() {
           </View>
         )}
 
-        {/* Upcoming bills — monthly calendar */}
+        {/* Upcoming bills — calendar in a surface card */}
         {recurringTxs.length > 0 && (() => {
           const today = new Date();
           const todayNum = today.getDate();
@@ -1573,7 +1594,7 @@ export default function App() {
           const BILL_BLUE = BRAND_BLUE;
 
           return (
-            <View style={s.section}>
+            <View style={[s.section, { backgroundColor: C.surface, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: C.border }]}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                 <Text style={s.sectionTitle}>Bills — {MONTHS_SHORT[month]} {year}</Text>
                 <Text style={{ color: BILL_BLUE, fontSize: 12, fontWeight: '700' }}>${fmtMoney(totalMonthly)}/mo</Text>
@@ -1711,17 +1732,17 @@ export default function App() {
             })()}
             {!userPayday && (
               <TouchableOpacity
-                style={[s.quickCard, { borderColor: '#f59e0b' }]}
+                style={[s.quickCard, { borderColor: C.accent }]}
                 onPress={() => { setPaydayNextDate(userPayday?.nextDate ?? ''); setPaydayFreq(userPayday?.frequency ?? 'biweekly'); setPaydayModalVisible(true); }}
                 activeOpacity={0.8}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                  <Icon char="📅" color="#f59e0b" size={40} radius={12} />
+                  <Icon char="📅" color={C.accent} size={40} radius={12} />
                   <View style={{ flex: 1 }}>
                     <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>Set Your Payday</Text>
                     <Text style={{ color: C.textSub, fontSize: 12 }}>Tell us when you get paid so paycycle budgets work automatically.</Text>
                   </View>
-                  <Text style={{ color: '#f59e0b', fontSize: 20 }}>›</Text>
+                  <Text style={{ color: C.accent, fontSize: 20 }}>›</Text>
                 </View>
               </TouchableOpacity>
             )}
@@ -1875,6 +1896,9 @@ export default function App() {
             )}
             {chartType === 'line' && (() => {
               const lm = niceChartMax(chartData);
+              const realVals = chartData.filter(v => v > 0.01);
+              const minVal = realVals.length > 0 ? Math.min(...realVals) : 0;
+              const floorVal = Math.max(0, minVal * 0.6);
               const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 32) : SW - 64;
               return (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable}>
@@ -1882,6 +1906,7 @@ export default function App() {
                     data={{ labels: chartLabels, datasets: [
                       { data: chartData, color: () => C.accent },
                       { data: chartData.map(() => lm), withDots: false, color: () => 'rgba(0,0,0,0)' },
+                      { data: chartData.map(() => floorVal), withDots: false, color: () => 'rgba(0,0,0,0)' },
                     ]}}
                     width={chartW} height={200} bezier
                     chartConfig={{ ...CHART_CFG, decimalPlaces: 0 }}
@@ -1935,7 +1960,7 @@ export default function App() {
               const pctOfBudget = budgetLimit > 0 ? Math.min(100, Math.round((amt / budgetLimit) * 100)) : null;
               const barPct = pctOfBudget !== null ? pctOfBudget : pctOfTotal;
               const barColor = pctOfBudget !== null
-                ? (pctOfBudget >= 100 ? C.red : pctOfBudget >= 75 ? C.amber : CAT_COLORS[i % CAT_COLORS.length])
+                ? (pctOfBudget >= 100 ? C.red : pctOfBudget >= 75 ? '#1EDFD5' : CAT_COLORS[i % CAT_COLORS.length])
                 : CAT_COLORS[i % CAT_COLORS.length];
               const catTxCount = filteredTx.filter(tx => tx.category === cat).length;
               const isSelected = selectedCategory === cat;
@@ -2151,7 +2176,7 @@ export default function App() {
     const GOAL_TYPES = [
       { key: 'debt_payoff', label: 'Debt Payoff', icon: '⬇', color: C.red },
       { key: 'savings', label: 'Savings', icon: '★', color: C.green },
-      { key: 'spending_behavior', label: 'Spending Behavior', icon: '◎', color: C.amber },
+      { key: 'spending_behavior', label: 'Spending Behavior', icon: '◎', color: C.accent },
       { key: 'streak', label: 'Budget Streak', icon: '🔥', color: C.accent },
     ];
     const byType = (type) => goals.filter(g => g.type === type);
@@ -2281,7 +2306,7 @@ export default function App() {
       { id: 'groups', label: 'Groups', icon: '◈', color: C.blue, desc: 'Shared budgets & group goals' },
       { id: 'budget', label: 'Budget', icon: '◎', color: C.green, desc: 'Spending limits by category' },
       { id: 'recurring', label: 'Recurring', icon: '↻', color: '#06b6d4', desc: 'Bills, subscriptions & repeating payments' },
-      { id: 'networth', label: 'Net Worth', icon: '▲', color: C.amber, desc: 'Assets minus liabilities' },
+      { id: 'networth', label: 'Net Worth', icon: '▲', color: '#1EDFD5', desc: 'Assets minus liabilities' },
       { id: 'creditscore', label: 'Credit Score', icon: 'C', color: '#f97316', desc: 'Monitor your credit health' },
     ];
     return (
@@ -2311,7 +2336,7 @@ export default function App() {
     const GOAL_TYPES = [
       { key: 'debt_payoff', label: 'Debt Payoff', icon: '⬇', color: C.red, desc: 'Pay off debts strategically' },
       { key: 'savings', label: 'Savings', icon: '★', color: C.green, desc: 'Build toward a savings target' },
-      { key: 'spending_behavior', label: 'Spending Behavior', icon: '◎', color: C.amber, desc: 'Control category spending' },
+      { key: 'spending_behavior', label: 'Spending Behavior', icon: '◎', color: C.accent, desc: 'Control category spending' },
       { key: 'streak', label: 'Budget Streak', icon: '🔥', color: C.accent, desc: 'Stay under budget daily' },
     ];
     const byType = (type) => goals.filter(g => g.type === type);
@@ -2495,7 +2520,7 @@ export default function App() {
             const spent = getBudgetSpend2(b);
             const limit = parseFloat(b.monthly_limit || 0);
             const pct = limit > 0 ? Math.min(100, Math.round((spent / limit) * 100)) : 0;
-            const barColor = pct >= 100 ? C.red : pct >= 75 ? C.amber : C.green;
+            const barColor = pct >= 100 ? C.red : pct >= 75 ? '#1EDFD5' : C.green;
             const remaining = Math.max(0, limit - spent);
             const catInfo = PLAID_CATEGORIES.find(c => c.key === b.category);
             const catLabel = catInfo?.label || b.category;
@@ -2598,7 +2623,7 @@ export default function App() {
                     <Text style={{ color: C.textSub, fontSize: 12, marginTop: 2 }}>
                       {FREQ_LABELS[r.frequency] || r.frequency} · {fmtCurrency(r.amount)}
                     </Text>
-                    <Text style={{ color: daysUntil <= 3 ? C.red : daysUntil <= 7 ? C.amber : C.textMuted, fontSize: 11, marginTop: 2 }}>
+                    <Text style={{ color: daysUntil <= 3 ? C.red : daysUntil <= 7 ? '#1EDFD5' : C.textMuted, fontSize: 11, marginTop: 2 }}>
                       Next: {fmtDate(nextDate.toISOString())} ({daysUntil === 0 ? 'today' : `${daysUntil}d`})
                     </Text>
                   </View>
@@ -2959,7 +2984,7 @@ export default function App() {
                 .filter(tx => tx.category === b.category)
                 .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
               const pct = limit > 0 ? Math.min(100, Math.round((groupSpent / limit) * 100)) : 0;
-              const barColor = pct >= 100 ? C.red : pct >= 75 ? C.amber : C.green;
+              const barColor = pct >= 100 ? C.red : pct >= 75 ? '#1EDFD5' : C.green;
               const periodLabel = { weekly: 'Weekly', monthly: 'Monthly', biweekly: 'Biweekly' }[b.period || 'monthly'];
               return (
                 <View key={b.id} style={{ backgroundColor: C.surface, borderRadius: 14, marginBottom: 10, padding: 14 }}>
@@ -3286,7 +3311,7 @@ export default function App() {
             const spent = getBudgetSpend(b);
             const limit = parseFloat(b.monthly_limit || 0);
             const pct = limit > 0 ? Math.min(100, Math.round((spent / limit) * 100)) : 0;
-            const barColor = pct >= 100 ? C.red : pct >= 75 ? C.amber : C.green;
+            const barColor = pct >= 100 ? C.red : pct >= 75 ? '#1EDFD5' : C.green;
             const remaining = Math.max(0, limit - spent);
             const catInfo = PLAID_CATEGORIES.find(c => c.key === b.category);
             const catLabel = catInfo?.label || b.category;
@@ -3462,7 +3487,7 @@ export default function App() {
           <View style={s.drawerGroup}>
             <Text style={s.drawerGroupLabel}>Notifications</Text>
             <View style={s.drawerRow}>
-              <Icon char="N" color={C.amber} size={32} />
+              <Icon char="N" color={BRAND_BLUE} size={32} />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={s.drawerRowText}>All Notifications</Text>
                 <Text style={s.drawerRowSub}>Master toggle for push alerts</Text>
@@ -3549,7 +3574,7 @@ export default function App() {
               style={s.drawerRow}
               onPress={() => { closeDrawer(); setTimeout(() => setAutoSyncTimeVisible(true), 300); }}
             >
-              <Icon char="⏰" color={C.amber} size={32} />
+              <Icon char="⏰" color={BRAND_BLUE} size={32} />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={s.drawerRowText}>Auto Sync</Text>
                 <Text style={s.drawerRowSub}>
@@ -3592,7 +3617,7 @@ export default function App() {
               <Text style={s.chevron}>›</Text>
             </TouchableOpacity>
             <TouchableOpacity style={s.drawerRow}>
-              <Icon char="★" color={C.amber} size={32} />
+              <Icon char="★" color={BRAND_BLUE} size={32} />
               <Text style={[s.drawerRowText, { flex: 1, marginLeft: 12 }]}>Rate Finlit</Text>
               <Text style={s.chevron}>›</Text>
             </TouchableOpacity>
@@ -3600,7 +3625,7 @@ export default function App() {
               <Icon char="i" color={C.textSub} size={32} />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={s.drawerRowText}>About</Text>
-                <Text style={s.drawerRowSub}>Version 1.0.7</Text>
+                <Text style={s.drawerRowSub}>Version 1.0.8</Text>
               </View>
               <Text style={s.chevron}>›</Text>
             </TouchableOpacity>

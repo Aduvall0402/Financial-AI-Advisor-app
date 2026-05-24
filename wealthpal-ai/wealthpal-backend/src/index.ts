@@ -116,19 +116,24 @@ app.post("/api/plaid/exchange-token", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Public token and user ID required" });
     }
     const { accessToken, itemId } = await plaidService.exchangePublicToken(publicToken);
-    // Remove any existing account rows for this user before inserting new one
-    await supabase.from("accounts").delete().eq("user_id", userId);
-    const { error } = await supabase
-      .from("accounts")
-      .insert([{
-        user_id: userId,
-        plaid_account_id: itemId,
-        plaid_access_token: accessToken,
-        account_name: "Connected Account",
-        account_type: "checking",
-        current_balance: 0,
-      }]);
-    if (error) throw error;
+    // Check if this Plaid item is already connected (avoid duplicate items)
+    const { data: existing } = await supabase.from("accounts").select("id").eq("user_id", userId).eq("plaid_account_id", itemId);
+    if (!existing?.length) {
+      const { error } = await supabase
+        .from("accounts")
+        .insert([{
+          user_id: userId,
+          plaid_account_id: itemId,
+          plaid_access_token: accessToken,
+          account_name: "Connected Account",
+          account_type: "checking",
+          current_balance: 0,
+        }]);
+      if (error) throw error;
+    } else {
+      // Update the access token in case it changed
+      await supabase.from("accounts").update({ plaid_access_token: accessToken }).eq("user_id", userId).eq("plaid_account_id", itemId);
+    }
     res.json({ plaid_account_id: itemId, itemId, message: "Account connected" });
   } catch (error: any) {
     const errorMessage = error?.response?.data?.error_message || error?.message || "Failed to exchange token";
@@ -143,13 +148,21 @@ app.get("/api/plaid/accounts/:userId", async (req: Request, res: Response) => {
       .from("accounts")
       .select("plaid_access_token, plaid_account_id")
       .eq("user_id", userId)
-      .order("created_at", { ascending: false })
-      .limit(1);
-    if (error || !data?.length || !data[0]?.plaid_access_token) {
+      .order("created_at", { ascending: false });
+    if (error || !data?.length) {
       return res.status(404).json({ error: "No connected account found" });
     }
-    const accounts = await plaidService.getAccounts(data[0].plaid_access_token);
-    res.json({ accounts, itemId: data[0].plaid_account_id });
+    // Aggregate accounts from all linked Plaid items
+    const allAccounts: any[] = [];
+    for (const row of data) {
+      if (!row.plaid_access_token) continue;
+      try {
+        const accounts = await plaidService.getAccounts(row.plaid_access_token);
+        allAccounts.push(...accounts);
+      } catch { /* skip failed items */ }
+    }
+    if (!allAccounts.length) return res.status(404).json({ error: "No connected account found" });
+    res.json({ accounts: allAccounts, itemId: data[0].plaid_account_id });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "Failed to fetch accounts" });
   }
@@ -180,49 +193,54 @@ app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) =
     const { userId } = req.params;
     const { data: accountData, error: accountError } = await supabase
       .from("accounts")
-      .select("id, plaid_access_token")
+      .select("id, plaid_access_token, plaid_account_id")
       .eq("user_id", userId)
-      .order("created_at", { ascending: false })
-      .limit(1);
-    if (accountError || !accountData?.length || !accountData[0]?.plaid_access_token) {
+      .order("created_at", { ascending: false });
+    if (accountError || !accountData?.length) {
       return res.status(404).json({ error: "No connected account found" });
     }
-    const accessToken = accountData[0].plaid_access_token;
-    const accountId = accountData[0].id;
-    // Ask Plaid to pull latest data for this item before syncing
-    await plaidService.refreshTransactions(accessToken);
-    const transactions = await plaidService.getTransactions(accessToken);
-    // Clear existing transactions for this user before inserting fresh data
+    // Clear existing transactions for this user, then re-sync from all linked banks
     await supabase.from("transactions").delete().eq("user_id", userId);
     let synced = 0;
     let failed = 0;
-    for (const tx of transactions) {
-      const { error } = await supabase
-        .from("transactions")
-        .insert([{
-          user_id: userId,
-          account_id: accountId,
-          plaid_transaction_id: tx.transaction_id,
-          merchant_name: tx.merchant_name || tx.name || "Unknown",
-          merchant_category_code: tx.payment_channel || null,
-          amount: Math.abs(tx.amount),
-          currency_code: tx.iso_currency_code || tx.unofficial_currency_code || "USD",
-          category: (tx.personal_finance_category?.primary || (tx.category as any)?.[0] || "Other"),
-          category_confidence: tx.personal_finance_category_icon_url ? null : null,
-          is_pending: tx.pending ?? false,
-          transaction_date: tx.date,
-          posted_date: tx.authorized_date || null,
-          description: tx.name,
-        }]);
-      if (error) {
-        failed++;
-        if (failed <= 3) console.error("Insert error for tx", tx.transaction_id, JSON.stringify(error));
-      } else {
-        synced++;
+    let totalTx = 0;
+    for (const acct of accountData) {
+      if (!acct.plaid_access_token) continue;
+      try {
+        await plaidService.refreshTransactions(acct.plaid_access_token);
+        const transactions = await plaidService.getTransactions(acct.plaid_access_token);
+        totalTx += transactions.length;
+        for (const tx of transactions) {
+          const { error } = await supabase
+            .from("transactions")
+            .insert([{
+              user_id: userId,
+              account_id: acct.id,
+              plaid_transaction_id: tx.transaction_id,
+              merchant_name: tx.merchant_name || tx.name || "Unknown",
+              merchant_category_code: tx.payment_channel || null,
+              amount: Math.abs(tx.amount),
+              currency_code: tx.iso_currency_code || tx.unofficial_currency_code || "USD",
+              category: (tx.personal_finance_category?.primary || (tx.category as any)?.[0] || "Other"),
+              category_confidence: null,
+              is_pending: tx.pending ?? false,
+              transaction_date: tx.date,
+              posted_date: tx.authorized_date || null,
+              description: tx.name,
+            }]);
+          if (error) {
+            failed++;
+            if (failed <= 3) console.error("Insert error for tx", tx.transaction_id, JSON.stringify(error));
+          } else {
+            synced++;
+          }
+        }
+      } catch (itemErr: any) {
+        console.error("Error syncing account item", acct.plaid_account_id, itemErr?.message);
       }
     }
-    console.log(`Synced ${synced}/${transactions.length} transactions for user ${userId} (${failed} failed)`);
-    res.json({ synced, total: transactions.length });
+    console.log(`Synced ${synced}/${totalTx} transactions for user ${userId} (${failed} failed)`);
+    res.json({ synced, total: totalTx });
   } catch (error: any) {
     const msg = error?.message || "Failed to sync transactions";
     console.error("Sync error:", msg);
@@ -739,8 +757,12 @@ app.get("/api/budgets/:userId", async (req: Request, res: Response) => {
 
 app.post("/api/budgets", async (req: Request, res: Response) => {
   try {
-    const { user_id, category, monthly_limit, period } = req.body;
-    const { data, error } = await supabase.from("budgets").upsert([{ user_id, category, monthly_limit, period: period || "monthly" }], { onConflict: "user_id,category" }).select();
+    const { user_id, category, monthly_limit, period, paycycle_start, paycycle_freq } = req.body;
+    if (!user_id || !category || !monthly_limit) return res.status(400).json({ error: "user_id, category, and monthly_limit required" });
+    const { data, error } = await supabase
+      .from("budgets")
+      .insert([{ user_id, category, monthly_limit, period: period || "monthly", paycycle_start: paycycle_start || null, paycycle_freq: paycycle_freq || null }])
+      .select();
     if (error) throw error;
     res.json({ budget: data?.[0] });
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
@@ -748,9 +770,11 @@ app.post("/api/budgets", async (req: Request, res: Response) => {
 
 app.patch("/api/budgets/:budgetId", async (req: Request, res: Response) => {
   try {
-    const { monthly_limit, period } = req.body;
+    const { monthly_limit, period, paycycle_start, paycycle_freq } = req.body;
     const updates: any = { monthly_limit };
     if (period) updates.period = period;
+    if (paycycle_start !== undefined) updates.paycycle_start = paycycle_start;
+    if (paycycle_freq !== undefined) updates.paycycle_freq = paycycle_freq;
     const { error } = await supabase.from("budgets").update(updates).eq("id", req.params.budgetId);
     if (error) throw error;
     res.json({ message: "Budget updated" });
@@ -779,6 +803,38 @@ app.post("/api/ai/transcribe", upload.single("audio"), async (req: Request, res:
   } catch (e: any) {
     fs.unlink(req.file!.path, () => {});
     res.status(500).json({ error: e?.message || "Transcription failed" });
+  }
+});
+
+// ============================================
+// RECEIPT SCAN (OpenAI Vision)
+// ============================================
+app.post("/api/ai/scan-receipt", async (req: Request, res: Response) => {
+  try {
+    const { imageBase64 } = req.body;
+    if (!imageBase64) return res.status(400).json({ error: "imageBase64 required" });
+    const { OpenAI } = await import("openai");
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const response = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `Analyze this receipt image and extract transaction details. Return ONLY a JSON object with these fields: {"merchant_name": string, "amount": number (total amount paid, positive), "transaction_date": string (YYYY-MM-DD format, use today if unclear), "category": string (one of: GROCERY, DINING, GENERAL_MERCHANDISE, TRANSPORTATION, TRAVEL, ENTERTAINMENT, PERSONAL_CARE, MEDICAL, RENT_AND_UTILITIES, HOME_IMPROVEMENT, GENERAL_SERVICES, LOAN_PAYMENTS, BANK_FEES, OTHER), "description": string (brief description of purchase)}. If you cannot read the receipt clearly, still return your best guess. Return ONLY the JSON, no markdown.`,
+          },
+          { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } },
+        ],
+      }],
+      max_tokens: 300,
+    });
+    const content = response.choices[0]?.message?.content?.trim() || "{}";
+    const cleaned = content.replace(/```json|```/g, "").trim();
+    const result = JSON.parse(cleaned);
+    res.json({ transaction: result });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "Receipt scan failed" });
   }
 });
 
