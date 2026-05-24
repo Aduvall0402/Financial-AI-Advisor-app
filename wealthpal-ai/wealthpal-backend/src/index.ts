@@ -248,6 +248,33 @@ app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) =
   }
 });
 
+app.post("/api/transactions", async (req: Request, res: Response) => {
+  try {
+    const { user_id, merchant_name, amount, transaction_date, category, description, source } = req.body;
+    if (!user_id || !merchant_name || amount == null) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+    const { data, error } = await supabase
+      .from("transactions")
+      .insert([{
+        user_id,
+        merchant_name,
+        amount: Math.abs(parseFloat(amount)),
+        transaction_date: transaction_date || new Date().toISOString().split("T")[0],
+        category: category || "GENERAL_MERCHANDISE",
+        description: description || merchant_name,
+        source: source || "manual",
+        is_pending: false,
+        currency_code: "USD",
+      }])
+      .select();
+    if (error) throw error;
+    res.json({ transaction: data[0] });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "Failed to create transaction" });
+  }
+});
+
 app.patch("/api/transactions/:txId", async (req: Request, res: Response) => {
   try {
     const { txId } = req.params;
