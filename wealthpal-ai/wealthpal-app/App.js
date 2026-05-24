@@ -13,6 +13,7 @@ import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as Speech from 'expo-speech';
 import { Audio } from 'expo-av';
+import * as ImagePicker from 'expo-image-picker';
 
 // Categories to exclude from all spending calculations (income, transfers, non-purchase flows)
 const INCOME_CATEGORIES = new Set([
@@ -335,6 +336,13 @@ export default function App() {
   const [savingTx, setSavingTx] = useState(false);
   const [rememberCategoryRule, setRememberCategoryRule] = useState(false);
   const [contributeToGoalId, setContributeToGoalId] = useState(null);
+
+  // Receipt scanning
+  const [receiptScanVisible, setReceiptScanVisible] = useState(false);
+  const [receiptScanLoading, setReceiptScanLoading] = useState(false);
+  const [receiptFields, setReceiptFields] = useState({});
+  const [receiptScanError, setReceiptScanError] = useState('');
+  const [savingReceipt, setSavingReceipt] = useState(false);
 
   // Goals
   const [goals, setGoals] = useState([]);
@@ -666,6 +674,8 @@ export default function App() {
       setError('Please fill in all fields'); return;
     }
     if (password.length < 6) { setError('Password must be at least 6 characters'); return; }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) { setError('Please enter a valid email address'); return; }
     setLoading(true); setError('');
     const fullName = `${firstName.trim()} ${lastName.trim()}`;
     try {
@@ -706,6 +716,46 @@ export default function App() {
       setTimeout(() => { setTutorialStep(0); setTutorialVisible(true); }, 600);
     } catch { setError('Could not connect to server'); }
     finally { setLoading(false); }
+  };
+
+  const handleScanReceipt = async (fromCamera) => {
+    const opts = { mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.7, base64: true };
+    let result;
+    try {
+      if (fromCamera) {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm.granted) { Alert.alert('Permission Required', 'Camera access is needed to scan receipts.'); return; }
+        result = await ImagePicker.launchCameraAsync(opts);
+      } else {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) { Alert.alert('Permission Required', 'Photo library access is needed to scan receipts.'); return; }
+        result = await ImagePicker.launchImageLibraryAsync(opts);
+      }
+    } catch { return; }
+    if (result.canceled || !result.assets?.[0]?.base64) return;
+    setReceiptScanLoading(true);
+    setReceiptScanError('');
+    try {
+      const res = await fetch(`${API_URL}/api/ai/scan-receipt`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: result.assets[0].base64 }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to scan receipt');
+      const tx = data.transaction || {};
+      setReceiptFields({
+        merchant_name: tx.merchant_name || '',
+        amount: tx.amount != null ? String(tx.amount) : '',
+        transaction_date: tx.transaction_date || new Date().toISOString().split('T')[0],
+        category: tx.category || 'GENERAL_MERCHANDISE',
+        description: tx.description || '',
+      });
+      setReceiptScanVisible(true);
+    } catch (err) {
+      Alert.alert('Scan Failed', err.message || 'Could not read the receipt. Try again with a clearer image.');
+    } finally {
+      setReceiptScanLoading(false);
+    }
   };
 
   const handleLogout = () => {
@@ -2057,6 +2107,13 @@ export default function App() {
                   <TouchableOpacity style={s.syncBtn} onPress={syncTransactions} disabled={syncing || loadingTx}>
                     {syncing ? <ActivityIndicator size="small" color={C.accent} /> : <Text style={s.syncText}>↻ Sync</Text>}
                   </TouchableOpacity>
+                  <TouchableOpacity style={s.syncBtn} disabled={receiptScanLoading} onPress={() => Alert.alert('Scan Receipt', 'Choose a source', [
+                    { text: 'Camera', onPress: () => handleScanReceipt(true) },
+                    { text: 'Gallery', onPress: () => handleScanReceipt(false) },
+                    { text: 'Cancel', style: 'cancel' },
+                  ])}>
+                    {receiptScanLoading ? <ActivityIndicator size="small" color={C.accent} /> : <Text style={s.syncText}>📷</Text>}
+                  </TouchableOpacity>
                 </>
               )}
             </View>
@@ -2306,7 +2363,7 @@ export default function App() {
       { id: 'groups', label: 'Groups', icon: '◈', color: C.blue, desc: 'Shared budgets & group goals' },
       { id: 'budget', label: 'Budget', icon: '◎', color: C.green, desc: 'Spending limits by category' },
       { id: 'recurring', label: 'Recurring', icon: '↻', color: '#06b6d4', desc: 'Bills, subscriptions & repeating payments' },
-      { id: 'networth', label: 'Net Worth', icon: '▲', color: '#1EDFD5', desc: 'Assets minus liabilities' },
+      { id: 'networth', label: 'Net Worth', icon: '▲', color: '#1EDFD5', desc: 'Assets minus liabilities', comingSoon: true },
       { id: 'creditscore', label: 'Credit Score', icon: 'C', color: '#f97316', desc: 'Monitor your credit health' },
     ];
     return (
@@ -2315,16 +2372,19 @@ export default function App() {
         {items.map(item => (
           <TouchableOpacity
             key={item.id}
-            style={[s.txItem, { paddingVertical: 18 }]}
-            onPress={() => { if (item.id === 'groups') { fetchGroups(); } if (item.id === 'recurring') { fetchRecurring(); } setMoreSection(item.id); }}
+            style={[s.txItem, { paddingVertical: 18, opacity: item.comingSoon ? 0.55 : 1 }]}
+            onPress={() => { if (item.comingSoon) { Alert.alert('Coming Soon', `${item.label} is coming in a future update.`); return; } if (item.id === 'groups') { fetchGroups(); } if (item.id === 'recurring') { fetchRecurring(); } setMoreSection(item.id); }}
             activeOpacity={0.75}
           >
             <Icon char={item.icon} color={item.color} size={46} radius={14} />
             <View style={{ flex: 1 }}>
-              <Text style={{ color: C.text, fontSize: 16, fontWeight: '700', marginBottom: 3 }}>{item.label}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                <Text style={{ color: C.text, fontSize: 16, fontWeight: '700' }}>{item.label}</Text>
+                {item.comingSoon && <View style={{ backgroundColor: C.surface2, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}><Text style={{ color: C.textMuted, fontSize: 10, fontWeight: '700' }}>SOON</Text></View>}
+              </View>
               <Text style={{ color: C.textSub, fontSize: 12 }}>{item.desc}</Text>
             </View>
-            <Text style={{ color: C.textMuted, fontSize: 22 }}>›</Text>
+            <Text style={{ color: C.textMuted, fontSize: 22 }}>{item.comingSoon ? '' : '›'}</Text>
           </TouchableOpacity>
         ))}
         <View style={{ height: 24 }} />
@@ -2511,7 +2571,7 @@ export default function App() {
             <Icon char="$" color={C.accent} size={52} radius={16} />
             <Text style={[s.emptyTitle, { marginTop: 16 }]}>No budgets yet</Text>
             <Text style={[s.emptyText, { marginBottom: 20 }]}>Set spending limits by category to track where your money goes.</Text>
-            <TouchableOpacity style={[s.btn, { alignSelf: 'stretch' }]} onPress={() => { setEditingBudget(null); setNewBudgetCat(''); setNewBudgetLimit(''); setAddBudgetVisible(true); }}>
+            <TouchableOpacity style={[s.btn, { alignSelf: 'stretch' }]} onPress={() => { setEditingBudget(null); setNewBudgetCat(''); setNewBudgetLimit(''); setNewBudgetPeriod(budgetGlobalPeriod); setAddBudgetVisible(true); }}>
               <Text style={s.btnText}>Create First Budget</Text>
             </TouchableOpacity>
           </View>
@@ -3302,7 +3362,7 @@ export default function App() {
             <Icon char="$" color={C.accent} size={52} radius={16} />
             <Text style={[s.emptyTitle, { marginTop: 16 }]}>No budgets yet</Text>
             <Text style={[s.emptyText, { marginBottom: 20 }]}>Set spending limits by category to track where your money goes.</Text>
-            <TouchableOpacity style={[s.btn, { alignSelf: 'stretch' }]} onPress={() => { setEditingBudget(null); setNewBudgetCat(''); setNewBudgetLimit(''); setAddBudgetVisible(true); }}>
+            <TouchableOpacity style={[s.btn, { alignSelf: 'stretch' }]} onPress={() => { setEditingBudget(null); setNewBudgetCat(''); setNewBudgetLimit(''); setNewBudgetPeriod(budgetGlobalPeriod); setAddBudgetVisible(true); }}>
               <Text style={s.btnText}>Create First Budget</Text>
             </TouchableOpacity>
           </View>
@@ -3830,17 +3890,27 @@ export default function App() {
         <View style={s.modalOverlay}>
           <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end' }}>
             <View style={s.modalCard}>
-              <Text style={s.modalTitle}>Edit Transaction</Text>
+              <Text style={s.modalTitle}>Review Transaction</Text>
               <Text style={s.label}>Merchant / Name</Text>
               <TextInput style={s.input} value={editTxFields.merchant_name} onChangeText={v => setEditTxFields(p => ({...p, merchant_name: v}))} placeholderTextColor={C.textMuted} />
               <Text style={s.label}>Amount ($)</Text>
               <TextInput style={s.input} value={editTxFields.amount} onChangeText={v => setEditTxFields(p => ({...p, amount: v}))} keyboardType="decimal-pad" placeholderTextColor={C.textMuted} />
+              {/* Assumed category — shown prominently, full list below to change */}
               <Text style={s.label}>Category</Text>
+              {editTxFields.category && (() => {
+                const assumed = [...PLAID_CATEGORIES, ...customCategories.map(c => ({ key: c, label: c, icon: '★' }))].find(c => c.key === editTxFields.category);
+                return assumed ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: C.accent + '18', borderRadius: 10, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: C.accent + '44' }}>
+                    <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700', flex: 1 }}>✓ {assumed.icon} {assumed.label}</Text>
+                    <Text style={{ color: C.textMuted, fontSize: 11 }}>Detected — tap below to change</Text>
+                  </View>
+                ) : null;
+              })()}
               <ScrollView style={{ maxHeight: 160, marginBottom: 12, borderWidth: 1, borderColor: C.border, borderRadius: 12 }} showsVerticalScrollIndicator={false}>
                 {[...PLAID_CATEGORIES, ...customCategories.map(c => ({ key: c, label: c, icon: '★' }))].map(cat => (
                   <TouchableOpacity key={cat.key} onPress={() => setEditTxFields(p => ({...p, category: cat.key}))}
-                    style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 11, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: C.border }}>
-                    <Text style={{ color: editTxFields.category === cat.key ? C.accent : C.text, fontSize: 14 }}>{cat.icon} {cat.label}</Text>
+                    style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 11, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: editTxFields.category === cat.key ? C.accent + '18' : 'transparent' }}>
+                    <Text style={{ color: editTxFields.category === cat.key ? C.accent : C.text, fontSize: 14, fontWeight: editTxFields.category === cat.key ? '700' : '400' }}>{cat.icon} {cat.label}</Text>
                     {editTxFields.category === cat.key && <Text style={{ color: C.accent, fontWeight: '700' }}>✓</Text>}
                   </TouchableOpacity>
                 ))}
@@ -3923,6 +3993,79 @@ export default function App() {
                 <Text style={s.btnText}>↻ Mark as Recurring</Text>
               </TouchableOpacity>
               <TouchableOpacity style={s.linkRow} onPress={() => setEditTxVisible(false)}><Text style={s.linkText}>Cancel</Text></TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* Receipt Scan Review Modal */}
+      <Modal visible={receiptScanVisible} animationType="slide" transparent onRequestClose={() => setReceiptScanVisible(false)}>
+        <View style={s.modalOverlay}>
+          <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end' }}>
+            <View style={s.modalCard}>
+              <Text style={s.modalTitle}>Receipt Scanned</Text>
+              <Text style={{ color: C.textMuted, fontSize: 13, marginBottom: 14 }}>Review and confirm before saving.</Text>
+              {receiptScanError ? <Text style={{ color: BASE.red, fontSize: 13, marginBottom: 8 }}>{receiptScanError}</Text> : null}
+              <Text style={s.label}>Merchant</Text>
+              <TextInput style={s.input} value={receiptFields.merchant_name} onChangeText={v => setReceiptFields(p => ({...p, merchant_name: v}))} placeholderTextColor={C.textMuted} placeholder="Merchant name" />
+              <Text style={s.label}>Amount ($)</Text>
+              <TextInput style={s.input} value={receiptFields.amount} onChangeText={v => setReceiptFields(p => ({...p, amount: v}))} keyboardType="decimal-pad" placeholderTextColor={C.textMuted} placeholder="0.00" />
+              <Text style={s.label}>Date (YYYY-MM-DD)</Text>
+              <TextInput style={s.input} value={receiptFields.transaction_date} onChangeText={v => setReceiptFields(p => ({...p, transaction_date: v}))} placeholderTextColor={C.textMuted} />
+              <Text style={s.label}>Category</Text>
+              {receiptFields.category && (() => {
+                const detected = [...PLAID_CATEGORIES, ...customCategories.map(c => ({ key: c, label: c, icon: '★' }))].find(c => c.key === receiptFields.category);
+                return detected ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: C.accent + '18', borderRadius: 10, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: C.accent + '44' }}>
+                    <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700', flex: 1 }}>✓ {detected.icon} {detected.label}</Text>
+                    <Text style={{ color: C.textMuted, fontSize: 11 }}>Detected — tap below to change</Text>
+                  </View>
+                ) : null;
+              })()}
+              <ScrollView style={{ maxHeight: 160, marginBottom: 12, borderWidth: 1, borderColor: C.border, borderRadius: 12 }} showsVerticalScrollIndicator={false}>
+                {[...PLAID_CATEGORIES, ...customCategories.map(c => ({ key: c, label: c, icon: '★' }))].map(cat => (
+                  <TouchableOpacity key={cat.key} onPress={() => setReceiptFields(p => ({...p, category: cat.key}))}
+                    style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 11, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: receiptFields.category === cat.key ? C.accent + '18' : 'transparent' }}>
+                    <Text style={{ color: receiptFields.category === cat.key ? C.accent : C.text, fontSize: 14, fontWeight: receiptFields.category === cat.key ? '700' : '400' }}>{cat.icon} {cat.label}</Text>
+                    {receiptFields.category === cat.key && <Text style={{ color: C.accent, fontWeight: '700' }}>✓</Text>}
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              <TouchableOpacity
+                style={[s.btn, (savingReceipt || !receiptFields.merchant_name || !receiptFields.amount) && s.btnOff]}
+                disabled={savingReceipt || !receiptFields.merchant_name || !receiptFields.amount}
+                onPress={async () => {
+                  setSavingReceipt(true);
+                  setReceiptScanError('');
+                  try {
+                    const res = await fetch(`${API_URL}/api/transactions`, {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        user_id: userId,
+                        merchant_name: receiptFields.merchant_name,
+                        amount: parseFloat(receiptFields.amount),
+                        transaction_date: receiptFields.transaction_date || new Date().toISOString().split('T')[0],
+                        category: receiptFields.category || 'GENERAL_MERCHANDISE',
+                        description: receiptFields.description || receiptFields.merchant_name,
+                        source: 'receipt',
+                      }),
+                    });
+                    if (!res.ok) {
+                      const d = await res.json();
+                      setReceiptScanError(d.error || 'Failed to save transaction'); return;
+                    }
+                    setReceiptScanVisible(false);
+                    fetchTransactions();
+                    Alert.alert('Saved', 'Transaction added from receipt.');
+                  } catch { setReceiptScanError('Could not connect to server'); }
+                  finally { setSavingReceipt(false); }
+                }}
+              >
+                {savingReceipt ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Save Transaction</Text>}
+              </TouchableOpacity>
+              <TouchableOpacity style={s.linkRow} onPress={() => setReceiptScanVisible(false)}>
+                <Text style={s.linkText}>Cancel</Text>
+              </TouchableOpacity>
             </View>
           </ScrollView>
         </View>
@@ -4131,15 +4274,20 @@ export default function App() {
                     const paycycleData = newBudgetPeriod === 'paycycle'
                       ? { paycycle_start: newBudgetPaycycleStart || null, paycycle_freq: newBudgetPaycycleFreq }
                       : {};
+                    let saveRes;
                     if (editingBudget) {
-                      await fetch(`${API_URL}/api/budgets/${editingBudget.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ monthly_limit: parseFloat(newBudgetLimit), period: newBudgetPeriod, ...paycycleData }) });
+                      saveRes = await fetch(`${API_URL}/api/budgets/${editingBudget.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ monthly_limit: parseFloat(newBudgetLimit), period: newBudgetPeriod, ...paycycleData }) });
                     } else {
-                      await fetch(`${API_URL}/api/budgets`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, category: newBudgetCat.trim(), monthly_limit: parseFloat(newBudgetLimit), period: newBudgetPeriod, ...paycycleData }) });
+                      saveRes = await fetch(`${API_URL}/api/budgets`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, category: newBudgetCat.trim(), monthly_limit: parseFloat(newBudgetLimit), period: newBudgetPeriod, ...paycycleData }) });
+                    }
+                    if (!saveRes.ok) {
+                      const errData = await saveRes.json().catch(() => ({}));
+                      Alert.alert('Error', errData.error || 'Failed to save budget. Please try again.'); return;
                     }
                     setAddBudgetVisible(false);
                     setEditingBudget(null);
                     fetchBudgets();
-                  } catch {}
+                  } catch { Alert.alert('Error', 'Could not connect to server.'); }
                   finally { setSavingBudget(false); }
                 }}
               >
