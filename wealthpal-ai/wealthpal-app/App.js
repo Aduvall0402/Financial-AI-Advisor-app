@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import {
   SafeAreaView, View, Text, TouchableOpacity, StyleSheet,
   ScrollView, TextInput, FlatList, ActivityIndicator, Image,
-  Animated, Dimensions, Switch, StatusBar, Modal, RefreshControl, Share, Alert,
+  Animated, Dimensions, Switch, StatusBar, Modal, RefreshControl, Share, Alert, AppState,
 } from 'react-native';
 import { create, open } from 'react-native-plaid-link-sdk';
 import { LineChart, BarChart, PieChart } from 'react-native-chart-kit';
@@ -14,6 +14,7 @@ import * as Sharing from 'expo-sharing';
 import * as Speech from 'expo-speech';
 import { Audio } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
+import * as Updates from 'expo-updates';
 
 // Categories to exclude from all spending calculations (income, transfers, non-purchase flows)
 const INCOME_CATEGORIES = new Set([
@@ -283,10 +284,12 @@ export default function App() {
   const niceChartMax = (vals) => {
     const mx = Math.max(...vals.filter(v => v > 0 && isFinite(v)));
     if (!mx || !isFinite(mx)) return 10;
-    const mag = Math.pow(10, Math.floor(Math.log10(mx)));
-    const n = mx / mag;
-    const nice = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
-    return nice * mag;
+    const padded = mx * 1.15;
+    if (padded < 20)   return Math.ceil(padded / 2) * 2;
+    if (padded < 100)  return Math.ceil(padded / 10) * 10;
+    if (padded < 500)  return Math.ceil(padded / 25) * 25;
+    if (padded < 2000) return Math.ceil(padded / 100) * 100;
+    return Math.ceil(padded / 500) * 500;
   };
   const fmtYLabel = (v) => { const n = Math.round(Number(v)); return '$' + (n >= 1000 ? Math.round(n / 1000) + 'k' : n); };
   const s = useMemo(() => makeStyles(C), [C]);
@@ -403,6 +406,7 @@ export default function App() {
   const [txFilterDropdownVisible, setTxFilterDropdownVisible] = useState(false);
   const [txFilterAccount, setTxFilterAccount] = useState('all');
   const [txFilterAccountVisible, setTxFilterAccountVisible] = useState(false);
+  const [txFilterDateFrom, setTxFilterDateFrom] = useState(null);
   const [dbAccountMap, setDbAccountMap] = useState({}); // db_uuid → display label
 
   // Transactions bulk select
@@ -433,6 +437,7 @@ export default function App() {
   const [postSyncVisible, setPostSyncVisible] = useState(false);
   const [postSyncIdx, setPostSyncIdx] = useState(0);
   const [postSyncCat, setPostSyncCat] = useState('');
+  const [postSyncGoalId, setPostSyncGoalId] = useState(null);
 
   // Currency
   const [currency, setCurrency] = useState('USD');
@@ -482,24 +487,32 @@ export default function App() {
   const [newRecurring, setNewRecurring] = useState({ name: '', amount: '', category: 'OTHER', frequency: 'monthly', day_of_month: 1, interval_days: 7, start_date: '' });
   const [recurringMonth, setRecurringMonth] = useState(new Date());
 
-  // ── Auto sync useEffect ──────────────────────────────
-  useEffect(() => {
+  // ── Auto sync ────────────────────────────────────────
+  const checkAutoSync = useCallback(() => {
     if (!autoSyncEnabled || !userIdRef.current) return;
-    const checkAutoSync = () => {
-      const now = new Date();
-      if (now.getHours() !== autoSyncHour) return;
-      const lastSync = lastSyncTime || 0;
-      const elapsed = Date.now() - lastSync;
-      if (elapsed < 23 * 60 * 60 * 1000) return; // 23h lockout
-      const newLastSync = Date.now();
-      setLastSyncTime(newLastSync);
-      AsyncStorage.setItem('lastSyncTime', String(newLastSync));
-      syncTransactions();
-    };
+    const now = new Date();
+    if (now.getHours() < autoSyncHour) return;
+    const todayStr = now.toDateString();
+    const lastSyncDateStr = lastSyncTime ? new Date(lastSyncTime).toDateString() : '';
+    if (todayStr === lastSyncDateStr) return;
+    const newLastSync = Date.now();
+    setLastSyncTime(newLastSync);
+    AsyncStorage.setItem('lastSyncTime', String(newLastSync));
+    syncTransactions();
+  }, [autoSyncEnabled, autoSyncHour, lastSyncTime]);
+
+  useEffect(() => {
     checkAutoSync();
     const interval = setInterval(checkAutoSync, 60 * 1000);
     return () => clearInterval(interval);
-  }, [autoSyncEnabled, autoSyncHour, lastSyncTime]);
+  }, [checkAutoSync]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', state => {
+      if (state === 'active') checkAutoSync();
+    });
+    return () => sub.remove();
+  }, [checkAutoSync]);
 
   // ── Fetch Recurring Transactions ─────────────────────
   const fetchRecurring = useCallback(async () => {
@@ -535,8 +548,9 @@ export default function App() {
   const sortedTransactions = useMemo(() => {
     let txs = txFilterCategory === 'all'
       ? [...transactions]
-      : transactions.filter(tx => tx.category === txFilterCategory);
+      : transactions.filter(tx => getEffectiveCategory(tx) === txFilterCategory);
     if (txFilterAccount !== 'all') txs = txs.filter(tx => tx.account_id === txFilterAccount);
+    if (txFilterDateFrom) txs = txs.filter(tx => (tx.transaction_date || '') >= txFilterDateFrom);
     if (txSearch.trim()) {
       const q = txSearch.trim().toLowerCase();
       txs = txs.filter(tx =>
@@ -550,10 +564,10 @@ export default function App() {
       case 'amount_desc': return txs.sort((a, b) => parseFloat(b.amount) - parseFloat(a.amount));
       case 'amount_asc':  return txs.sort((a, b) => parseFloat(a.amount) - parseFloat(b.amount));
       case 'merchant':    return txs.sort((a, b) => (a.merchant_name || '').localeCompare(b.merchant_name || ''));
-      case 'category':    return txs.sort((a, b) => (a.category || '').localeCompare(b.category || ''));
+      case 'category':    return txs.sort((a, b) => (getEffectiveCategory(a) || '').localeCompare(getEffectiveCategory(b) || ''));
       default:            return txs.sort((a, b) => new Date(b.transaction_date) - new Date(a.transaction_date));
     }
-  }, [transactions, txSortBy, txFilterCategory, txFilterAccount, txSearch]);
+  }, [transactions, txSortBy, txFilterCategory, txFilterAccount, txFilterDateFrom, txSearch, getEffectiveCategory]);
 
   // Insights dropdown
   const [insightsDropdownVisible, setInsightsDropdownVisible] = useState(false);
@@ -587,7 +601,7 @@ export default function App() {
   useEffect(() => {
     AsyncStorage.getItem('customCategories').then(v => { if (v) { try { setCustomCategories(JSON.parse(v)); } catch {} } });
     AsyncStorage.getItem('categoryRules').then(v => { if (v) { try { setCategoryRules(JSON.parse(v)); } catch {} } });
-    AsyncStorage.getItem('userPayday').then(v => { if (v) { try { setUserPayday(JSON.parse(v)); } catch {} } });
+    AsyncStorage.getItem('userPayday').then(v => { if (v) { try { const p = JSON.parse(v); setUserPayday(p); if (p?.nextDate) setBudgetGlobalPeriod('paycycle'); } catch {} } });
     AsyncStorage.getItem('isDarkMode').then(v => { if (v !== null) setIsDarkMode(v !== 'false'); });
     AsyncStorage.multiGet([
       'displayName',
@@ -610,17 +624,39 @@ export default function App() {
 
   const toggleDarkMode = (val) => { setIsDarkMode(val); AsyncStorage.setItem('isDarkMode', val ? 'true' : 'false'); };
 
-  // ── Splash ──────────────────────────────────────────
+  // ── Splash + OTA update check ────────────────────────
+  const [updateStatus, setUpdateStatus] = useState('');
+  const dismissSplash = useCallback(() => {
+    Animated.timing(splashOpacity, { toValue: 0, duration: 400, useNativeDriver: true })
+      .start(() => setShowSplash(false));
+  }, [splashOpacity]);
+
   useEffect(() => {
     Animated.parallel([
-      Animated.timing(splashOpacity, { toValue: 1, duration: 700, useNativeDriver: true }),
+      Animated.timing(splashOpacity, { toValue: 1, duration: 600, useNativeDriver: true }),
       Animated.spring(splashScale, { toValue: 1, tension: 60, friction: 8, useNativeDriver: true }),
     ]).start();
-    const t = setTimeout(() => {
-      Animated.timing(splashOpacity, { toValue: 0, duration: 400, useNativeDriver: true })
-        .start(() => setShowSplash(false));
-    }, 2200);
-    return () => clearTimeout(t);
+
+    const checkForUpdate = async () => {
+      try {
+        if (__DEV__) { setTimeout(dismissSplash, 1400); return; }
+        setUpdateStatus('Checking for updates…');
+        const result = await Updates.checkForUpdateAsync();
+        if (result.isAvailable) {
+          setUpdateStatus('Updating…');
+          await Updates.fetchUpdateAsync();
+          await Updates.reloadAsync();
+        } else {
+          setUpdateStatus('');
+          setTimeout(dismissSplash, 800);
+        }
+      } catch {
+        setUpdateStatus('');
+        setTimeout(dismissSplash, 800);
+      }
+    };
+
+    checkForUpdate();
   }, []);
 
   // ── Drawer ──────────────────────────────────────────
@@ -833,7 +869,7 @@ export default function App() {
         else setSyncError('');
         const txRes = await fetch(`${API_URL}/api/transactions/${userIdRef.current}`);
         const txData = txRes.ok ? await txRes.json() : {};
-        const fresh = (txData.transactions || []).filter(tx => !isIncomeTx(tx)).slice(0, 10);
+        const fresh = (txData.transactions || []).filter(tx => !isIncomeTx(tx));
         if (fresh.length > 0) {
           setPostSyncTxs(fresh);
           setPostSyncIdx(0);
@@ -1371,6 +1407,9 @@ export default function App() {
             style={{ width: 300, height: 180, resizeMode: 'contain' }}
           />
           <ActivityIndicator color={BRAND_BLUE} style={{ marginTop: 40 }} />
+          {!!updateStatus && (
+            <Text style={{ color: '#16B7F6', fontSize: 13, marginTop: 14, letterSpacing: 0.4 }}>{updateStatus}</Text>
+          )}
         </Animated.View>
       </View>
     );
@@ -1381,15 +1420,16 @@ export default function App() {
   // ════════════════════════════════════════════════════
   if (screen === 'login') {
     return (
-      <View style={{ flex: 1, backgroundColor: C.bg }}>
+      <View style={{ flex: 1, backgroundColor: C.bg, overflow: 'visible' }}>
         <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={C.bg} />
-        {/* Background decorative pattern */}
-        <View style={{ position: 'absolute', top: -100, right: -100, width: 340, height: 340, borderRadius: 170, backgroundColor: '#1E5EFF', opacity: isDarkMode ? 0.07 : 0.05 }} />
-        <View style={{ position: 'absolute', top: 60, right: -50, width: 180, height: 180, borderRadius: 90, borderWidth: 1.5, borderColor: '#16B7F6', opacity: isDarkMode ? 0.18 : 0.25 }} />
-        <View style={{ position: 'absolute', top: 160, left: -70, width: 230, height: 230, borderRadius: 115, backgroundColor: '#1EDFD5', opacity: isDarkMode ? 0.05 : 0.06 }} />
-        <View style={{ position: 'absolute', bottom: -60, left: -60, width: 280, height: 280, borderRadius: 140, backgroundColor: '#16B7F6', opacity: isDarkMode ? 0.07 : 0.06 }} />
-        <View style={{ position: 'absolute', bottom: 100, right: -30, width: 150, height: 150, borderRadius: 75, borderWidth: 1.5, borderColor: '#1EDFD5', opacity: isDarkMode ? 0.15 : 0.2 }} />
-        <View style={{ position: 'absolute', bottom: 260, left: 20, width: 80, height: 80, borderRadius: 40, borderWidth: 1, borderColor: '#51F0C0', opacity: isDarkMode ? 0.2 : 0.25 }} />
+        <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, overflow: 'visible' }}>
+          <View style={{ position: 'absolute', top: 0, right: -80, width: 300, height: 300, borderRadius: 150, backgroundColor: '#1E5EFF', opacity: isDarkMode ? 0.12 : 0.09 }} />
+          <View style={{ position: 'absolute', top: 60, right: -30, width: 160, height: 160, borderRadius: 80, borderWidth: 1.5, borderColor: '#16B7F6', opacity: isDarkMode ? 0.28 : 0.32 }} />
+          <View style={{ position: 'absolute', top: 200, left: 0, width: 210, height: 210, borderRadius: 105, backgroundColor: '#1EDFD5', opacity: isDarkMode ? 0.08 : 0.09 }} />
+          <View style={{ position: 'absolute', bottom: 80, left: 0, width: 240, height: 240, borderRadius: 120, backgroundColor: '#16B7F6', opacity: isDarkMode ? 0.11 : 0.09 }} />
+          <View style={{ position: 'absolute', bottom: 140, right: 10, width: 130, height: 130, borderRadius: 65, borderWidth: 1.5, borderColor: '#1EDFD5', opacity: isDarkMode ? 0.22 : 0.26 }} />
+          <View style={{ position: 'absolute', bottom: 320, left: 30, width: 70, height: 70, borderRadius: 35, borderWidth: 1, borderColor: '#51F0C0', opacity: isDarkMode ? 0.24 : 0.28 }} />
+        </View>
         <ScrollView contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 28 }} keyboardShouldPersistTaps="handled">
           <View style={{ alignItems: 'center', paddingTop: 64, paddingBottom: 36 }}>
             <Image
@@ -1417,15 +1457,16 @@ export default function App() {
 
   if (screen === 'signup') {
     return (
-      <View style={{ flex: 1, backgroundColor: C.bg }}>
+      <View style={{ flex: 1, backgroundColor: C.bg, overflow: 'visible' }}>
         <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={C.bg} />
-        {/* Background decorative pattern */}
-        <View style={{ position: 'absolute', top: -100, right: -100, width: 340, height: 340, borderRadius: 170, backgroundColor: '#1E5EFF', opacity: isDarkMode ? 0.07 : 0.05 }} />
-        <View style={{ position: 'absolute', top: 60, right: -50, width: 180, height: 180, borderRadius: 90, borderWidth: 1.5, borderColor: '#16B7F6', opacity: isDarkMode ? 0.18 : 0.25 }} />
-        <View style={{ position: 'absolute', top: 160, left: -70, width: 230, height: 230, borderRadius: 115, backgroundColor: '#1EDFD5', opacity: isDarkMode ? 0.05 : 0.06 }} />
-        <View style={{ position: 'absolute', bottom: -60, left: -60, width: 280, height: 280, borderRadius: 140, backgroundColor: '#16B7F6', opacity: isDarkMode ? 0.07 : 0.06 }} />
-        <View style={{ position: 'absolute', bottom: 100, right: -30, width: 150, height: 150, borderRadius: 75, borderWidth: 1.5, borderColor: '#1EDFD5', opacity: isDarkMode ? 0.15 : 0.2 }} />
-        <View style={{ position: 'absolute', bottom: 260, left: 20, width: 80, height: 80, borderRadius: 40, borderWidth: 1, borderColor: '#51F0C0', opacity: isDarkMode ? 0.2 : 0.25 }} />
+        <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, overflow: 'visible' }}>
+          <View style={{ position: 'absolute', top: 0, right: -80, width: 300, height: 300, borderRadius: 150, backgroundColor: '#1E5EFF', opacity: isDarkMode ? 0.12 : 0.09 }} />
+          <View style={{ position: 'absolute', top: 60, right: -30, width: 160, height: 160, borderRadius: 80, borderWidth: 1.5, borderColor: '#16B7F6', opacity: isDarkMode ? 0.28 : 0.32 }} />
+          <View style={{ position: 'absolute', top: 200, left: 0, width: 210, height: 210, borderRadius: 105, backgroundColor: '#1EDFD5', opacity: isDarkMode ? 0.08 : 0.09 }} />
+          <View style={{ position: 'absolute', bottom: 80, left: 0, width: 240, height: 240, borderRadius: 120, backgroundColor: '#16B7F6', opacity: isDarkMode ? 0.11 : 0.09 }} />
+          <View style={{ position: 'absolute', bottom: 140, right: 10, width: 130, height: 130, borderRadius: 65, borderWidth: 1.5, borderColor: '#1EDFD5', opacity: isDarkMode ? 0.22 : 0.26 }} />
+          <View style={{ position: 'absolute', bottom: 320, left: 30, width: 70, height: 70, borderRadius: 35, borderWidth: 1, borderColor: '#51F0C0', opacity: isDarkMode ? 0.24 : 0.28 }} />
+        </View>
         <ScrollView contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 28 }} keyboardShouldPersistTaps="handled">
           <View style={{ alignItems: 'center', paddingTop: 44, paddingBottom: 24 }}>
             <Image
@@ -1963,9 +2004,10 @@ export default function App() {
               const lm = niceChartMax(chartData);
               const realVals = chartData.filter(v => v > 0.01);
               const minVal = realVals.length > 0 ? Math.min(...realVals) : 0;
-              const floorVal = Math.max(0, minVal * 0.6);
-              const chartH = 200;
-              const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 32) : SW - 64;
+              const floorVal = Math.max(0, minVal * 0.7);
+              const chartH = 260;
+              const clipH = 232;
+              const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 36) : SW - 64;
               const yStep = (lm - floorVal) / 4;
               const yLabels = [lm, lm-yStep, lm-2*yStep, lm-3*yStep, floorVal];
               return (
@@ -1979,7 +2021,7 @@ export default function App() {
                       </View>
                     </View>
                   )}
-                  <View style={{ position: 'relative' }}>
+                  <View style={{ position: 'relative', height: clipH, overflow: 'hidden' }}>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable}>
                       <LineChart
                         data={{ labels: chartLabels, datasets: [
@@ -1999,7 +2041,7 @@ export default function App() {
                       />
                     </ScrollView>
                     {chartScrollable && (
-                      <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: 46, height: chartH, backgroundColor: C.surface, justifyContent: 'space-between', paddingTop: 8, paddingBottom: 22, alignItems: 'flex-end', paddingRight: 4 }}>
+                      <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: 46, height: clipH, backgroundColor: C.surface, justifyContent: 'space-between', paddingTop: 8, paddingBottom: 8, alignItems: 'flex-end', paddingRight: 4 }}>
                         {yLabels.map((val, i) => (
                           <Text key={i} style={{ color: C.textMuted, fontSize: 9 }}>{fmtYLabel(String(Math.round(val)))}</Text>
                         ))}
@@ -2011,11 +2053,12 @@ export default function App() {
             })()}
             {chartType === 'bar' && (() => {
               const lm = niceChartMax(chartData);
-              const chartH = 200;
-              const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 32) : SW - 64;
+              const chartH = 260;
+              const clipH = 232;
+              const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 36) : SW - 64;
               const yLabels = [lm, lm*0.75, lm*0.5, lm*0.25, 0];
               return (
-                <View style={{ position: 'relative' }}>
+                <View style={{ position: 'relative', height: clipH, overflow: 'hidden' }}>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable}>
                     <BarChart
                       data={{ labels: chartLabels, datasets: [{ data: chartData }] }}
@@ -2027,7 +2070,7 @@ export default function App() {
                     />
                   </ScrollView>
                   {chartScrollable && (
-                    <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: 46, height: chartH, backgroundColor: C.surface, justifyContent: 'space-between', paddingTop: 8, paddingBottom: 22, alignItems: 'flex-end', paddingRight: 4 }}>
+                    <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: 46, height: clipH, backgroundColor: C.surface, justifyContent: 'space-between', paddingTop: 8, paddingBottom: 8, alignItems: 'flex-end', paddingRight: 4 }}>
                       {yLabels.map((val, i) => (
                         <Text key={i} style={{ color: C.textMuted, fontSize: 9 }}>{fmtYLabel(String(Math.round(val)))}</Text>
                       ))}
@@ -2044,7 +2087,7 @@ export default function App() {
                   color: CAT_COLORS[i % CAT_COLORS.length],
                   legendFontColor: C.textSub, legendFontSize: 11,
                 }))}
-                width={SW - 64} height={200} chartConfig={CHART_CFG} accessor="population"
+                width={SW - 64} height={232} chartConfig={CHART_CFG} accessor="population"
                 backgroundColor="transparent" paddingLeft="8" absolute={false}
               />
             )}
@@ -2160,10 +2203,10 @@ export default function App() {
                     { text: 'Gallery', onPress: () => handleScanReceipt(false) },
                     { text: 'Cancel', style: 'cancel' },
                   ])}>
-                    {receiptScanLoading ? <ActivityIndicator size="small" color={C.accent} /> : <Text style={s.syncText}>📷</Text>}
+                    {receiptScanLoading ? <ActivityIndicator size="small" color={C.accent} /> : <Text style={s.syncText}>Scan</Text>}
                   </TouchableOpacity>
                   <TouchableOpacity style={s.syncBtn} onPress={() => setTxSearchActive(true)}>
-                    <Text style={s.syncText}>🔍</Text>
+                    <Text style={s.syncText}>Search</Text>
                   </TouchableOpacity>
                 </>
               )}
@@ -2201,7 +2244,7 @@ export default function App() {
             style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: txFilterCategory !== 'all' ? C.accent + '22' : C.surface, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: txFilterCategory !== 'all' ? C.accent : C.border }}
           >
             <Text style={{ color: txFilterCategory !== 'all' ? C.accent : C.textSub, fontSize: 12, fontWeight: txFilterCategory !== 'all' ? '700' : '400' }}>
-              {txFilterCategory === 'all' ? '⊟ Category' : `⊟ ${PLAID_CATEGORIES.find(c=>c.key===txFilterCategory)?.label || txFilterCategory.replace(/_/g,' ')}`}
+              {txFilterCategory === 'all' ? 'Category' : (PLAID_CATEGORIES.find(c=>c.key===txFilterCategory)?.label || txFilterCategory.replace(/_/g,' '))}
             </Text>
           </TouchableOpacity>
           {Object.keys(dbAccountMap).length > 1 && (
@@ -2210,8 +2253,16 @@ export default function App() {
               style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: txFilterAccount !== 'all' ? C.accent + '22' : C.surface, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: txFilterAccount !== 'all' ? C.accent : C.border }}
             >
               <Text style={{ color: txFilterAccount !== 'all' ? C.accent : C.textSub, fontSize: 12, fontWeight: txFilterAccount !== 'all' ? '700' : '400' }}>
-                🏦 {txFilterAccount === 'all' ? 'Bank' : 'Filtered'}
+                {txFilterAccount === 'all' ? 'Account' : 'Account *'}
               </Text>
+            </TouchableOpacity>
+          )}
+          {txFilterDateFrom && (
+            <TouchableOpacity
+              onPress={() => setTxFilterDateFrom(null)}
+              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: C.accent + '22', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: C.accent }}
+            >
+              <Text style={{ color: C.accent, fontSize: 12, fontWeight: '700' }}>From {txFilterDateFrom} ✕</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -2428,7 +2479,7 @@ export default function App() {
       { id: 'groups', label: 'Groups', icon: '◈', color: C.blue, desc: 'Shared budgets & group goals' },
       { id: 'budget', label: 'Budget', icon: '◎', color: C.green, desc: 'Spending limits by category' },
       { id: 'recurring', label: 'Recurring', icon: '↻', color: '#06b6d4', desc: 'Bills, subscriptions & repeating payments' },
-      { id: 'networth', label: 'Net Worth', icon: '▲', color: '#1EDFD5', desc: 'Assets minus liabilities', comingSoon: true },
+      { id: 'networth', label: 'Net Worth', icon: '▲', color: '#1EDFD5', desc: 'Assets minus liabilities' },
       { id: 'creditscore', label: 'Credit Score', icon: '★', color: '#f97316', desc: 'Monitor your credit health', comingSoon: true },
     ];
     return (
@@ -2600,12 +2651,24 @@ export default function App() {
             <Text style={s.syncText}>+ Add</Text>
           </TouchableOpacity>
         </View>
+        {!userPayday && (
+          <TouchableOpacity
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.surface, borderRadius: 12, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: C.accent + '55' }}
+            onPress={() => { setPaydayNextDate(''); setPaydayFreq('biweekly'); setPaydayModalVisible(true); }}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: C.text, fontSize: 13, fontWeight: '700', marginBottom: 2 }}>Set Your Pay Period</Text>
+              <Text style={{ color: C.textSub, fontSize: 12 }}>Add your payday to view budgets by pay period.</Text>
+            </View>
+            <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700' }}>Set Up ›</Text>
+          </TouchableOpacity>
+        )}
         {/* Global period selector */}
         <View style={{ flexDirection: 'row', backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border, overflow: 'hidden', marginBottom: 14 }}>
           {['weekly','biweekly','monthly','paycycle'].map(p => (
             <TouchableOpacity
               key={p}
-              onPress={() => setBudgetGlobalPeriod(p)}
+              onPress={() => { if (p === 'paycycle' && !userPayday) { Alert.alert('Pay Period', 'Set your payday first to use pay period budgets.', [{ text: 'Set Up', onPress: () => { setPaydayNextDate(''); setPaydayFreq('biweekly'); setPaydayModalVisible(true); } }, { text: 'Cancel', style: 'cancel' }]); return; } setBudgetGlobalPeriod(p); }}
               style={{ flex: 1, paddingVertical: 10, alignItems: 'center', backgroundColor: budgetGlobalPeriod === p ? C.accent : 'transparent' }}
             >
               <Text style={{ color: budgetGlobalPeriod === p ? '#fff' : C.textSub, fontSize: 12, fontWeight: '700' }}>{periodLabels[p]}</Text>
@@ -2650,7 +2713,22 @@ export default function App() {
             const catInfo = PLAID_CATEGORIES.find(c => c.key === b.category);
             const catLabel = catInfo?.label || b.category;
             return (
-              <View key={b.id} style={{ backgroundColor: C.surface, borderRadius: 14, marginBottom: 10, padding: 14 }}>
+              <TouchableOpacity
+                key={b.id}
+                activeOpacity={0.8}
+                style={{ backgroundColor: C.surface, borderRadius: 14, marginBottom: 10, padding: 14 }}
+                onPress={() => {
+                  const periodStart = getPeriodStart(budgetGlobalPeriod, b.paycycle_start, b.paycycle_freq);
+                  Alert.alert(
+                    `View ${catLabel} Transactions`,
+                    `Go to Transactions filtered by ${catLabel} from ${periodStart}?`,
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Go', onPress: () => { setTxFilterCategory(b.category); setTxFilterDateFrom(periodStart); setActiveTab('transactions'); } },
+                    ]
+                  );
+                }}
+              >
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
                   <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: barColor, marginRight: 10 }} />
                   <Text style={{ color: C.text, fontSize: 14, fontWeight: '600', flex: 1 }}>{catLabel}</Text>
@@ -2663,17 +2741,18 @@ export default function App() {
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                   <Text style={{ color: C.textMuted, fontSize: 11 }}>
                     {pct >= 100 ? `$${fmtMoney(spent - limit)} over` : `$${fmtMoney(remaining)} left`}
+                    <Text style={{ color: C.accent }}>{' · tap to view'}</Text>
                   </Text>
                   <View style={{ flexDirection: 'row', gap: 14 }}>
-                    <TouchableOpacity onPress={() => { setEditingBudget(b); setNewBudgetCat(b.category); setNewBudgetLimit(String(b.monthly_limit)); setNewBudgetPeriod(budgetGlobalPeriod); setNewBudgetPaycycleStart(b.paycycle_start || ''); setNewBudgetPaycycleFreq(b.paycycle_freq || 'biweekly'); setAddBudgetVisible(true); }}>
+                    <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); setEditingBudget(b); setNewBudgetCat(b.category); setNewBudgetLimit(String(b.monthly_limit)); setNewBudgetPeriod(budgetGlobalPeriod); setNewBudgetPaycycleStart(b.paycycle_start || ''); setNewBudgetPaycycleFreq(b.paycycle_freq || 'biweekly'); setAddBudgetVisible(true); }}>
                       <Text style={{ color: C.accent, fontSize: 12, fontWeight: '600' }}>Edit</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity onPress={() => Alert.alert('Delete Budget', `Delete ${b.category.replace(/_/g,' ')} budget?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await fetch(`${API_URL}/api/budgets/${b.id}`, { method: 'DELETE' }); fetchBudgets(); } }])}>
+                    <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); Alert.alert('Delete Budget', `Delete ${b.category.replace(/_/g,' ')} budget?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await fetch(`${API_URL}/api/budgets/${b.id}`, { method: 'DELETE' }); fetchBudgets(); } }]); }}>
                       <Text style={{ color: C.red, fontSize: 12, fontWeight: '600' }}>Delete</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
-              </View>
+              </TouchableOpacity>
             );
           })
         )}
@@ -2834,22 +2913,40 @@ export default function App() {
   };
 
   const renderCreditScore = () => (
-    <ScrollView style={s.tab} showsVerticalScrollIndicator={false}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14, marginTop: 2, gap: 6 }}>
-        <TouchableOpacity onPress={() => setMoreSection(null)}>
-          <Text style={{ color: C.accent, fontSize: 13, fontWeight: '600' }}>‹ More</Text>
-        </TouchableOpacity>
-        <Text style={{ color: C.textMuted, fontSize: 13 }}>/</Text>
-        <Text style={{ color: C.text, fontSize: 16, fontWeight: '700' }}>Credit Score</Text>
+    <View style={{ flex: 1 }}>
+      <ScrollView style={s.tab} showsVerticalScrollIndicator={false}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14, marginTop: 2, gap: 6 }}>
+          <TouchableOpacity onPress={() => setMoreSection(null)}>
+            <Text style={{ color: C.accent, fontSize: 13, fontWeight: '600' }}>‹ More</Text>
+          </TouchableOpacity>
+          <Text style={{ color: C.textMuted, fontSize: 13 }}>/</Text>
+          <Text style={{ color: C.text, fontSize: 16, fontWeight: '700' }}>Credit Score</Text>
+        </View>
+        {/* Blurred placeholder content */}
+        <View style={{ opacity: 0.18 }}>
+          <View style={[s.balanceCard, { backgroundColor: C.accent }]}>
+            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, marginBottom: 6 }}>Credit Score</Text>
+            <Text style={{ color: '#fff', fontSize: 40, fontWeight: '800', marginBottom: 8 }}>—</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>Good standing</Text>
+          </View>
+          <View style={s.statsRow}>
+            <View style={s.statCard}><Text style={s.statLabel}>On-Time Payments</Text><Text style={[s.statVal, { color: C.green }]}>—%</Text></View>
+            <View style={s.statCard}><Text style={s.statLabel}>Credit Utilization</Text><Text style={[s.statVal, { color: C.accent }]}>—%</Text></View>
+          </View>
+          <View style={[s.statCard, { marginHorizontal: 0, marginBottom: 8 }]}><Text style={s.statLabel}>Accounts in Good Standing</Text><Text style={s.statVal}>—</Text></View>
+          <View style={[s.statCard, { marginHorizontal: 0 }]}><Text style={s.statLabel}>Hard Inquiries (last 2 yrs)</Text><Text style={s.statVal}>—</Text></View>
+        </View>
+        <View style={{ height: 24 }} />
+      </ScrollView>
+      {/* Coming Soon overlay */}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(6,12,23,0.72)' }} pointerEvents="none">
+        <View style={{ backgroundColor: C.surface, borderRadius: 20, padding: 28, alignItems: 'center', marginHorizontal: 32, borderWidth: 1, borderColor: C.border }}>
+          <Icon char="★" color="#f97316" size={56} radius={16} />
+          <Text style={{ color: C.text, fontSize: 18, fontWeight: '800', marginTop: 16, marginBottom: 8 }}>Coming Soon</Text>
+          <Text style={{ color: C.textSub, fontSize: 13, textAlign: 'center', lineHeight: 20 }}>Credit score monitoring will be available in a future update. We'll notify you when it's ready.</Text>
+        </View>
       </View>
-      <View style={[s.connectCard, { alignItems: 'center', paddingVertical: 48 }]}>
-        <Icon char="C" color="#06b6d4" size={64} radius={20} />
-        <Text style={[s.emptyTitle, { marginTop: 20 }]}>Coming Soon</Text>
-        <Text style={[s.emptyText, { marginBottom: 8 }]}>Credit score monitoring will be available in a future update. We'll notify you when it's ready.</Text>
-        <Text style={{ color: C.textMuted, fontSize: 12, textAlign: 'center' }}>Finlit · Powered by secure credit bureau data</Text>
-      </View>
-      <View style={{ height: 24 }} />
-    </ScrollView>
+    </View>
   );
 
   const renderGroupsSection = () => (
@@ -3364,7 +3461,7 @@ export default function App() {
     };
     const totalBudgeted = budgets.reduce((s, b) => s + parseFloat(b.monthly_limit || 0), 0);
     const totalSpent = budgets.reduce((s, b) => s + getBudgetSpend(b), 0);
-    const bpLabels = { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly' };
+    const bpLabels = { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly', paycycle: 'Pay Period' };
 
     return (
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}
@@ -3376,15 +3473,27 @@ export default function App() {
             <Text style={s.syncText}>+ Add Budget</Text>
           </TouchableOpacity>
         </View>
+        {!userPayday && (
+          <TouchableOpacity
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.surface, borderRadius: 12, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: C.accent + '55' }}
+            onPress={() => { setPaydayNextDate(''); setPaydayFreq('biweekly'); setPaydayModalVisible(true); }}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: C.text, fontSize: 13, fontWeight: '700', marginBottom: 2 }}>Set Your Pay Period</Text>
+              <Text style={{ color: C.textSub, fontSize: 12 }}>Add your payday to view budgets by pay period.</Text>
+            </View>
+            <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700' }}>Set Up ›</Text>
+          </TouchableOpacity>
+        )}
         {/* Global period selector */}
         <View style={{ flexDirection: 'row', backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border, overflow: 'hidden', marginBottom: 14 }}>
-          {['weekly','biweekly','monthly'].map(p => (
+          {['weekly','biweekly','monthly','paycycle'].map(p => (
             <TouchableOpacity
               key={p}
-              onPress={() => setBudgetGlobalPeriod(p)}
+              onPress={() => { if (p === 'paycycle' && !userPayday) { Alert.alert('Pay Period', 'Set your payday first to use pay period budgets.', [{ text: 'Set Up', onPress: () => { setPaydayNextDate(''); setPaydayFreq('biweekly'); setPaydayModalVisible(true); } }, { text: 'Cancel', style: 'cancel' }]); return; } setBudgetGlobalPeriod(p); }}
               style={{ flex: 1, paddingVertical: 10, alignItems: 'center', backgroundColor: budgetGlobalPeriod === p ? C.accent : 'transparent' }}
             >
-              <Text style={{ color: budgetGlobalPeriod === p ? '#fff' : C.textSub, fontSize: 13, fontWeight: '700' }}>{bpLabels[p]}</Text>
+              <Text style={{ color: budgetGlobalPeriod === p ? '#fff' : C.textSub, fontSize: 11, fontWeight: '700' }}>{bpLabels[p]}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -3441,7 +3550,22 @@ export default function App() {
             const catInfo = PLAID_CATEGORIES.find(c => c.key === b.category);
             const catLabel = catInfo?.label || b.category;
             return (
-              <View key={b.id} style={{ backgroundColor: C.surface, borderRadius: 14, marginBottom: 10, padding: 14 }}>
+              <TouchableOpacity
+                key={b.id}
+                activeOpacity={0.8}
+                style={{ backgroundColor: C.surface, borderRadius: 14, marginBottom: 10, padding: 14 }}
+                onPress={() => {
+                  const periodStart = getPeriodStart(budgetGlobalPeriod, b.paycycle_start, b.paycycle_freq);
+                  Alert.alert(
+                    `View ${catLabel} Transactions`,
+                    `See ${catLabel} transactions from ${periodStart}?`,
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Go', onPress: () => { setTxFilterCategory(b.category); setTxFilterDateFrom(periodStart); setActiveTab('transactions'); } },
+                    ]
+                  );
+                }}
+              >
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
                   <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: barColor, marginRight: 10 }} />
                   <Text style={{ color: C.text, fontSize: 14, fontWeight: '600', flex: 1 }}>{catLabel}</Text>
@@ -3464,7 +3588,7 @@ export default function App() {
                     </TouchableOpacity>
                   </View>
                 </View>
-              </View>
+              </TouchableOpacity>
             );
           })
         )}
@@ -3772,6 +3896,15 @@ export default function App() {
   return (
     <SafeAreaView style={s.appWrap}>
       <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+
+      <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, overflow: 'visible' }}>
+        <View style={{ position: 'absolute', top: 0, right: -100, width: 320, height: 320, borderRadius: 160, backgroundColor: '#1E5EFF', opacity: 0.07 }} />
+        <View style={{ position: 'absolute', top: 80, right: -40, width: 160, height: 160, borderRadius: 80, borderWidth: 1, borderColor: '#16B7F6', opacity: 0.14 }} />
+        <View style={{ position: 'absolute', top: 280, left: 0, width: 220, height: 220, borderRadius: 110, backgroundColor: '#1EDFD5', opacity: 0.05 }} />
+        <View style={{ position: 'absolute', bottom: 100, left: 0, width: 260, height: 260, borderRadius: 130, backgroundColor: '#16B7F6', opacity: 0.06 }} />
+        <View style={{ position: 'absolute', bottom: 180, right: -20, width: 140, height: 140, borderRadius: 70, borderWidth: 1, borderColor: '#1EDFD5', opacity: 0.14 }} />
+        <View style={{ position: 'absolute', bottom: 380, left: 20, width: 80, height: 80, borderRadius: 40, borderWidth: 1, borderColor: '#51F0C0', opacity: 0.18 }} />
+      </View>
 
       <View style={s.header}>
         <View>
@@ -4265,18 +4398,35 @@ export default function App() {
                 <>
                   <Text style={s.label}>Category</Text>
                   <ScrollView style={{ maxHeight: 200, marginBottom: 10 }} showsVerticalScrollIndicator={true} nestedScrollEnabled={true}>
-                    {[...PLAID_CATEGORIES, ...customCategories.map(c => ({ key: c, label: c, icon: '★' }))].map(cat => (
-                      <TouchableOpacity
-                        key={cat.key}
-                        onPress={() => setNewBudgetCat(cat.key)}
-                        style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, marginBottom: 4, backgroundColor: newBudgetCat === cat.key ? C.accent : C.surface, borderWidth: 1, borderColor: newBudgetCat === cat.key ? C.accent : C.border }}
-                      >
-                        <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: newBudgetCat === cat.key ? 'rgba(255,255,255,0.2)' : C.surface2, justifyContent: 'center', alignItems: 'center' }}>
-                          <Text style={{ color: newBudgetCat === cat.key ? '#fff' : C.textSub, fontSize: 14, fontWeight: '700' }}>{cat.icon}</Text>
-                        </View>
-                        <Text style={{ color: newBudgetCat === cat.key ? '#fff' : C.text, fontSize: 14, fontWeight: '500', flex: 1 }}>{cat.label}</Text>
-                        {newBudgetCat === cat.key && <Text style={{ color: '#fff', fontSize: 16 }}>✓</Text>}
-                      </TouchableOpacity>
+                    {[...PLAID_CATEGORIES, ...customCategories.map(c => ({ key: c, label: c, icon: '★', custom: true }))].map(cat => (
+                      <View key={cat.key} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                        <TouchableOpacity
+                          onPress={() => setNewBudgetCat(cat.key)}
+                          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, backgroundColor: newBudgetCat === cat.key ? C.accent : C.surface, borderWidth: 1, borderColor: newBudgetCat === cat.key ? C.accent : C.border }}
+                        >
+                          <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: newBudgetCat === cat.key ? 'rgba(255,255,255,0.2)' : C.surface2, justifyContent: 'center', alignItems: 'center' }}>
+                            <Text style={{ color: newBudgetCat === cat.key ? '#fff' : C.textSub, fontSize: 14, fontWeight: '700' }}>{cat.icon}</Text>
+                          </View>
+                          <Text style={{ color: newBudgetCat === cat.key ? '#fff' : C.text, fontSize: 14, fontWeight: '500', flex: 1 }}>{cat.label}</Text>
+                          {newBudgetCat === cat.key && <Text style={{ color: '#fff', fontSize: 16 }}>✓</Text>}
+                        </TouchableOpacity>
+                        {cat.custom && (
+                          <TouchableOpacity
+                            onPress={() => Alert.alert('Delete Category', `Delete "${cat.label}"?`, [
+                              { text: 'Cancel', style: 'cancel' },
+                              { text: 'Delete', style: 'destructive', onPress: () => {
+                                const updated = customCategories.filter(c => c !== cat.key);
+                                setCustomCategories(updated);
+                                AsyncStorage.setItem('customCategories', JSON.stringify(updated));
+                                if (newBudgetCat === cat.key) setNewBudgetCat('');
+                              }},
+                            ])}
+                            style={{ paddingHorizontal: 10, paddingVertical: 10, marginLeft: 4 }}
+                          >
+                            <Text style={{ color: C.red, fontSize: 18, fontWeight: '700' }}>×</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
                     ))}
                   </ScrollView>
                   <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
@@ -4552,7 +4702,7 @@ export default function App() {
           <View style={[s.modalCard, { paddingBottom: 8 }]}>
             <Text style={s.modalTitle}>Filter by Category</Text>
             <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
-              {[['all', 'All Categories'], ...Array.from(new Set(transactions.map(tx => tx.category).filter(Boolean))).sort().map(c => [c, c.replace(/_/g, ' ')])].map(([key, label]) => (
+              {[['all', 'All Categories'], ...Array.from(new Set(transactions.map(tx => getEffectiveCategory(tx)).filter(Boolean))).sort().map(c => [c, PLAID_CATEGORIES.find(p => p.key === c)?.label || c.replace(/_/g, ' ')])].map(([key, label]) => (
                 <TouchableOpacity
                   key={key}
                   onPress={() => { setTxFilterCategory(key); setTxFilterDropdownVisible(false); }}
@@ -4616,7 +4766,7 @@ export default function App() {
           <View style={[s.modalCard, { paddingBottom: 8 }]}>
             <Text style={s.modalTitle}>Filter by Category</Text>
             <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
-              {[['all', 'All Categories'], ...Array.from(new Set(transactions.map(tx => tx.category).filter(Boolean))).sort().map(c => [c, c.replace(/_/g, ' ')])].map(([key, label]) => (
+              {[['all', 'All Categories'], ...Array.from(new Set(transactions.map(tx => getEffectiveCategory(tx)).filter(Boolean))).sort().map(c => [c, PLAID_CATEGORIES.find(p => p.key === c)?.label || c.replace(/_/g, ' ')])].map(([key, label]) => (
                 <TouchableOpacity
                   key={key}
                   onPress={() => { setInsightsCatFilter(key); setSelectedCategory(null); setInsightsCatDropdownVisible(false); }}
@@ -4862,6 +5012,7 @@ export default function App() {
       {/* Post-Sync Transaction Review Modal */}
       <Modal visible={postSyncVisible} animationType="slide" transparent onRequestClose={() => setPostSyncVisible(false)}>
         <View style={s.modalOverlay}>
+          <ScrollView style={{ width: '100%' }} contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end' }} keyboardShouldPersistTaps="handled">
           <View style={s.modalCard}>
             {postSyncTxs.length > 0 && (() => {
               const tx = postSyncTxs[postSyncIdx];
@@ -4871,14 +5022,14 @@ export default function App() {
                     <Text style={s.modalTitle}>Review Transaction</Text>
                     <Text style={{ color: C.textMuted, fontSize: 12 }}>{postSyncIdx + 1} / {postSyncTxs.length}</Text>
                   </View>
-                  <Text style={{ color: C.textSub, fontSize: 12, marginBottom: 16 }}>Confirm or correct the category for each new transaction.</Text>
+                  <Text style={{ color: C.textSub, fontSize: 12, marginBottom: 16 }}>Confirm or correct the category. Optionally add to a savings goal.</Text>
                   <View style={{ backgroundColor: C.surface, borderRadius: 12, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: C.border }}>
                     <Text style={{ color: C.text, fontSize: 15, fontWeight: '700' }}>{tx.merchant_name || tx.description || 'Unknown'}</Text>
                     <Text style={{ color: C.textMuted, fontSize: 12, marginTop: 2 }}>{fmtDate(tx.transaction_date)} · ${fmtMoney(tx.amount)}</Text>
                   </View>
                   <Text style={s.label}>Category</Text>
                   <ScrollView style={{ maxHeight: 180, marginBottom: 16 }} showsVerticalScrollIndicator={true} nestedScrollEnabled={true}>
-                    {PLAID_CATEGORIES.map(cat => (
+                    {[...PLAID_CATEGORIES, ...customCategories.map(c => ({ key: c, label: c, icon: '★' }))].map(cat => (
                       <TouchableOpacity key={cat.key} onPress={() => setPostSyncCat(cat.key)}
                         style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 9, paddingHorizontal: 12, borderRadius: 10, marginBottom: 3, backgroundColor: postSyncCat === cat.key ? C.accent : C.surface, borderWidth: 1, borderColor: postSyncCat === cat.key ? C.accent : C.border }}>
                         <Text style={{ color: postSyncCat === cat.key ? '#fff' : C.textSub, fontSize: 13, fontWeight: '700', width: 22 }}>{cat.icon}</Text>
@@ -4887,9 +5038,24 @@ export default function App() {
                       </TouchableOpacity>
                     ))}
                   </ScrollView>
+                  {goals.filter(g => !g.is_completed && g.type === 'savings').length > 0 && (
+                    <>
+                      <Text style={s.label}>Add ${fmtMoney(tx.amount)} to a Goal (optional)</Text>
+                      <ScrollView style={{ maxHeight: 130, marginBottom: 16 }} showsVerticalScrollIndicator={true} nestedScrollEnabled={true}>
+                        {[{ id: null, title: 'None' }, ...goals.filter(g => !g.is_completed && g.type === 'savings')].map(g => (
+                          <TouchableOpacity key={g.id ?? 'none'} onPress={() => setPostSyncGoalId(g.id)}
+                            style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 9, paddingHorizontal: 12, borderRadius: 10, marginBottom: 3, backgroundColor: postSyncGoalId === g.id ? C.accent : C.surface, borderWidth: 1, borderColor: postSyncGoalId === g.id ? C.accent : C.border }}>
+                            <Text style={{ color: postSyncGoalId === g.id ? '#fff' : C.text, fontSize: 13, flex: 1 }}>{g.title}</Text>
+                            {postSyncGoalId === g.id && <Text style={{ color: '#fff' }}>✓</Text>}
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+                    </>
+                  )}
                   <View style={{ flexDirection: 'row', gap: 10 }}>
                     <TouchableOpacity style={[s.btn, { flex: 1, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border }]}
                       onPress={() => {
+                        setPostSyncGoalId(null);
                         const next = postSyncIdx + 1;
                         if (next >= postSyncTxs.length) { setPostSyncVisible(false); }
                         else { setPostSyncIdx(next); setPostSyncCat(getEffectiveCategory(postSyncTxs[next])); }
@@ -4904,6 +5070,15 @@ export default function App() {
                           saveCategoryRules(updated);
                           if (tx.id) await fetch(`${API_URL}/api/transactions/${tx.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category: postSyncCat }) });
                         }
+                        if (postSyncGoalId) {
+                          const goal = goals.find(g => g.id === postSyncGoalId);
+                          if (goal) {
+                            const newAmt = parseFloat(goal.current_amount || 0) + parseFloat(tx.amount || 0);
+                            await fetch(`${API_URL}/api/goals/${goal.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current_amount: newAmt }) });
+                            fetchGoals();
+                          }
+                        }
+                        setPostSyncGoalId(null);
                         const next = postSyncIdx + 1;
                         if (next >= postSyncTxs.length) { setPostSyncVisible(false); }
                         else { setPostSyncIdx(next); setPostSyncCat(getEffectiveCategory(postSyncTxs[next])); }
@@ -4915,6 +5090,7 @@ export default function App() {
               );
             })()}
           </View>
+          </ScrollView>
         </View>
       </Modal>
 
@@ -4926,7 +5102,7 @@ export default function App() {
 // STYLES
 // ════════════════════════════════════════════════════
 const makeStyles = (C) => StyleSheet.create({
-  appWrap: { flex: 1, backgroundColor: C.bg },
+  appWrap: { flex: 1, backgroundColor: C.bg, overflow: 'visible' },
   bg: { flex: 1, backgroundColor: C.bg },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   tab: { flex: 1, paddingHorizontal: 16, paddingTop: 8 },
@@ -4995,7 +5171,7 @@ const makeStyles = (C) => StyleSheet.create({
   connectTitle: { color: C.text, fontSize: 17, fontWeight: '700', marginBottom: 10 },
   connectText: { color: C.textSub, fontSize: 13, lineHeight: 20, marginBottom: 18 },
 
-  chartCard: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 16, padding: 16, alignItems: 'center' },
+  chartCard: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 16, padding: 16, paddingBottom: 8 },
   insightCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.surface, borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: C.border, gap: 12 },
   insightDot: { width: 10, height: 10, borderRadius: 5 },
   pct: { fontSize: 12, fontWeight: '700', width: 34, textAlign: 'right' },
