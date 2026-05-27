@@ -626,10 +626,33 @@ export default function App() {
 
   // ── Splash + OTA update check ────────────────────────
   const [updateStatus, setUpdateStatus] = useState('');
+  const lastUpdateCheckRef = useRef(0);
   const dismissSplash = useCallback(() => {
     Animated.timing(splashOpacity, { toValue: 0, duration: 400, useNativeDriver: true })
       .start(() => setShowSplash(false));
   }, [splashOpacity]);
+
+  const checkForUpdate = useCallback(async (isSplash = false) => {
+    if (__DEV__) { if (isSplash) setTimeout(dismissSplash, 1400); return; }
+    const now = Date.now();
+    if (!isSplash && now - lastUpdateCheckRef.current < 5 * 60 * 1000) return;
+    lastUpdateCheckRef.current = now;
+    try {
+      if (isSplash) setUpdateStatus('Checking for updates…');
+      const result = await Updates.checkForUpdateAsync();
+      if (result.isAvailable) {
+        setUpdateStatus('Updating…');
+        await Updates.fetchUpdateAsync();
+        await Updates.reloadAsync();
+      } else {
+        setUpdateStatus('');
+        if (isSplash) setTimeout(dismissSplash, 800);
+      }
+    } catch (e) {
+      setUpdateStatus('');
+      if (isSplash) setTimeout(dismissSplash, 800);
+    }
+  }, [dismissSplash]);
 
   useEffect(() => {
     Animated.parallel([
@@ -637,26 +660,12 @@ export default function App() {
       Animated.spring(splashScale, { toValue: 1, tension: 60, friction: 8, useNativeDriver: true }),
     ]).start();
 
-    const checkForUpdate = async () => {
-      try {
-        if (__DEV__) { setTimeout(dismissSplash, 1400); return; }
-        setUpdateStatus('Checking for updates…');
-        const result = await Updates.checkForUpdateAsync();
-        if (result.isAvailable) {
-          setUpdateStatus('Updating…');
-          await Updates.fetchUpdateAsync();
-          await Updates.reloadAsync();
-        } else {
-          setUpdateStatus('');
-          setTimeout(dismissSplash, 800);
-        }
-      } catch {
-        setUpdateStatus('');
-        setTimeout(dismissSplash, 800);
-      }
-    };
+    checkForUpdate(true);
 
-    checkForUpdate();
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') checkForUpdate(false);
+    });
+    return () => sub.remove();
   }, []);
 
   // ── Drawer ──────────────────────────────────────────
@@ -3855,11 +3864,11 @@ export default function App() {
               <Text style={[s.drawerRowText, { flex: 1, marginLeft: 12 }]}>Rate Finlit</Text>
               <Text style={s.chevron}>›</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={s.drawerRow}>
+            <TouchableOpacity style={s.drawerRow} onPress={() => checkForUpdate(false).then(() => Alert.alert('Update Check', updateStatus || 'Up to date'))}>
               <Icon char="i" color={C.textSub} size={32} />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={s.drawerRowText}>About</Text>
-                <Text style={s.drawerRowSub}>Version 1.0.8</Text>
+                <Text style={s.drawerRowSub}>v1.0.8 · {Updates.updateId ? Updates.updateId.slice(0, 8) : 'base'}</Text>
               </View>
               <Text style={s.chevron}>›</Text>
             </TouchableOpacity>
