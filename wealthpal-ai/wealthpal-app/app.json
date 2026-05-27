@@ -13,9 +13,23 @@
     "assetBundlePatterns": [
       "**/*"
     ],
+    "scheme": "finlit",
     "plugins": [
       ["expo-av", { "microphonePermission": "Allow Finlit to use the microphone for voice messages." }],
-      ["expo-image-picker", { "photosPermission": "Allow Finlit to access your photos to scan receipts.", "cameraPermission": "Allow Finlit to use the camera to scan receipts." }]
+      ["expo-image-picker", { "photosPermission": "Allow Finlit to access your photos to scan receipts.", "cameraPermission": "Allow Finlit to use the camera to scan receipts." }],
+      ["react-native-android-widget", {
+        "widgets": [
+          {
+            "name": "FinlitWidget",
+            "label": "Finlit AI Assistant",
+            "minWidth": "180dp",
+            "minHeight": "110dp",
+            "description": "Ask Finlit AI financial questions from your home screen",
+            "resizeMode": "horizontal|vertical",
+            "updatePeriodMillis": 1800000
+          }
+        ]
+      }]
     ],
     "android": {
       "package": "com.aduvall0402.wealthpalaiapp",

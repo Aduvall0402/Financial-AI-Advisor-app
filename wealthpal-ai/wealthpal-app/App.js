@@ -15,6 +15,7 @@ import * as Speech from 'expo-speech';
 import { Audio } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
 import * as Updates from 'expo-updates';
+import * as Linking from 'expo-linking';
 
 // Categories to exclude from all spending calculations (income, transfers, non-purchase flows)
 const INCOME_CATEGORIES = new Set([
@@ -221,6 +222,7 @@ export default function App() {
   const [transactions, setTransactions] = useState([]);
   const [loadingTx, setLoadingTx] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [budgetNavPrompt, setBudgetNavPrompt] = useState(null); // { catLabel, category, periodStart }
   const [syncError, setSyncError] = useState('');
 
   // Plaid
@@ -496,11 +498,17 @@ export default function App() {
     const todayStr = now.toDateString();
     const lastSyncDateStr = lastSyncTime ? new Date(lastSyncTime).toDateString() : '';
     if (todayStr === lastSyncDateStr) return;
+    // Mark synced for today before calling so rapid foreground events don't double-fire
     const newLastSync = Date.now();
     setLastSyncTime(newLastSync);
     AsyncStorage.setItem('lastSyncTime', String(newLastSync));
     syncTransactions();
   }, [autoSyncEnabled, autoSyncHour, lastSyncTime]);
+
+  const manuallySyncNow = useCallback(() => {
+    if (!userIdRef.current) return;
+    syncTransactions();
+  }, []);
 
   useEffect(() => {
     checkAutoSync();
@@ -677,6 +685,21 @@ export default function App() {
       if (nextState === 'active') checkForUpdate(false);
     });
     return () => { clearTimeout(t); sub.remove(); };
+  }, []);
+
+  // ── Deep link handling (widget / external) ───────────
+  useEffect(() => {
+    const handleURL = (url) => {
+      if (!url) return;
+      const parsed = Linking.parse(url);
+      const path = parsed.path || parsed.hostname || '';
+      if (path === 'chat' || url.includes('finlit://chat')) {
+        setActiveTab('chat');
+      }
+    };
+    Linking.getInitialURL().then(handleURL);
+    const sub = Linking.addEventListener('url', ({ url }) => handleURL(url));
+    return () => sub.remove();
   }, []);
 
   // ── Drawer ──────────────────────────────────────────
@@ -877,17 +900,18 @@ export default function App() {
 
   const syncTransactions = async () => {
     if (!userIdRef.current) return;
-    setSyncing(true); setSyncError('');
+    setSyncing(true); setSyncError(''); setPlaidError(''); setPlaidStatus('');
     try {
-      const res = await fetch(`${API_URL}/api/transactions/sync/${userIdRef.current}`, { method: 'POST' });
+      const res = await authFetch(`/api/transactions/sync/${userIdRef.current}`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) {
         setSyncError(data.error || 'Sync failed');
+        setPlaidError(data.error || 'Sync failed');
       } else {
         if (data.total === 0) setSyncError('Plaid returned 0 transactions. Try reconnecting your bank.');
-        else if (data.synced === 0 && data.total > 0) setSyncError(`Failed to save transactions (0/${data.total} saved). Check server logs.`);
-        else setSyncError('');
-        const txRes = await fetch(`${API_URL}/api/transactions/${userIdRef.current}`);
+        else if (data.synced === 0 && data.total > 0) setSyncError(`Failed to save transactions (0/${data.total} saved).`);
+        else { setSyncError(''); setPlaidStatus(`Synced ${data.synced} transaction${data.synced !== 1 ? 's' : ''}`); setTimeout(() => setPlaidStatus(''), 4000); }
+        const txRes = await authFetch(`/api/transactions/${userIdRef.current}`);
         const txData = txRes.ok ? await txRes.json() : {};
         const fresh = (txData.transactions || []).filter(tx => !isIncomeTx(tx));
         if (fresh.length > 0) {
@@ -899,7 +923,7 @@ export default function App() {
         await fetchTransactions();
         autoUpdateGoals();
       }
-    } catch (e) { setSyncError('Network error — could not reach server'); }
+    } catch (e) { setSyncError('Network error — could not reach server'); setPlaidError('Network error'); }
     finally { setSyncing(false); }
   };
 
@@ -1303,6 +1327,23 @@ export default function App() {
       }
     }
     return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]; // monthly
+  };
+
+  const getPeriodEnd = (startDateStr, freq) => {
+    const freqDays = freq === 'weekly' ? 7 : freq === 'biweekly' ? 14 : 30;
+    const start = new Date(startDateStr + 'T00:00:00');
+    const end = new Date(start.getTime() + (freqDays - 1) * 86400000);
+    return end.toISOString().split('T')[0];
+  };
+
+  const fmtPeriodRange = (startStr, freq) => {
+    const end = getPeriodEnd(startStr, freq);
+    const [sy, sm, sd] = startStr.split('-').map(Number);
+    const [ey, em, ed] = end.split('-').map(Number);
+    const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const startLabel = `${MONTHS[sm-1]} ${sd}`;
+    const endLabel = sm === em ? `${ed}` : `${MONTHS[em-1]} ${ed}`;
+    return `${startLabel} – ${endLabel}`;
   };
 
   // ── CSV Export ──────────────────────────────────────
@@ -2284,7 +2325,7 @@ export default function App() {
           <Text style={{ color: C.accent, fontSize: 12, flex: 1 }}>
             Showing{txFilterCategory !== 'all' ? ` ${PLAID_CATEGORIES.find(c=>c.key===txFilterCategory)?.label || txFilterCategory}` : ''} since <Text style={{ fontWeight: '700' }}>{txFilterDateFrom}</Text>
           </Text>
-          <TouchableOpacity onPress={() => setTxFilterDateFrom(null)}>
+          <TouchableOpacity onPress={() => { setTxFilterDateFrom(null); setTxFilterCategory('all'); }}>
             <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700', marginLeft: 8 }}>Clear ✕</Text>
           </TouchableOpacity>
         </View>
@@ -2501,7 +2542,7 @@ export default function App() {
       { id: 'groups', label: 'Groups', icon: '◈', color: C.blue, desc: 'Shared budgets & group goals' },
       { id: 'budget', label: 'Budget', icon: '◎', color: C.green, desc: 'Spending limits by category' },
       { id: 'recurring', label: 'Recurring', icon: '↻', color: '#06b6d4', desc: 'Bills, subscriptions & repeating payments' },
-      { id: 'networth', label: 'Net Worth', icon: '▲', color: '#1EDFD5', desc: 'Assets minus liabilities' },
+      { id: 'networth', label: 'Net Worth', icon: '▲', color: '#1EDFD5', desc: 'Assets minus liabilities', comingSoon: true },
       { id: 'creditscore', label: 'Credit Score', icon: '★', color: '#f97316', desc: 'Monitor your credit health', comingSoon: true },
     ];
     return (
@@ -2511,7 +2552,7 @@ export default function App() {
           <TouchableOpacity
             key={item.id}
             style={[s.txItem, { paddingVertical: 18, opacity: item.comingSoon ? 0.55 : 1 }]}
-            onPress={() => { if (item.comingSoon) { Alert.alert('Coming Soon', `${item.label} is coming in a future update.`); return; } if (item.id === 'groups') { fetchGroups(); } if (item.id === 'recurring') { fetchRecurring(); } setMoreSection(item.id); }}
+            onPress={() => { if (item.id === 'groups') { fetchGroups(); } if (item.id === 'recurring') { fetchRecurring(); } setMoreSection(item.id); }}
             activeOpacity={0.75}
           >
             <Icon char={item.icon} color={item.color} size={46} radius={14} />
@@ -2658,6 +2699,8 @@ export default function App() {
     const totalBudgeted = budgets.reduce((s, b) => s + parseFloat(b.monthly_limit || 0), 0);
     const totalSpent = budgets.reduce((s, b) => s + getBudgetSpend2(b), 0);
     const periodStart2 = userPayday ? getPeriodStart('paycycle') : null;
+    const freqDays2 = userPayday?.frequency === 'weekly' ? 7 : userPayday?.frequency === 'biweekly' ? 14 : 30;
+    const periodLabel2 = periodStart2 ? fmtPeriodRange(periodStart2, userPayday?.frequency || 'biweekly') : null;
 
     return (
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}
@@ -2670,7 +2713,7 @@ export default function App() {
           <Text style={{ color: C.textMuted, fontSize: 13 }}>/</Text>
           <View style={{ flex: 1 }}>
             <Text style={{ color: C.text, fontSize: 16, fontWeight: '700' }}>Budget</Text>
-            {periodStart2 && <Text style={{ color: C.textMuted, fontSize: 11 }}>Since {periodStart2}</Text>}
+            {periodLabel2 && <Text style={{ color: C.textMuted, fontSize: 11 }}>{periodLabel2}</Text>}
           </View>
           <TouchableOpacity style={s.syncBtn} onPress={() => { setEditingBudget(null); setNewBudgetCat(''); setNewBudgetLimit(''); setNewBudgetPeriod('paycycle'); setAddBudgetVisible(true); }}>
             <Text style={s.syncText}>+ Add</Text>
@@ -2732,14 +2775,7 @@ export default function App() {
                 style={{ backgroundColor: C.surface, borderRadius: 14, marginBottom: 10, padding: 14 }}
                 onPress={() => {
                   const periodStart = getPeriodStart('paycycle', b.paycycle_start, b.paycycle_freq);
-                  Alert.alert(
-                    `Your ${catLabel} Spending`,
-                    `Want to see all your ${catLabel} transactions since your last payday?`,
-                    [
-                      { text: 'Not Now', style: 'cancel' },
-                      { text: 'Show Me', onPress: () => { setTxFilterCategory(b.category); setTxFilterDateFrom(periodStart); setActiveTab('transactions'); } },
-                    ]
-                  );
+                  setBudgetNavPrompt({ catLabel, category: b.category, periodStart });
                 }}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
@@ -2859,19 +2895,8 @@ export default function App() {
     );
   };
 
-  const renderNetWorth = () => {
-    const totalAssets = accounts.reduce((s, a) => {
-      const t = (a.type || '').toLowerCase();
-      if (t === 'depository' || t === 'investment') return s + (a.balances?.current || 0);
-      return s;
-    }, 0);
-    const totalLiabilities = accounts.reduce((s, a) => {
-      const t = (a.type || '').toLowerCase();
-      if (t === 'credit' || t === 'loan') return s + Math.abs(a.balances?.current || 0);
-      return s;
-    }, 0);
-    const netWorth = totalAssets - totalLiabilities;
-    return (
+  const renderNetWorth = () => (
+    <View style={{ flex: 1 }}>
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14, marginTop: 2, gap: 6 }}>
           <TouchableOpacity onPress={() => setMoreSection(null)}>
@@ -2880,50 +2905,32 @@ export default function App() {
           <Text style={{ color: C.textMuted, fontSize: 13 }}>/</Text>
           <Text style={{ color: C.text, fontSize: 16, fontWeight: '700' }}>Net Worth</Text>
         </View>
-        <View style={[s.balanceCard, { backgroundColor: netWorth >= 0 ? C.green : C.red }]}>
-          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, marginBottom: 6 }}>Net Worth</Text>
-          <Text style={{ color: '#fff', fontSize: 40, fontWeight: '800', marginBottom: 8 }}>${fmtMoney(Math.abs(netWorth))}</Text>
-          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>{netWorth >= 0 ? 'Positive net worth' : 'Negative net worth'}</Text>
+        {/* Blurred placeholder content */}
+        <View style={{ opacity: 0.18 }}>
+          <View style={[s.balanceCard, { backgroundColor: C.green }]}>
+            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, marginBottom: 6 }}>Net Worth</Text>
+            <Text style={{ color: '#fff', fontSize: 40, fontWeight: '800', marginBottom: 8 }}>$—</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>Positive net worth</Text>
+          </View>
+          <View style={s.statsRow}>
+            <View style={s.statCard}><Text style={s.statLabel}>Total Assets</Text><Text style={[s.statVal, { color: C.green }]}>$—</Text></View>
+            <View style={s.statCard}><Text style={s.statLabel}>Total Liabilities</Text><Text style={[s.statVal, { color: C.red }]}>$—</Text></View>
+          </View>
+          <View style={[s.statCard, { marginHorizontal: 0, marginBottom: 8 }]}><Text style={s.statLabel}>Checking & Savings</Text><Text style={s.statVal}>$—</Text></View>
+          <View style={[s.statCard, { marginHorizontal: 0 }]}><Text style={s.statLabel}>Investments</Text><Text style={s.statVal}>$—</Text></View>
         </View>
-        <View style={s.statsRow}>
-          <View style={s.statCard}>
-            <Text style={s.statLabel}>Total Assets</Text>
-            <Text style={[s.statVal, { color: C.green }]}>${fmtMoney(totalAssets)}</Text>
-          </View>
-          <View style={s.statCard}>
-            <Text style={s.statLabel}>Total Liabilities</Text>
-            <Text style={[s.statVal, { color: C.red }]}>${fmtMoney(totalLiabilities)}</Text>
-          </View>
-        </View>
-        {accounts.length > 0 ? (
-          <View style={s.section}>
-            <Text style={s.sectionTitle}>Accounts</Text>
-            {accounts.map(acc => {
-              const isLiability = ['credit','loan'].includes((acc.type || '').toLowerCase());
-              return (
-                <View key={acc.account_id} style={[s.txItem, { flexDirection: 'row' }]}>
-                  <Icon char={acc.type?.[0]?.toUpperCase() || 'A'} color={isLiability ? C.red : C.green} size={42} radius={12} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.txMerchant}>{acc.name}</Text>
-                    <Text style={s.txMeta}>{acc.subtype} · {acc.type}</Text>
-                  </View>
-                  <Text style={{ color: isLiability ? C.red : C.green, fontSize: 15, fontWeight: '700' }}>
-                    {isLiability ? '-' : ''}${fmtMoney(acc.balances?.current || 0)}
-                  </Text>
-                </View>
-              );
-            })}
-          </View>
-        ) : (
-          <View style={[s.connectCard, { alignItems: 'center', paddingVertical: 32 }]}>
-            <Text style={s.emptyTitle}>No accounts linked</Text>
-            <Text style={s.emptyText}>Connect your bank to see your net worth breakdown.</Text>
-          </View>
-        )}
         <View style={{ height: 24 }} />
       </ScrollView>
-    );
-  };
+      {/* Coming Soon overlay */}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(6,12,23,0.72)' }} pointerEvents="none">
+        <View style={{ backgroundColor: C.surface, borderRadius: 20, padding: 28, alignItems: 'center', marginHorizontal: 32, borderWidth: 1, borderColor: C.border }}>
+          <Icon char="▲" color="#1EDFD5" size={56} radius={16} />
+          <Text style={{ color: C.text, fontSize: 18, fontWeight: '800', marginTop: 16, marginBottom: 8 }}>Coming Soon</Text>
+          <Text style={{ color: C.textSub, fontSize: 13, textAlign: 'center', lineHeight: 20 }}>Full net worth tracking with assets, liabilities, and investment accounts is coming in a future update.</Text>
+        </View>
+      </View>
+    </View>
+  );
 
   const renderCreditScore = () => (
     <View style={{ flex: 1 }}>
@@ -3475,7 +3482,7 @@ export default function App() {
     const totalBudgeted = budgets.reduce((s, b) => s + parseFloat(b.monthly_limit || 0), 0);
     const totalSpent = budgets.reduce((s, b) => s + getBudgetSpend(b), 0);
     const periodStart = userPayday ? getPeriodStart('paycycle') : null;
-    const periodLabel = periodStart ? `Since ${periodStart}` : null;
+    const periodLabel = periodStart ? fmtPeriodRange(periodStart, userPayday?.frequency || 'biweekly') : null;
 
     return (
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}
@@ -3561,14 +3568,7 @@ export default function App() {
                 style={{ backgroundColor: C.surface, borderRadius: 14, marginBottom: 10, padding: 14 }}
                 onPress={() => {
                   const periodStart = getPeriodStart('paycycle', b.paycycle_start, b.paycycle_freq);
-                  Alert.alert(
-                    `Your ${catLabel} Spending`,
-                    `Want to see all your ${catLabel} transactions since your last payday?`,
-                    [
-                      { text: 'Not Now', style: 'cancel' },
-                      { text: 'Show Me', onPress: () => { setTxFilterCategory(b.category); setTxFilterDateFrom(periodStart); setActiveTab('transactions'); } },
-                    ]
-                  );
+                  setBudgetNavPrompt({ catLabel, category: b.category, periodStart });
                 }}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
@@ -3957,6 +3957,37 @@ export default function App() {
       </View>
 
       {drawerOpen && renderDrawer()}
+
+      {/* Budget → Transactions themed prompt */}
+      <Modal visible={!!budgetNavPrompt} animationType="fade" transparent onRequestClose={() => setBudgetNavPrompt(null)}>
+        <View style={s.modalOverlay}>
+          <View style={[s.modalCard, { alignItems: 'center' }]}>
+            <View style={{ width: 52, height: 52, borderRadius: 16, backgroundColor: C.accent + '22', justifyContent: 'center', alignItems: 'center', marginBottom: 14 }}>
+              <Text style={{ fontSize: 26 }}>💳</Text>
+            </View>
+            <Text style={[s.modalTitle, { textAlign: 'center', marginBottom: 8 }]}>
+              {budgetNavPrompt?.catLabel} Spending
+            </Text>
+            <Text style={{ color: C.textSub, fontSize: 14, textAlign: 'center', lineHeight: 21, marginBottom: 24 }}>
+              Want to see all your {budgetNavPrompt?.catLabel} transactions this pay period?
+            </Text>
+            <TouchableOpacity
+              style={[s.btn, { alignSelf: 'stretch', marginBottom: 10 }]}
+              onPress={() => {
+                setTxFilterCategory(budgetNavPrompt.category);
+                setTxFilterDateFrom(budgetNavPrompt.periodStart);
+                setActiveTab('transactions');
+                setBudgetNavPrompt(null);
+              }}
+            >
+              <Text style={s.btnText}>Show Me</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setBudgetNavPrompt(null)}>
+              <Text style={{ color: C.textMuted, fontSize: 14, paddingVertical: 8 }}>Not Now</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* Upgrade Modal */}
       <Modal visible={upgradeModalVisible} animationType="fade" transparent onRequestClose={() => setUpgradeModalVisible(false)}>
