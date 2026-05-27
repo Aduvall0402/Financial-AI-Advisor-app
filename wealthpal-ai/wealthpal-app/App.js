@@ -638,6 +638,11 @@ export default function App() {
 
   const checkForUpdate = useCallback(async (isSplash = false) => {
     if (__DEV__) { if (isSplash) setTimeout(dismissSplash, 1400); return; }
+    // Skip if updates are disabled or if we're in emergency-launch recovery mode
+    if (!Updates.isEnabled || Updates.isEmergencyLaunch) {
+      if (isSplash) setTimeout(dismissSplash, 800);
+      return;
+    }
     const now = Date.now();
     if (!isSplash && now - lastUpdateCheckRef.current < 5 * 60 * 1000) return;
     lastUpdateCheckRef.current = now;
@@ -653,7 +658,7 @@ export default function App() {
         setUpdateStatus('');
         if (isSplash) setTimeout(dismissSplash, 800);
       }
-    } catch (e) {
+    } catch (_) {
       setUpdateStatus('');
       if (isSplash) setTimeout(dismissSplash, 800);
     }
@@ -665,12 +670,13 @@ export default function App() {
       Animated.spring(splashScale, { toValue: 1, tension: 60, friction: 8, useNativeDriver: true }),
     ]).start();
 
-    checkForUpdate(true);
+    // Small delay lets native expo-updates module finish initializing before first check
+    const t = setTimeout(() => checkForUpdate(true), 400);
 
     const sub = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') checkForUpdate(false);
     });
-    return () => sub.remove();
+    return () => { clearTimeout(t); sub.remove(); };
   }, []);
 
   // ── Drawer ──────────────────────────────────────────
@@ -3920,7 +3926,7 @@ export default function App() {
         </View>
       </View>
       {showUpdateBanner && (
-        <View style={{ backgroundColor: '#16B7F622', borderLeftWidth: 3, borderLeftColor: '#16B7F6', marginHorizontal: 16, marginBottom: 8, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10, flexDirection: 'row', alignItems: 'center' }}>
+        <View style={{ backgroundColor: 'rgba(22,183,246,0.13)', borderLeftWidth: 3, borderLeftColor: '#16B7F6', marginHorizontal: 16, marginBottom: 8, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10, flexDirection: 'row', alignItems: 'center' }}>
           <Text style={{ color: '#16B7F6', fontSize: 13, fontWeight: '700', flex: 1 }}>✓ App updated to latest version</Text>
           <TouchableOpacity onPress={() => setShowUpdateBanner(false)}><Text style={{ color: '#16B7F6', fontSize: 16 }}>×</Text></TouchableOpacity>
         </View>
