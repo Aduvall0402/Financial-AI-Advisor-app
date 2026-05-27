@@ -734,6 +734,7 @@ export default function App() {
       if (token) { setAuthToken(token); authTokenRef.current = token; }
       const firstName = data.first_name || data.session.user.user_metadata?.full_name?.split(' ')[0] || email.split('@')[0];
       setUserId(uid); userIdRef.current = uid;
+      AsyncStorage.setItem('widgetUserId', uid);
       setDisplayName(firstName);
       AsyncStorage.setItem('displayName', firstName);
       setPassword('');
@@ -781,6 +782,7 @@ export default function App() {
       const token = data.session?.access_token;
       if (token) { setAuthToken(token); authTokenRef.current = token; }
       setUserId(uid); userIdRef.current = uid;
+      AsyncStorage.setItem('widgetUserId', uid);
       setDisplayName(firstName.trim());
       AsyncStorage.setItem('displayName', firstName.trim());
       setPassword(''); setFirstName(''); setLastName('');
@@ -851,6 +853,8 @@ export default function App() {
       setEmail(''); setPassword(''); setFirstName(''); setLastName('');
       setDisplayName(''); setError('');
       AsyncStorage.removeItem('displayName');
+      AsyncStorage.removeItem('widgetUserId');
+      AsyncStorage.removeItem('widgetLastResponse');
       setTransactions([]); setAccounts([]); setSelectedAccount(null);
       setLinkedAccount(null); setAccountsError(false); setDashboardData(null);
       setChatMessages([{ id: '0', role: 'assistant', text: "Hi! I'm your Finlit assistant. Ask me anything about your finances!" }]);
@@ -3808,7 +3812,7 @@ export default function App() {
               </View>
               <Switch
                 value={widgetEnabled}
-                onValueChange={v => { if (v) setWidgetInfoVisible(true); else setWidgetEnabled(false); }}
+                onValueChange={v => { setWidgetEnabled(v); if (v) setWidgetInfoVisible(true); }}
                 trackColor={{ false: C.border, true: C.accent }}
                 thumbColor="#fff"
               />
@@ -4080,17 +4084,35 @@ export default function App() {
       <Modal visible={widgetInfoVisible} animationType="slide" transparent onRequestClose={() => setWidgetInfoVisible(false)}>
         <View style={s.modalOverlay}>
           <View style={s.modalCard}>
-            <Text style={s.modalTitle}>Android Home Widget</Text>
-            <View style={{ backgroundColor: C.bg, borderRadius: 14, padding: 16, marginBottom: 20, borderWidth: 1, borderColor: C.border }}>
-              <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700', marginBottom: 6 }}>◱  Finlit Bubble</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+              <View style={{ width: 44, height: 44, borderRadius: 13, backgroundColor: C.accent + '22', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
+                <Text style={{ fontSize: 22 }}>◱</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={s.modalTitle}>Add to Home Screen</Text>
+                <Text style={{ color: C.textMuted, fontSize: 12, marginTop: 1 }}>Android only · iOS coming soon</Text>
+              </View>
+            </View>
+            <View style={{ backgroundColor: C.bg, borderRadius: 14, padding: 14, marginBottom: 18, borderWidth: 1, borderColor: C.border }}>
               <Text style={{ color: C.textSub, fontSize: 13, lineHeight: 20 }}>
-                A floating AI chat bubble on your Android home screen with quick access to your account balance, recent transactions, and spending insights — powered by the same AI as the app.
+                The Finlit AI widget lets you ask your financial AI quick questions — budget status, recent spending, and tips — right from your home screen without opening the app.
               </Text>
             </View>
-            <Text style={{ color: C.textSub, fontSize: 13, lineHeight: 20, marginBottom: 24 }}>
-              This feature is available in the next app update. To get it, download the latest version of Finlit from the Play Store once the update is live.
-            </Text>
-            <TouchableOpacity style={s.btn} onPress={() => { setWidgetInfoVisible(false); setWidgetEnabled(false); }}>
+            <Text style={{ color: C.text, fontSize: 13, fontWeight: '700', marginBottom: 12 }}>How to add the widget:</Text>
+            {[
+              ['1', 'Long-press an empty area on your home screen'],
+              ['2', 'Tap  "Widgets"  in the menu that appears'],
+              ['3', 'Search for  "Finlit AI Assistant"'],
+              ['4', 'Drag it to your home screen and tap to use'],
+            ].map(([num, step]) => (
+              <View key={num} style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 }}>
+                <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: C.accent, justifyContent: 'center', alignItems: 'center', marginRight: 10, marginTop: 1 }}>
+                  <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{num}</Text>
+                </View>
+                <Text style={{ color: C.textSub, fontSize: 13, lineHeight: 20, flex: 1 }}>{step}</Text>
+              </View>
+            ))}
+            <TouchableOpacity style={[s.btn, { marginTop: 10 }]} onPress={() => setWidgetInfoVisible(false)}>
               <Text style={s.btnText}>Got it</Text>
             </TouchableOpacity>
           </View>
