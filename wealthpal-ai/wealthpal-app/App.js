@@ -196,6 +196,7 @@ export default function App() {
   const [showSplash, setShowSplash] = useState(true);
   const splashOpacity = useRef(new Animated.Value(0)).current;
   const splashScale = useRef(new Animated.Value(0.85)).current;
+  const [showUpdateBanner, setShowUpdateBanner] = useState(false);
 
   // Auth
   const [screen, setScreen] = useState('login');
@@ -603,6 +604,9 @@ export default function App() {
     AsyncStorage.getItem('categoryRules').then(v => { if (v) { try { setCategoryRules(JSON.parse(v)); } catch {} } });
     AsyncStorage.getItem('userPayday').then(v => { if (v) { try { const p = JSON.parse(v); setUserPayday(p); if (p?.nextDate) setBudgetGlobalPeriod('paycycle'); } catch {} } });
     AsyncStorage.getItem('isDarkMode').then(v => { if (v !== null) setIsDarkMode(v !== 'false'); });
+    AsyncStorage.getItem('justUpdated').then(v => {
+      if (v) { AsyncStorage.removeItem('justUpdated'); setShowUpdateBanner(true); setTimeout(() => setShowUpdateBanner(false), 5000); }
+    });
     AsyncStorage.multiGet([
       'displayName',
       'notifOverall', 'notifDaily', 'notifWeekly', 'notifMonthly', 'notifBudget',
@@ -643,6 +647,7 @@ export default function App() {
       if (result.isAvailable) {
         setUpdateStatus('Updating…');
         await Updates.fetchUpdateAsync();
+        await AsyncStorage.setItem('justUpdated', '1');
         await Updates.reloadAsync();
       } else {
         setUpdateStatus('');
@@ -3905,10 +3910,21 @@ export default function App() {
           <Text style={s.headerGreet}>Welcome back,</Text>
           <Text style={s.headerName}>{displayName || 'User'}</Text>
         </View>
-        <TouchableOpacity style={s.menuBtn} onPress={openDrawer}>
-          <Text style={{ fontSize: 26, color: C.textSub }}>⚙</Text>
-        </TouchableOpacity>
+        <View style={{ alignItems: 'flex-end', gap: 4 }}>
+          <TouchableOpacity style={s.menuBtn} onPress={openDrawer}>
+            <Text style={{ fontSize: 26, color: C.textSub }}>⚙</Text>
+          </TouchableOpacity>
+          <Text style={{ color: C.textMuted, fontSize: 9, letterSpacing: 0.3 }}>
+            {Updates.updateId ? Updates.updateId.slice(0, 8) : 'v1.0.7'}
+          </Text>
+        </View>
       </View>
+      {showUpdateBanner && (
+        <View style={{ backgroundColor: '#16B7F622', borderLeftWidth: 3, borderLeftColor: '#16B7F6', marginHorizontal: 16, marginBottom: 8, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10, flexDirection: 'row', alignItems: 'center' }}>
+          <Text style={{ color: '#16B7F6', fontSize: 13, fontWeight: '700', flex: 1 }}>✓ App updated to latest version</Text>
+          <TouchableOpacity onPress={() => setShowUpdateBanner(false)}><Text style={{ color: '#16B7F6', fontSize: 16 }}>×</Text></TouchableOpacity>
+        </View>
+      )}
 
       <View style={{ flex: 1 }}>
         {activeTab === 'dashboard' && renderDashboard()}
