@@ -36,7 +36,7 @@ Notifications.setNotificationHandler({
   handleNotification: async () => ({ shouldShowAlert: true, shouldPlaySound: true, shouldSetBadge: false }),
 });
 
-const { width: SW } = Dimensions.get('window');
+const { width: SW, height: SH } = Dimensions.get('screen');
 const API_URL = 'https://financial-ai-advisor-app-production.up.railway.app';
 
 function deriveSurfaces(bg) {
@@ -1422,13 +1422,13 @@ export default function App() {
     return (
       <View style={{ flex: 1, backgroundColor: C.bg, overflow: 'visible' }}>
         <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={C.bg} />
-        <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, overflow: 'visible' }}>
+        <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, height: SH, overflow: 'visible' }}>
           <View style={{ position: 'absolute', top: 0, right: -80, width: 300, height: 300, borderRadius: 150, backgroundColor: '#1E5EFF', opacity: isDarkMode ? 0.12 : 0.09 }} />
           <View style={{ position: 'absolute', top: 60, right: -30, width: 160, height: 160, borderRadius: 80, borderWidth: 1.5, borderColor: '#16B7F6', opacity: isDarkMode ? 0.28 : 0.32 }} />
           <View style={{ position: 'absolute', top: 200, left: 0, width: 210, height: 210, borderRadius: 105, backgroundColor: '#1EDFD5', opacity: isDarkMode ? 0.08 : 0.09 }} />
-          <View style={{ position: 'absolute', bottom: 80, left: 0, width: 240, height: 240, borderRadius: 120, backgroundColor: '#16B7F6', opacity: isDarkMode ? 0.11 : 0.09 }} />
-          <View style={{ position: 'absolute', bottom: 140, right: 10, width: 130, height: 130, borderRadius: 65, borderWidth: 1.5, borderColor: '#1EDFD5', opacity: isDarkMode ? 0.22 : 0.26 }} />
-          <View style={{ position: 'absolute', bottom: 320, left: 30, width: 70, height: 70, borderRadius: 35, borderWidth: 1, borderColor: '#51F0C0', opacity: isDarkMode ? 0.24 : 0.28 }} />
+          <View style={{ position: 'absolute', top: SH - 320, left: 0, width: 240, height: 240, borderRadius: 120, backgroundColor: '#16B7F6', opacity: isDarkMode ? 0.11 : 0.09 }} />
+          <View style={{ position: 'absolute', top: SH - 270, right: 10, width: 130, height: 130, borderRadius: 65, borderWidth: 1.5, borderColor: '#1EDFD5', opacity: isDarkMode ? 0.22 : 0.26 }} />
+          <View style={{ position: 'absolute', top: SH - 460, left: 30, width: 70, height: 70, borderRadius: 35, borderWidth: 1, borderColor: '#51F0C0', opacity: isDarkMode ? 0.24 : 0.28 }} />
         </View>
         <ScrollView contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 28 }} keyboardShouldPersistTaps="handled">
           <View style={{ alignItems: 'center', paddingTop: 64, paddingBottom: 36 }}>
@@ -1459,12 +1459,12 @@ export default function App() {
     return (
       <View style={{ flex: 1, backgroundColor: C.bg, overflow: 'visible' }}>
         <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={C.bg} />
-        <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, overflow: 'visible' }}>
+        <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, height: SH, overflow: 'visible' }}>
           <View style={{ position: 'absolute', top: 0, right: -80, width: 300, height: 300, borderRadius: 150, backgroundColor: '#1E5EFF', opacity: isDarkMode ? 0.12 : 0.09 }} />
           <View style={{ position: 'absolute', top: 60, right: -30, width: 160, height: 160, borderRadius: 80, borderWidth: 1.5, borderColor: '#16B7F6', opacity: isDarkMode ? 0.28 : 0.32 }} />
           <View style={{ position: 'absolute', top: 200, left: 0, width: 210, height: 210, borderRadius: 105, backgroundColor: '#1EDFD5', opacity: isDarkMode ? 0.08 : 0.09 }} />
-          <View style={{ position: 'absolute', bottom: 80, left: 0, width: 240, height: 240, borderRadius: 120, backgroundColor: '#16B7F6', opacity: isDarkMode ? 0.11 : 0.09 }} />
-          <View style={{ position: 'absolute', bottom: 140, right: 10, width: 130, height: 130, borderRadius: 65, borderWidth: 1.5, borderColor: '#1EDFD5', opacity: isDarkMode ? 0.22 : 0.26 }} />
+          <View style={{ position: 'absolute', top: SH - 320, left: 0, width: 240, height: 240, borderRadius: 120, backgroundColor: '#16B7F6', opacity: isDarkMode ? 0.11 : 0.09 }} />
+          <View style={{ position: 'absolute', top: SH - 270, right: 10, width: 130, height: 130, borderRadius: 65, borderWidth: 1.5, borderColor: '#1EDFD5', opacity: isDarkMode ? 0.22 : 0.26 }} />
           <View style={{ position: 'absolute', bottom: 320, left: 30, width: 70, height: 70, borderRadius: 35, borderWidth: 1, borderColor: '#51F0C0', opacity: isDarkMode ? 0.24 : 0.28 }} />
         </View>
         <ScrollView contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 28 }} keyboardShouldPersistTaps="handled">
@@ -2257,14 +2257,16 @@ export default function App() {
               </Text>
             </TouchableOpacity>
           )}
-          {txFilterDateFrom && (
-            <TouchableOpacity
-              onPress={() => setTxFilterDateFrom(null)}
-              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: C.accent + '22', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: C.accent }}
-            >
-              <Text style={{ color: C.accent, fontSize: 12, fontWeight: '700' }}>From {txFilterDateFrom} ✕</Text>
-            </TouchableOpacity>
-          )}
+        </View>
+      )}
+      {txFilterDateFrom && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginBottom: 8, backgroundColor: C.accent + '18', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: C.accent + '44' }}>
+          <Text style={{ color: C.accent, fontSize: 12, flex: 1 }}>
+            Showing{txFilterCategory !== 'all' ? ` ${PLAID_CATEGORIES.find(c=>c.key===txFilterCategory)?.label || txFilterCategory}` : ''} since <Text style={{ fontWeight: '700' }}>{txFilterDateFrom}</Text>
+          </Text>
+          <TouchableOpacity onPress={() => setTxFilterDateFrom(null)}>
+            <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700', marginLeft: 8 }}>Clear ✕</Text>
+          </TouchableOpacity>
         </View>
       )}
       {!!syncError && (
@@ -2628,14 +2630,14 @@ export default function App() {
 
   const renderBudgetSection = () => {
     const getBudgetSpend2 = (budget) => {
-      const start = getPeriodStart(budgetGlobalPeriod, budget.paycycle_start, budget.paycycle_freq);
+      const start = getPeriodStart('paycycle', budget.paycycle_start, budget.paycycle_freq);
       return transactions
         .filter(tx => (tx.transaction_date || '') >= start && tx.category === budget.category)
         .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
     };
     const totalBudgeted = budgets.reduce((s, b) => s + parseFloat(b.monthly_limit || 0), 0);
     const totalSpent = budgets.reduce((s, b) => s + getBudgetSpend2(b), 0);
-    const periodLabels = { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly', paycycle: 'Paycycle' };
+    const periodStart2 = userPayday ? getPeriodStart('paycycle') : null;
 
     return (
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}
@@ -2646,35 +2648,26 @@ export default function App() {
             <Text style={{ color: C.accent, fontSize: 13, fontWeight: '600' }}>‹ More</Text>
           </TouchableOpacity>
           <Text style={{ color: C.textMuted, fontSize: 13 }}>/</Text>
-          <Text style={{ color: C.text, fontSize: 16, fontWeight: '700', flex: 1 }}>Budget</Text>
-          <TouchableOpacity style={s.syncBtn} onPress={() => { setEditingBudget(null); setNewBudgetCat(''); setNewBudgetLimit(''); setNewBudgetPeriod(budgetGlobalPeriod); setAddBudgetVisible(true); }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: C.text, fontSize: 16, fontWeight: '700' }}>Budget</Text>
+            {periodStart2 && <Text style={{ color: C.textMuted, fontSize: 11 }}>Since {periodStart2}</Text>}
+          </View>
+          <TouchableOpacity style={s.syncBtn} onPress={() => { setEditingBudget(null); setNewBudgetCat(''); setNewBudgetLimit(''); setNewBudgetPeriod('paycycle'); setAddBudgetVisible(true); }}>
             <Text style={s.syncText}>+ Add</Text>
           </TouchableOpacity>
         </View>
         {!userPayday && (
           <TouchableOpacity
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.surface, borderRadius: 12, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: C.accent + '55' }}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.surface, borderRadius: 14, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: C.accent + '55' }}
             onPress={() => { setPaydayNextDate(''); setPaydayFreq('biweekly'); setPaydayModalVisible(true); }}
           >
             <View style={{ flex: 1 }}>
-              <Text style={{ color: C.text, fontSize: 13, fontWeight: '700', marginBottom: 2 }}>Set Your Pay Period</Text>
-              <Text style={{ color: C.textSub, fontSize: 12 }}>Add your payday to view budgets by pay period.</Text>
+              <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 3 }}>Set Your Pay Period</Text>
+              <Text style={{ color: C.textSub, fontSize: 12 }}>Budgets track spending relative to your pay cycle. Tap to set your payday.</Text>
             </View>
-            <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700' }}>Set Up ›</Text>
+            <Text style={{ color: C.accent, fontSize: 14, fontWeight: '700' }}>Set Up ›</Text>
           </TouchableOpacity>
         )}
-        {/* Global period selector */}
-        <View style={{ flexDirection: 'row', backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border, overflow: 'hidden', marginBottom: 14 }}>
-          {['weekly','biweekly','monthly','paycycle'].map(p => (
-            <TouchableOpacity
-              key={p}
-              onPress={() => { if (p === 'paycycle' && !userPayday) { Alert.alert('Pay Period', 'Set your payday first to use pay period budgets.', [{ text: 'Set Up', onPress: () => { setPaydayNextDate(''); setPaydayFreq('biweekly'); setPaydayModalVisible(true); } }, { text: 'Cancel', style: 'cancel' }]); return; } setBudgetGlobalPeriod(p); }}
-              style={{ flex: 1, paddingVertical: 10, alignItems: 'center', backgroundColor: budgetGlobalPeriod === p ? C.accent : 'transparent' }}
-            >
-              <Text style={{ color: budgetGlobalPeriod === p ? '#fff' : C.textSub, fontSize: 12, fontWeight: '700' }}>{periodLabels[p]}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
         {budgets.length > 0 && totalBudgeted > 0 && (
           <View style={{ backgroundColor: C.surface, borderRadius: 16, padding: 18, marginBottom: 14 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 10 }}>
@@ -2718,13 +2711,13 @@ export default function App() {
                 activeOpacity={0.8}
                 style={{ backgroundColor: C.surface, borderRadius: 14, marginBottom: 10, padding: 14 }}
                 onPress={() => {
-                  const periodStart = getPeriodStart(budgetGlobalPeriod, b.paycycle_start, b.paycycle_freq);
+                  const periodStart = getPeriodStart('paycycle', b.paycycle_start, b.paycycle_freq);
                   Alert.alert(
-                    `View ${catLabel} Transactions`,
-                    `Go to Transactions filtered by ${catLabel} from ${periodStart}?`,
+                    `Your ${catLabel} Spending`,
+                    `Want to see all your ${catLabel} transactions since your last payday?`,
                     [
-                      { text: 'Cancel', style: 'cancel' },
-                      { text: 'Go', onPress: () => { setTxFilterCategory(b.category); setTxFilterDateFrom(periodStart); setActiveTab('transactions'); } },
+                      { text: 'Not Now', style: 'cancel' },
+                      { text: 'Show Me', onPress: () => { setTxFilterCategory(b.category); setTxFilterDateFrom(periodStart); setActiveTab('transactions'); } },
                     ]
                   );
                 }}
@@ -3454,49 +3447,41 @@ export default function App() {
   // ════════════════════════════════════════════════════
   const renderBudget = () => {
     const getBudgetSpend = (budget) => {
-      const start = getPeriodStart(budgetGlobalPeriod, budget.paycycle_start, budget.paycycle_freq);
+      const start = getPeriodStart('paycycle', budget.paycycle_start, budget.paycycle_freq);
       return transactions
         .filter(tx => (tx.transaction_date || '') >= start && tx.category === budget.category)
         .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
     };
     const totalBudgeted = budgets.reduce((s, b) => s + parseFloat(b.monthly_limit || 0), 0);
     const totalSpent = budgets.reduce((s, b) => s + getBudgetSpend(b), 0);
-    const bpLabels = { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly', paycycle: 'Pay Period' };
+    const periodStart = userPayday ? getPeriodStart('paycycle') : null;
+    const periodLabel = periodStart ? `Since ${periodStart}` : null;
 
     return (
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshBudgets} tintColor={C.accent} />}
       >
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, marginTop: 4 }}>
-          <Text style={{ color: C.text, fontSize: 20, fontWeight: '700' }}>Budget</Text>
-          <TouchableOpacity style={s.syncBtn} onPress={() => { setEditingBudget(null); setNewBudgetCat(''); setNewBudgetLimit(''); setNewBudgetPeriod(budgetGlobalPeriod); setAddBudgetVisible(true); }}>
+          <View>
+            <Text style={{ color: C.text, fontSize: 20, fontWeight: '700' }}>Budget</Text>
+            {periodLabel && <Text style={{ color: C.textMuted, fontSize: 11, marginTop: 1 }}>{periodLabel}</Text>}
+          </View>
+          <TouchableOpacity style={s.syncBtn} onPress={() => { setEditingBudget(null); setNewBudgetCat(''); setNewBudgetLimit(''); setNewBudgetPeriod('paycycle'); setAddBudgetVisible(true); }}>
             <Text style={s.syncText}>+ Add Budget</Text>
           </TouchableOpacity>
         </View>
         {!userPayday && (
           <TouchableOpacity
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.surface, borderRadius: 12, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: C.accent + '55' }}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.surface, borderRadius: 14, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: C.accent + '55' }}
             onPress={() => { setPaydayNextDate(''); setPaydayFreq('biweekly'); setPaydayModalVisible(true); }}
           >
             <View style={{ flex: 1 }}>
-              <Text style={{ color: C.text, fontSize: 13, fontWeight: '700', marginBottom: 2 }}>Set Your Pay Period</Text>
-              <Text style={{ color: C.textSub, fontSize: 12 }}>Add your payday to view budgets by pay period.</Text>
+              <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 3 }}>Set Your Pay Period</Text>
+              <Text style={{ color: C.textSub, fontSize: 12 }}>Budgets track spending relative to your pay cycle. Tap to set your payday.</Text>
             </View>
-            <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700' }}>Set Up ›</Text>
+            <Text style={{ color: C.accent, fontSize: 14, fontWeight: '700' }}>Set Up ›</Text>
           </TouchableOpacity>
         )}
-        {/* Global period selector */}
-        <View style={{ flexDirection: 'row', backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border, overflow: 'hidden', marginBottom: 14 }}>
-          {['weekly','biweekly','monthly','paycycle'].map(p => (
-            <TouchableOpacity
-              key={p}
-              onPress={() => { if (p === 'paycycle' && !userPayday) { Alert.alert('Pay Period', 'Set your payday first to use pay period budgets.', [{ text: 'Set Up', onPress: () => { setPaydayNextDate(''); setPaydayFreq('biweekly'); setPaydayModalVisible(true); } }, { text: 'Cancel', style: 'cancel' }]); return; } setBudgetGlobalPeriod(p); }}
-              style={{ flex: 1, paddingVertical: 10, alignItems: 'center', backgroundColor: budgetGlobalPeriod === p ? C.accent : 'transparent' }}
-            >
-              <Text style={{ color: budgetGlobalPeriod === p ? '#fff' : C.textSub, fontSize: 11, fontWeight: '700' }}>{bpLabels[p]}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
 
         {budgets.length > 0 && (
           <View style={s.statsRow}>
@@ -3505,7 +3490,7 @@ export default function App() {
               <Text style={s.statVal}>${fmtMoney(totalBudgeted)}</Text>
             </View>
             <View style={s.statCard}>
-              <Text style={s.statLabel}>Spent This Month</Text>
+              <Text style={s.statLabel}>Spent This Period</Text>
               <Text style={[s.statVal, { color: totalSpent > totalBudgeted ? C.red : C.green }]}>${fmtMoney(totalSpent)}</Text>
             </View>
           </View>
@@ -3555,13 +3540,13 @@ export default function App() {
                 activeOpacity={0.8}
                 style={{ backgroundColor: C.surface, borderRadius: 14, marginBottom: 10, padding: 14 }}
                 onPress={() => {
-                  const periodStart = getPeriodStart(budgetGlobalPeriod, b.paycycle_start, b.paycycle_freq);
+                  const periodStart = getPeriodStart('paycycle', b.paycycle_start, b.paycycle_freq);
                   Alert.alert(
-                    `View ${catLabel} Transactions`,
-                    `See ${catLabel} transactions from ${periodStart}?`,
+                    `Your ${catLabel} Spending`,
+                    `Want to see all your ${catLabel} transactions since your last payday?`,
                     [
-                      { text: 'Cancel', style: 'cancel' },
-                      { text: 'Go', onPress: () => { setTxFilterCategory(b.category); setTxFilterDateFrom(periodStart); setActiveTab('transactions'); } },
+                      { text: 'Not Now', style: 'cancel' },
+                      { text: 'Show Me', onPress: () => { setTxFilterCategory(b.category); setTxFilterDateFrom(periodStart); setActiveTab('transactions'); } },
                     ]
                   );
                 }}
@@ -3897,13 +3882,13 @@ export default function App() {
     <SafeAreaView style={s.appWrap}>
       <StatusBar barStyle="light-content" backgroundColor={C.bg} />
 
-      <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, overflow: 'visible' }}>
-        <View style={{ position: 'absolute', top: 0, right: -100, width: 320, height: 320, borderRadius: 160, backgroundColor: '#1E5EFF', opacity: 0.07 }} />
-        <View style={{ position: 'absolute', top: 80, right: -40, width: 160, height: 160, borderRadius: 80, borderWidth: 1, borderColor: '#16B7F6', opacity: 0.14 }} />
-        <View style={{ position: 'absolute', top: 280, left: 0, width: 220, height: 220, borderRadius: 110, backgroundColor: '#1EDFD5', opacity: 0.05 }} />
-        <View style={{ position: 'absolute', bottom: 100, left: 0, width: 260, height: 260, borderRadius: 130, backgroundColor: '#16B7F6', opacity: 0.06 }} />
-        <View style={{ position: 'absolute', bottom: 180, right: -20, width: 140, height: 140, borderRadius: 70, borderWidth: 1, borderColor: '#1EDFD5', opacity: 0.14 }} />
-        <View style={{ position: 'absolute', bottom: 380, left: 20, width: 80, height: 80, borderRadius: 40, borderWidth: 1, borderColor: '#51F0C0', opacity: 0.18 }} />
+      <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, height: SH, overflow: 'visible' }}>
+        <View style={{ position: 'absolute', top: 0, right: -80, width: 280, height: 280, borderRadius: 140, backgroundColor: '#1E5EFF', opacity: 0.11 }} />
+        <View style={{ position: 'absolute', top: 50, right: -30, width: 150, height: 150, borderRadius: 75, borderWidth: 1, borderColor: '#16B7F6', opacity: 0.20 }} />
+        <View style={{ position: 'absolute', top: 260, left: 0, width: 200, height: 200, borderRadius: 100, backgroundColor: '#1EDFD5', opacity: 0.07 }} />
+        <View style={{ position: 'absolute', top: SH - 360, left: 0, width: 260, height: 260, borderRadius: 130, backgroundColor: '#16B7F6', opacity: 0.08 }} />
+        <View style={{ position: 'absolute', top: SH - 320, right: -20, width: 140, height: 140, borderRadius: 70, borderWidth: 1, borderColor: '#1EDFD5', opacity: 0.18 }} />
+        <View style={{ position: 'absolute', top: SH - 520, left: 20, width: 80, height: 80, borderRadius: 40, borderWidth: 1, borderColor: '#51F0C0', opacity: 0.22 }} />
       </View>
 
       <View style={s.header}>
@@ -5129,7 +5114,7 @@ const makeStyles = (C) => StyleSheet.create({
   linkText: { color: C.textSub, fontSize: 14 },
   linkAccent: { color: C.accent, fontWeight: '700' },
 
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: C.border },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: 'transparent' },
   headerGreet: { fontSize: 12, color: C.textSub, marginBottom: 2 },
   headerName: { fontSize: 20, fontWeight: 'bold', color: C.text },
   menuBtn: { padding: 8, alignItems: 'flex-end', justifyContent: 'center', gap: 5 },
