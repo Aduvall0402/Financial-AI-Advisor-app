@@ -165,9 +165,28 @@ app.post("/api/plaid/exchange-token", requireAuth, async (req: Request, res: Res
       return res.status(400).json({ error: "Public token and user ID required" });
     }
     const { accessToken, itemId } = await plaidService.exchangePublicToken(publicToken);
-    // Check if this Plaid item is already connected (avoid duplicate items)
-    const { data: existing } = await supabase.from("accounts").select("id").eq("user_id", userId).eq("plaid_account_id", itemId);
-    if (!existing?.length) {
+
+    // Get institution_id of the new item to detect reconnections under a new item_id
+    let newInstitutionId: string | null = null;
+    try {
+      const itemResp = await plaidClient.itemGet({ access_token: accessToken });
+      newInstitutionId = itemResp.data.item.institution_id || null;
+    } catch { /* institution_id is optional for dedup */ }
+
+    // Check all existing rows: match by item_id OR by institution_id (catches reconnections)
+    const { data: allRows } = await supabase.from("accounts").select("id, plaid_account_id, plaid_access_token").eq("user_id", userId);
+    let matchedRow: any = null;
+    for (const row of (allRows || [])) {
+      if (row.plaid_account_id === itemId) { matchedRow = row; break; }
+      if (newInstitutionId && row.plaid_access_token) {
+        try {
+          const existingItem = await plaidClient.itemGet({ access_token: row.plaid_access_token });
+          if (existingItem.data.item.institution_id === newInstitutionId) { matchedRow = row; break; }
+        } catch { /* skip failed items */ }
+      }
+    }
+
+    if (!matchedRow) {
       const { error } = await supabase
         .from("accounts")
         .insert([{
@@ -180,8 +199,8 @@ app.post("/api/plaid/exchange-token", requireAuth, async (req: Request, res: Res
         }]);
       if (error) throw error;
     } else {
-      // Update the access token in case it changed
-      await supabase.from("accounts").update({ plaid_access_token: accessToken }).eq("user_id", userId).eq("plaid_account_id", itemId);
+      // Update the access token and item_id on the existing row
+      await supabase.from("accounts").update({ plaid_access_token: accessToken, plaid_account_id: itemId }).eq("id", matchedRow.id);
     }
     res.json({ plaid_account_id: itemId, itemId, message: "Account connected" });
   } catch (error: any) {

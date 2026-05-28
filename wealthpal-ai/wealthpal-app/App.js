@@ -449,6 +449,7 @@ export default function App() {
   const [postSyncIdx, setPostSyncIdx] = useState(0);
   const [postSyncCat, setPostSyncCat] = useState('');
   const [postSyncGoalId, setPostSyncGoalId] = useState(null);
+  const reviewedInSessionRef = useRef(new Set()); // prevents re-showing within a session
 
   // Currency
   const [currency, setCurrency] = useState('USD');
@@ -1007,10 +1008,13 @@ export default function App() {
         else { setSyncError(''); setPlaidStatus(`Synced ${data.synced} transaction${data.synced !== 1 ? 's' : ''}`); setTimeout(() => setPlaidStatus(''), 4000); }
         const txRes = await apiCall(`/api/transactions/${userIdRef.current}`);
         const txData = txRes.ok ? await txRes.json() : {};
-        // Only show recent unreviewed txs — prevents new account full-history flood
+        // Only recent + not yet reviewed (DB flag OR seen this session)
         const reviewCutoff = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
         const fresh = (txData.transactions || []).filter(tx =>
-          !isIncomeTx(tx) && !tx.reviewed && (tx.transaction_date || '') >= reviewCutoff
+          !isIncomeTx(tx) &&
+          !tx.reviewed &&
+          !reviewedInSessionRef.current.has(tx.id) &&
+          (tx.transaction_date || '') >= reviewCutoff
         );
         if (fresh.length > 0) {
           setPostSyncTxs(fresh);
@@ -2425,8 +2429,10 @@ export default function App() {
                       </View>
                     )}
                   </View>
+                  {/* collapsable={false} forces Android to actually clip overflow */}
                   <View
                     style={{ position: 'relative', overflow: 'hidden' }}
+                    collapsable={false}
                     onTouchStart={e => { chartTouchRef.startX = e.nativeEvent.pageX; chartTouchRef.startY = e.nativeEvent.pageY; }}
                     onTouchEnd={e => {
                       const dx = Math.abs(e.nativeEvent.pageX - chartTouchRef.startX);
@@ -2447,9 +2453,10 @@ export default function App() {
                           { data: chartData.map(() => floorVal), withDots: false, color: () => 'rgba(0,0,0,0)' },
                         ]}}
                         width={chartW} height={chartH} bezier
-                        chartConfig={{ ...CHART_CFG, decimalPlaces: 0 }}
+                        chartConfig={{ ...CHART_CFG, decimalPlaces: 0, ...(chartScrollable ? { paddingLeft: 50 } : {}) }}
                         formatYLabel={chartScrollable ? () => '' : fmtYLabel}
-                        style={{ borderRadius: 10 }} withInnerLines={false}
+                        style={{ borderRadius: 10 }}
+                        withInnerLines={false}
                         withHorizontalLabels={!chartScrollable}
                         yAxisLabel="" yAxisSuffix="" segments={4}
                         onDataPointClick={({ value, index }) => {
@@ -5494,7 +5501,12 @@ export default function App() {
                 <>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                     <Text style={s.modalTitle}>Review Transaction</Text>
-                    <Text style={{ color: C.textMuted, fontSize: 12 }}>{postSyncIdx + 1} / {postSyncTxs.length}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                      <Text style={{ color: C.textMuted, fontSize: 12 }}>{postSyncIdx + 1} / {postSyncTxs.length}</Text>
+                      <TouchableOpacity onPress={() => setPostSyncVisible(false)}>
+                        <Text style={{ color: C.textMuted, fontSize: 20, lineHeight: 22 }}>✕</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
                   <Text style={{ color: C.textSub, fontSize: 12, marginBottom: 16 }}>Confirm or correct the category. Optionally add to a savings goal.</Text>
                   <View style={{ backgroundColor: C.surface, borderRadius: 12, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: C.border }}>
@@ -5530,7 +5542,10 @@ export default function App() {
                     <TouchableOpacity style={[s.btn, { flex: 1, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border }]}
                       onPress={() => {
                         setPostSyncGoalId(null);
-                        if (tx.id) apiCall(`/api/transactions/${tx.id}`, { method: 'PATCH', body: JSON.stringify({ reviewed: true }) });
+                        if (tx.id) {
+                          reviewedInSessionRef.current.add(tx.id);
+                          apiCall(`/api/transactions/${tx.id}`, { method: 'PATCH', body: JSON.stringify({ reviewed: true }) });
+                        }
                         const next = postSyncIdx + 1;
                         if (next >= postSyncTxs.length) { setPostSyncVisible(false); }
                         else { setPostSyncIdx(next); setPostSyncCat(getEffectiveCategory(postSyncTxs[next])); }
@@ -5546,7 +5561,10 @@ export default function App() {
                           saveCategoryRules(updated);
                           patchBody.category = postSyncCat;
                         }
-                        if (tx.id) await apiCall(`/api/transactions/${tx.id}`, { method: 'PATCH', body: JSON.stringify(patchBody) });
+                        if (tx.id) {
+                          reviewedInSessionRef.current.add(tx.id);
+                          await apiCall(`/api/transactions/${tx.id}`, { method: 'PATCH', body: JSON.stringify(patchBody) });
+                        }
                         if (postSyncGoalId) {
                           const goal = goals.find(g => g.id === postSyncGoalId);
                           if (goal) {
