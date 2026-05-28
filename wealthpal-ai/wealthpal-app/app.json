@@ -22,9 +22,9 @@
           {
             "name": "FinlitWidget",
             "label": "Finlit AI Assistant",
-            "minWidth": "180dp",
-            "minHeight": "110dp",
-            "description": "Ask Finlit AI financial questions from your home screen",
+            "minWidth": "250dp",
+            "minHeight": "250dp",
+            "description": "Track your spending and budgets at a glance",
             "resizeMode": "horizontal|vertical",
             "updatePeriodMillis": 1800000
           }

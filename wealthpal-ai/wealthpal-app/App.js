@@ -938,23 +938,30 @@ export default function App() {
         autoUpdateGoals();
         // Update widget data after successful sync
         try {
-          const allTxRes = await authFetch(`/api/transactions/${userIdRef.current}`);
-          const allTxData = allTxRes.ok ? await allTxRes.json() : {};
-          const allTxs = allTxData.transactions || [];
+          // Fresh fetch of both transactions and budgets (don't rely on state timing)
+          const [allTxRes, budgetsRes] = await Promise.all([
+            authFetch(`/api/transactions/${userIdRef.current}`),
+            authFetch(`/api/budgets/${userIdRef.current}`),
+          ]);
+          const allTxs = allTxRes.ok ? ((await allTxRes.json()).transactions || []) : [];
+          const freshBudgets = budgetsRes.ok ? ((await budgetsRes.json()).budgets || []) : [];
 
           const now = new Date();
-          const todayStr = now.toISOString().split('T')[0];
-          const yest = new Date(now); yest.setDate(yest.getDate() - 1);
-          const yesterdayStr = yest.toISOString().split('T')[0];
+          const fmtDate = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
-          // Budget progress per category
+          // Period info
           const periodStart = getPeriodStart(userPayday ? 'paycycle' : 'monthly');
           const freqDays = userPayday?.frequency === 'weekly' ? 7 : userPayday?.frequency === 'biweekly' ? 14 : 30;
           const periodLabel = userPayday
-            ? userPayday.frequency === 'weekly' ? 'This Week' : userPayday.frequency === 'biweekly' ? 'This Pay Period' : 'This Month'
+            ? userPayday.frequency === 'weekly' ? 'This Week'
+              : userPayday.frequency === 'biweekly' ? 'This Pay Period'
+              : 'This Month'
             : 'This Month';
+          const periodEnd = new Date(new Date(periodStart + 'T00:00:00').getTime() + (freqDays - 1) * 86400000);
+          const periodRange = `${fmtDate(new Date(periodStart + 'T00:00:00'))} – ${fmtDate(periodEnd)}`;
 
-          const widgetBudgets = budgets.map(b => {
+          // Budget progress — use fresh budgets from API
+          const widgetBudgets = freshBudgets.map(b => {
             const bStart = getPeriodStart(b.period || 'monthly', b.paycycle_start, b.paycycle_freq);
             const spent = allTxs
               .filter(tx => !isIncomeTx(tx) && (tx.transaction_date || '') >= bStart && getEffectiveCategory(tx) === b.category)
@@ -965,24 +972,15 @@ export default function App() {
           });
           await AsyncStorage.setItem('widgetBudgetData', JSON.stringify(widgetBudgets));
 
-          // Stats for the current period
+          // Overall stats for the period
           const periodTxs = allTxs.filter(tx => !isIncomeTx(tx) && (tx.transaction_date || '') >= periodStart);
           const totalSpent = periodTxs.reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
-          const todaySpent = allTxs
-            .filter(tx => !isIncomeTx(tx) && (tx.transaction_date || '').startsWith(todayStr))
-            .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
-          const yesterdaySpent = allTxs
-            .filter(tx => !isIncomeTx(tx) && (tx.transaction_date || '').startsWith(yesterdayStr))
-            .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
           const budgetTotal = widgetBudgets.reduce((s, b) => s + b.limit, 0);
-          const budgetSpentTotal = widgetBudgets.reduce((s, b) => s + b.spent, 0);
-          const budgetLeft = Math.max(0, budgetTotal - budgetSpentTotal);
+          const budgetLeft = Math.max(0, budgetTotal - widgetBudgets.reduce((s, b) => s + b.spent, 0));
           const txCount = periodTxs.length;
-          const todayDate = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
 
           await AsyncStorage.setItem('widgetStatsData', JSON.stringify({
-            totalSpent, budgetLeft, budgetTotal, txCount,
-            todaySpent, yesterdaySpent, todayDate, periodLabel,
+            totalSpent, budgetLeft, budgetTotal, txCount, periodLabel, periodRange,
           }));
         } catch (_) { /* widget update is non-critical */ }
       }
