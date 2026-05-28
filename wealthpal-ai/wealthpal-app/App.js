@@ -697,8 +697,14 @@ export default function App() {
         setActiveTab('chat');
       } else if (path === 'voice' || url.includes('finlit://voice')) {
         setActiveTab('chat');
-        // Small delay to let the chat tab mount before triggering voice
         setTimeout(() => startRecording(), 600);
+      } else if (path === 'scan' || url.includes('finlit://scan')) {
+        setActiveTab('transactions');
+        setTimeout(() => Alert.alert('Scan Receipt', 'Choose a source', [
+          { text: 'Camera', onPress: () => handleScanReceipt(true) },
+          { text: 'Gallery', onPress: () => handleScanReceipt(false) },
+          { text: 'Cancel', style: 'cancel' },
+        ]), 600);
       }
     };
     Linking.getInitialURL().then(handleURL);
@@ -930,6 +936,46 @@ export default function App() {
         }
         await fetchTransactions();
         autoUpdateGoals();
+        // Update widget data after successful sync
+        try {
+          const allTxRes = await authFetch(`/api/transactions/${userIdRef.current}`);
+          const allTxData = allTxRes.ok ? await allTxRes.json() : {};
+          const allTxs = allTxData.transactions || [];
+          // Compute budget progress for widget (no AI)
+          const widgetBudgets = budgets.map(b => {
+            const periodStart = getPeriodStart(b.period || 'monthly', b.paycycle_start, b.paycycle_freq);
+            const spent = allTxs
+              .filter(tx => !isIncomeTx(tx) && (tx.transaction_date || '') >= periodStart && getEffectiveCategory(tx) === b.category)
+              .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+            const limit = parseFloat(b.monthly_limit || 0);
+            const catLabel = PLAID_CATEGORIES.find(c => c.key === b.category)?.label || b.category;
+            return { label: catLabel, spent, limit, pct: limit > 0 ? (spent / limit) * 100 : 0 };
+          });
+          await AsyncStorage.setItem('widgetBudgetData', JSON.stringify(widgetBudgets));
+          // AI daily newsletter: yesterday's spending + budget remaining
+          const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+          const yesterdayStr = yesterday.toISOString().split('T')[0];
+          const yesterdaySpend = allTxs
+            .filter(tx => !isIncomeTx(tx) && (tx.transaction_date || '').startsWith(yesterdayStr))
+            .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+          const budgetSummary = widgetBudgets.map(b => `${b.label}: $${b.spent.toFixed(0)}/$${b.limit.toFixed(0)}`).join(', ');
+          const newsletterPrompt = `Write a 2-sentence daily financial digest for a widget. Yesterday I spent $${yesterdaySpend.toFixed(2)}. Budget status: ${budgetSummary || 'no budgets set'}. Be concise and encouraging.`;
+          const nlRes = await fetch(`${API_URL}/api/ai/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: userIdRef.current, message: newsletterPrompt, today: new Date().toISOString().split('T')[0], history: [] }),
+          });
+          if (nlRes.ok) {
+            const nlData = await nlRes.json();
+            const newsletter = nlData.response || '';
+            if (newsletter) {
+              await AsyncStorage.setItem('widgetDailyNewsletter', newsletter);
+              const today = new Date();
+              const dateLabel = today.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+              await AsyncStorage.setItem('widgetNewsletterDate', dateLabel);
+            }
+          }
+        } catch (_) { /* widget update is non-critical */ }
       }
     } catch (e) { setSyncError('Network error — could not reach server'); setPlaidError('Network error'); }
     finally { setSyncing(false); }
