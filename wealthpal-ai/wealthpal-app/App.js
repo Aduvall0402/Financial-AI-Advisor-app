@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { create, open } from 'react-native-plaid-link-sdk';
 import { LineChart, BarChart, PieChart } from 'react-native-chart-kit';
+import Svg, { Circle, Path, Text as SvgText } from 'react-native-svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
@@ -2299,50 +2300,125 @@ export default function App() {
   // INSIGHTS TAB
   // ════════════════════════════════════════════════════
   const renderInsights = () => {
-    const filteredTx = getFilteredTx();
-    const catData = getCatData();
-    const { labels: chartLabels, tooltipLabels: chartTooltipLabels, data: chartRawData, rawDailyData: chartRawDailyData, incomeData: chartIncomeData, scrollable: chartScrollable, budgetLine: chartBudgetLine = 0 } = getChartData();
-    const chartData = chartRawData.map(v => Math.max(0.01, v));
-    const total = filteredTx.reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
-    const avg = filteredTx.length ? total / filteredTx.length : 0;
-    const maxTx = filteredTx.filter(tx => !isSkipLargest(tx)).reduce((m, tx) => parseFloat(tx.amount) > parseFloat(m?.amount || 0) ? tx : m, null);
-    const merchantCount = {};
-    filteredTx.forEach(tx => { const m = tx.merchant_name || 'Unknown'; merchantCount[m] = (merchantCount[m] || 0) + 1; });
-    const topMerchant = Object.entries(merchantCount).sort(([,a],[,b]) => b - a)[0];
-    const dailyAvg = filteredTx.length && insightsRange !== 'all'
-      ? total / ({ '7d': 7, '30d': 30, '3m': 90, '6m': 180 }[insightsRange] || 30)
-      : null;
-
     if (!transactions.length) {
       return (
         <View style={[s.tab, s.center]}>
           <Icon char="%" color={C.accent} size={56} radius={16} />
           <Text style={[s.emptyTitle, { marginTop: 20 }]}>No insights yet</Text>
-          <Text style={s.emptyText}>Connect your bank and sync transactions to see spending insights and charts.</Text>
+          <Text style={s.emptyText}>Connect your bank and sync transactions to see your financial health score.</Text>
         </View>
       );
     }
+
+    // ── Score calculation ──────────────────────────────
+    const filteredTx = getFilteredTx();
+    const total = filteredTx.reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+    const rangeDays = { '7d': 7, '30d': 30, '3m': 90, '6m': 180, 'all': 90 }[insightsRange] || 30;
+    const dailyAvg = rangeDays > 0 ? total / rangeDays : 0;
+
+    // 1. Budget Adherence (0–35): spent vs limit for budgeted categories this period
+    let budgetAdherenceScore = 20; // neutral when no budgets
+    let budgetAdherencePct = null;
+    if (budgets.length > 0) {
+      const periodStart = getPeriodStart('paycycle');
+      const budgetedCats = new Set(budgets.map(b => b.category));
+      const periodSpent = transactions
+        .filter(tx => !isIncomeTx(tx) && (tx.transaction_date || '') >= periodStart && budgetedCats.has(getEffectiveCategory(tx)))
+        .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+      const totalLimit = budgets.reduce((s, b) => s + parseFloat(b.monthly_limit || 0), 0);
+      if (totalLimit > 0) {
+        const ratio = periodSpent / totalLimit;
+        budgetAdherencePct = Math.round(ratio * 100);
+        if (ratio <= 0.75) budgetAdherenceScore = 35;
+        else if (ratio <= 0.90) budgetAdherenceScore = 30;
+        else if (ratio <= 1.00) budgetAdherenceScore = 22;
+        else if (ratio <= 1.15) budgetAdherenceScore = 12;
+        else budgetAdherenceScore = 0;
+      }
+    }
+
+    // 2. Spending Trend (0–25): this period vs previous same-length period
+    const prevCutoff = new Date(Date.now() - 2 * rangeDays * 86400000).toISOString().split('T')[0];
+    const currCutoff = new Date(Date.now() - rangeDays * 86400000).toISOString().split('T')[0];
+    const prevTotal = transactions
+      .filter(tx => !isIncomeTx(tx) && (tx.transaction_date || '') >= prevCutoff && (tx.transaction_date || '') < currCutoff)
+      .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+    let trendScore = 18;
+    let trendPct = null;
+    if (prevTotal > 0 && total > 0) {
+      const change = (total - prevTotal) / prevTotal;
+      trendPct = Math.round(change * 100);
+      if (change <= -0.10) trendScore = 25;
+      else if (change <= 0.02) trendScore = 20;
+      else if (change <= 0.10) trendScore = 15;
+      else if (change <= 0.25) trendScore = 8;
+      else trendScore = 2;
+    }
+
+    // 3. Budget Coverage (0–20): % of spending under a budget category
+    let coverageScore = 8;
+    let coveragePct = null;
+    if (transactions.length > 0) {
+      const budgetedCats = new Set(budgets.map(b => b.category));
+      const coveredSpend = filteredTx.filter(tx => budgetedCats.has(getEffectiveCategory(tx)))
+        .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+      coveragePct = total > 0 ? Math.round((coveredSpend / total) * 100) : 0;
+      coverageScore = Math.round((coveragePct / 100) * 20);
+    }
+
+    // 4. Consistency (0–20): low day-to-day spend variance = consistent
+    let consistencyScore = 14;
+    const byDay = {};
+    filteredTx.forEach(tx => { const d = tx.transaction_date; if (d) byDay[d] = (byDay[d] || 0) + parseFloat(tx.amount || 0); });
+    const dailyAmounts = Object.values(byDay);
+    if (dailyAmounts.length > 3) {
+      const dAvg = dailyAmounts.reduce((a, b) => a + b, 0) / dailyAmounts.length;
+      const cv = dAvg > 0 ? Math.sqrt(dailyAmounts.reduce((s, v) => s + Math.pow(v - dAvg, 2), 0) / dailyAmounts.length) / dAvg : 0;
+      if (cv < 0.5) consistencyScore = 20;
+      else if (cv < 0.9) consistencyScore = 16;
+      else if (cv < 1.4) consistencyScore = 10;
+      else consistencyScore = 4;
+    }
+
+    const healthScore = Math.min(100, Math.max(0, budgetAdherenceScore + trendScore + coverageScore + consistencyScore));
+    const scoreColor = healthScore >= 85 ? C.green : healthScore >= 70 ? C.accent : healthScore >= 50 ? C.amber : C.red;
+    const scoreLabel = healthScore >= 85 ? 'Excellent' : healthScore >= 70 ? 'Good' : healthScore >= 50 ? 'Fair' : 'Needs Attention';
+
+    // ── SVG Gauge ──────────────────────────────────────
+    const gaugeSize = 180;
+    const strokeW = 14;
+    const r = (gaugeSize - strokeW) / 2;
+    const cx = gaugeSize / 2;
+    const cy = gaugeSize / 2;
+    const toRad = deg => (deg * Math.PI) / 180;
+    const startDeg = 135; // bottom-left
+    const sweep = 270;   // total degrees
+    const endDeg = startDeg + (healthScore / 100) * sweep;
+    const sx = cx + r * Math.cos(toRad(startDeg));
+    const sy = cy + r * Math.sin(toRad(startDeg));
+    const ex = cx + r * Math.cos(toRad(endDeg));
+    const ey = cy + r * Math.sin(toRad(endDeg));
+    const largeArc = (healthScore / 100) * sweep > 180 ? 1 : 0;
+
+    // ── Category data ──────────────────────────────────
+    const catData = getCatData();
 
     return (
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshAll} tintColor={C.accent} />}
       >
-        {/* Date range + category filter selectors */}
+        {/* Range + category filter */}
         <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
-          <TouchableOpacity
-            onPress={() => setInsightsDropdownVisible(true)}
-            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: C.surface, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 13, borderWidth: 1, borderColor: C.border }}
-          >
+          <TouchableOpacity onPress={() => setInsightsDropdownVisible(true)}
+            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: C.surface, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 13, borderWidth: 1, borderColor: C.border }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <Text style={{ fontSize: 15 }}>📅</Text>
               <Text style={{ color: C.text, fontSize: 14, fontWeight: '600' }}>{RANGE_LABELS[insightsRange]}</Text>
             </View>
             <Text style={{ color: C.textSub, fontSize: 18, lineHeight: 20 }}>▾</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => setInsightsCatDropdownVisible(true)}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: insightsCatFilter !== 'all' ? C.accent + '22' : C.surface, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 13, borderWidth: 1, borderColor: insightsCatFilter !== 'all' ? C.accent : C.border }}
-          >
+          <TouchableOpacity onPress={() => setInsightsCatDropdownVisible(true)}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: insightsCatFilter !== 'all' ? C.accent + '22' : C.surface, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 13, borderWidth: 1, borderColor: insightsCatFilter !== 'all' ? C.accent : C.border }}>
             <Text style={{ fontSize: 14 }}>⊟</Text>
             <Text style={{ color: insightsCatFilter !== 'all' ? C.accent : C.textSub, fontSize: 13, fontWeight: insightsCatFilter !== 'all' ? '700' : '400' }}>
               {insightsCatFilter === 'all' ? 'Category' : (PLAID_CATEGORIES.find(p => p.key === insightsCatFilter)?.label || insightsCatFilter.replace(/_/g,' ')).slice(0, 14)}
@@ -2351,203 +2427,112 @@ export default function App() {
           </TouchableOpacity>
         </View>
 
-        {/* Stats grid */}
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 20 }}>
-          <View style={[s.statCard, { flex: 1, minWidth: '44%' }]}>
-            <Text style={s.statLabel}>Total Spent</Text>
-            <Text style={s.statVal}>${fmtMoney(total)}</Text>
-          </View>
-          <View style={[s.statCard, { flex: 1, minWidth: '44%' }]}>
-            <Text style={s.statLabel}>Transactions</Text>
-            <Text style={s.statVal}>{filteredTx.length}</Text>
-          </View>
-          <View style={[s.statCard, { flex: 1, minWidth: '44%' }]}>
-            <Text style={s.statLabel}>Avg Transaction</Text>
-            <Text style={s.statVal}>${fmtMoney(avg)}</Text>
-          </View>
-          {dailyAvg !== null && (
-            <View style={[s.statCard, { flex: 1, minWidth: '44%' }]}>
-              <Text style={s.statLabel}>Daily Average</Text>
-              <Text style={s.statVal}>${fmtMoney(dailyAvg)}</Text>
+        {/* ── Financial Health Score Card ── */}
+        <View style={{ backgroundColor: C.surface, borderRadius: 22, padding: 20, marginBottom: 14, borderWidth: 1, borderColor: C.border }}>
+          <Text style={{ color: C.textSub, fontSize: 11, fontWeight: '700', letterSpacing: 1, marginBottom: 12 }}>FINANCIAL HEALTH SCORE</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            {/* Gauge */}
+            <Svg width={gaugeSize} height={gaugeSize}>
+              {/* Background track */}
+              <Circle cx={cx} cy={cy} r={r} fill="none" stroke={C.border} strokeWidth={strokeW} strokeLinecap="round"
+                strokeDasharray={`${(sweep / 360) * 2 * Math.PI * r} ${2 * Math.PI * r}`}
+                strokeDashoffset={-(startDeg / 360) * 2 * Math.PI * r}
+                transform={`rotate(0, ${cx}, ${cy})`}
+              />
+              {/* Score arc */}
+              {healthScore > 0 && (
+                <Path
+                  d={`M ${sx} ${sy} A ${r} ${r} 0 ${largeArc} 1 ${ex} ${ey}`}
+                  fill="none" stroke={scoreColor} strokeWidth={strokeW} strokeLinecap="round"
+                />
+              )}
+              <SvgText x={cx} y={cy - 10} textAnchor="middle" fontSize="44" fontWeight="bold" fill={C.text}>{healthScore}</SvgText>
+              <SvgText x={cx} y={cy + 16} textAnchor="middle" fontSize="13" fontWeight="600" fill={scoreColor}>{scoreLabel}</SvgText>
+              <SvgText x={cx} y={cy + 34} textAnchor="middle" fontSize="10" fill={C.textMuted}>out of 100</SvgText>
+            </Svg>
+
+            {/* Component breakdown */}
+            <View style={{ flex: 1, marginLeft: 16, gap: 10 }}>
+              {[
+                { label: 'Budget', score: budgetAdherenceScore, max: 35, hint: budgetAdherencePct != null ? `${budgetAdherencePct}% of limit used` : 'No budgets set' },
+                { label: 'Trend', score: trendScore, max: 25, hint: trendPct != null ? `${trendPct > 0 ? '+' : ''}${trendPct}% vs prior period` : 'Not enough history' },
+                { label: 'Coverage', score: coverageScore, max: 20, hint: coveragePct != null ? `${coveragePct}% of spend tracked` : 'Add budgets' },
+                { label: 'Consistency', score: consistencyScore, max: 20, hint: 'Day-to-day spending variance' },
+              ].map(({ label, score, max, hint }) => {
+                const pct = Math.round((score / max) * 100);
+                const color = pct >= 80 ? C.green : pct >= 55 ? C.accent : pct >= 35 ? C.amber : C.red;
+                return (
+                  <View key={label}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
+                      <Text style={{ color: C.textSub, fontSize: 11, fontWeight: '600' }}>{label}</Text>
+                      <Text style={{ color, fontSize: 11, fontWeight: '700' }}>{score}/{max}</Text>
+                    </View>
+                    <View style={{ height: 4, backgroundColor: C.border, borderRadius: 2 }}>
+                      <View style={{ height: 4, width: `${pct}%`, backgroundColor: color, borderRadius: 2 }} />
+                    </View>
+                  </View>
+                );
+              })}
             </View>
-          )}
+          </View>
         </View>
 
-        {/* Highlights row */}
-        {(maxTx || topMerchant) && (
-          <View style={{ flexDirection: 'row', gap: 10, marginBottom: 20 }}>
-            {maxTx && (
-              <View style={[s.insightCard, { flex: 1, flexDirection: 'column', gap: 4 }]}>
-                <Text style={{ color: C.textSub, fontSize: 11, fontWeight: '600' }}>LARGEST PURCHASE</Text>
-                <Text style={{ color: C.text, fontSize: 13, fontWeight: '700' }} numberOfLines={1}>{maxTx.merchant_name || 'Unknown'}</Text>
-                <Text style={{ color: C.red, fontSize: 15, fontWeight: '800' }}>${fmtMoney(maxTx.amount)}</Text>
-              </View>
-            )}
-            {topMerchant && (
-              <View style={[s.insightCard, { flex: 1, flexDirection: 'column', gap: 4 }]}>
-                <Text style={{ color: C.textSub, fontSize: 11, fontWeight: '600' }}>MOST FREQUENT</Text>
-                <Text style={{ color: C.text, fontSize: 13, fontWeight: '700' }} numberOfLines={1}>{topMerchant[0]}</Text>
-                <Text style={{ color: C.accent, fontSize: 15, fontWeight: '800' }}>{topMerchant[1]}x visits</Text>
-              </View>
-            )}
+        {/* ── 4 Metric Cards ── */}
+        <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
+          <View style={[s.statCard, { flex: 1 }]}>
+            <Text style={s.statLabel}>Total Spent</Text>
+            <Text style={[s.statVal, { fontSize: 18 }]}>${fmtMoney(total)}</Text>
+            <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 2 }}>{filteredTx.length} transactions</Text>
           </View>
-        )}
-
-        <View style={s.section}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <View>
-              <Text style={s.sectionTitle}>Spending Chart</Text>
-              {selectedCategory && (
-                <TouchableOpacity onPress={() => setSelectedCategory(null)}>
-                  <Text style={{ color: C.accent, fontSize: 11, fontWeight: '600', marginTop: 2 }}>● {selectedCategory.replace(/_/g,' ')}  ✕ clear</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-            <View style={{ flexDirection: 'row', backgroundColor: C.surface2, borderRadius: 10, borderWidth: 1, borderColor: C.border, overflow: 'hidden' }}>
-              {[['line', '↗'], ['pie', '◔']].map(([type, icon]) => (
-                <TouchableOpacity
-                  key={type}
-                  onPress={() => setChartType(type)}
-                  style={{ paddingHorizontal: 16, paddingVertical: 7, backgroundColor: chartType === type ? C.accent : 'transparent' }}
-                >
-                  <Text style={{ color: chartType === type ? '#fff' : C.textSub, fontSize: 13, fontWeight: '700' }}>{icon}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+          <View style={[s.statCard, { flex: 1 }]}>
+            <Text style={s.statLabel}>Daily Avg</Text>
+            <Text style={[s.statVal, { fontSize: 18 }]}>${fmtMoney(dailyAvg)}</Text>
+            <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 2 }}>per day</Text>
           </View>
-          <View style={s.chartCard}>
-            {chartType !== 'pie' && (
+        </View>
+        <View style={{ flexDirection: 'row', gap: 10, marginBottom: 20 }}>
+          {(() => {
+            const topCat = catData?.[0];
+            const topCatLabel = topCat ? (PLAID_CATEGORIES.find(p => p.key === topCat[0])?.label || topCat[0].replace(/_/g,' ')) : null;
+            return topCat ? (
+              <View style={[s.statCard, { flex: 1 }]}>
+                <Text style={s.statLabel}>Top Category</Text>
+                <Text style={[s.statVal, { fontSize: 15 }]} numberOfLines={1}>{topCatLabel}</Text>
+                <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 2 }}>${fmtMoney(topCat[1])} spent</Text>
+              </View>
+            ) : <View style={{ flex: 1 }} />;
+          })()}
+          <View style={[s.statCard, { flex: 1 }]}>
+            <Text style={s.statLabel}>vs Prior Period</Text>
+            {trendPct != null ? (
               <>
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
-                  <Text style={{ color: C.textMuted, fontSize: 11 }}>
-                    {chartScrollable ? 'Budgeted spending' : 'Total'}: ${fmtMoney(chartData[chartData.length - 1] < 0.02 ? 0 : chartData[chartData.length - 1])}
-                  </Text>
-                  {chartBudgetLine > 0 && (
-                    <Text style={{ color: C.red, fontSize: 11, fontWeight: '600' }}>
-                      ── Budget: ${fmtMoney(chartBudgetLine)}
-                    </Text>
-                  )}
-                </View>
-                {budgets.length === 0 && chartScrollable && (
-                  <Text style={{ color: C.amber, fontSize: 10, marginBottom: 4 }}>
-                    💡 Set up budgets to see your spending vs target limit
-                  </Text>
-                )}
-                {budgets.length > 0 && chartScrollable && !selectedCategory && (
-                  <Text style={{ color: C.textMuted, fontSize: 10, marginBottom: 4 }}>
-                    Only showing spending in your budgeted categories
-                  </Text>
-                )}
+                <Text style={[s.statVal, { fontSize: 18, color: trendPct <= 0 ? C.green : C.red }]}>
+                  {trendPct > 0 ? '+' : ''}{trendPct}%
+                </Text>
+                <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 2 }}>{trendPct <= 0 ? 'spending down ↓' : 'spending up ↑'}</Text>
               </>
+            ) : (
+              <Text style={{ color: C.textMuted, fontSize: 12, marginTop: 4 }}>Not enough data</Text>
             )}
-            {chartType === 'line' && (() => {
-              const rawMax = Math.max(...chartData.filter(v => v > 0.01), chartBudgetLine || 0);
-              const lm = niceChartMax([rawMax]);
-              const floorVal = 0; // running total always starts from 0
-              const chartH = 260;
-              const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 36) : SW - 64;
-              const yStep = (lm - floorVal) / 4;
-              const yLabels = [lm, lm-yStep, lm-2*yStep, lm-3*yStep, floorVal];
-              const yAxisW = 46; const rightPad = 32;
-              const chartTouchRef = { startX: 0, startY: 0, scrollX: 0 };
-              const selectNearestPoint = (touchX) => {
-                if (!chartData.length) return;
-                const contentX = touchX + chartTouchRef.scrollX;
-                const n = chartData.length;
-                const dataW = chartW - yAxisW - rightPad;
-                const idx = Math.min(n - 1, Math.max(0, Math.round((contentX - yAxisW) / dataW * (n - 1))));
-                const dailyVal = chartRawDailyData ? (chartRawDailyData[idx] || 0) : (chartData[idx] < 0.02 ? 0 : chartData[idx]);
-                setChartTooltip(prev => prev?.index === idx ? null : { value: dailyVal, index: idx });
-              };
-              return (
-                <View>
-                  {/* Fixed-height placeholder so tooltip never resizes the chart card */}
-                  <View style={{ height: 30, alignItems: 'center', justifyContent: 'center', marginBottom: 4 }}>
-                    {chartTooltip && (
-                      <View style={{ backgroundColor: C.accent + '22', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1, borderColor: C.accent }}>
-                        <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700' }}>
-                          {(chartTooltipLabels?.[chartTooltip.index] ?? chartLabels[chartTooltip.index])}: ${fmtMoney(chartTooltip.value)}
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                  {/* collapsable={false} forces Android to actually clip overflow */}
-                  <View
-                    style={{ position: 'relative', overflow: 'hidden' }}
-                    collapsable={false}
-                    onTouchStart={e => { chartTouchRef.startX = e.nativeEvent.pageX; chartTouchRef.startY = e.nativeEvent.pageY; }}
-                    onTouchEnd={e => {
-                      const dx = Math.abs(e.nativeEvent.pageX - chartTouchRef.startX);
-                      const dy = Math.abs(e.nativeEvent.pageY - chartTouchRef.startY);
-                      if (dx < 12 && dy < 12) selectNearestPoint(e.nativeEvent.locationX);
-                    }}
-                  >
-                    <ScrollView
-                      horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable}
-                      bounces={false} overScrollMode="never"
-                      scrollEventThrottle={32}
-                      onScroll={e => { chartTouchRef.scrollX = e.nativeEvent.contentOffset.x; }}
-                    >
-                      <LineChart
-                        data={{ labels: chartLabels, datasets: [
-                          { data: chartData, color: () => C.accent, strokeWidth: 2 },
-                          ...(chartBudgetLine > 0 ? [{ data: chartData.map(() => chartBudgetLine), withDots: false, color: () => C.red, strokeWidth: 1.5 }] : []),
-                          { data: chartData.map(() => lm), withDots: false, color: () => 'rgba(0,0,0,0)' },
-                          { data: chartData.map(() => 0.01), withDots: false, color: () => 'rgba(0,0,0,0)' },
-                        ]}}
-                        width={chartW} height={chartH} bezier
-                        chartConfig={{ ...CHART_CFG, decimalPlaces: 0, ...(chartScrollable ? { paddingLeft: 50 } : {}) }}
-                        formatYLabel={chartScrollable ? () => '' : fmtYLabel}
-                        style={{ borderRadius: 10 }}
-                        withInnerLines={false}
-                        withHorizontalLabels={!chartScrollable}
-                        yAxisLabel="" yAxisSuffix="" segments={4}
-                        onDataPointClick={({ value, index }) => {
-                          // Show daily spend in tooltip, not cumulative
-                          const dailyVal = chartRawDailyData ? (chartRawDailyData[index] || 0) : (value < 0.02 ? 0 : value);
-                          setChartTooltip(prev => prev?.index === index ? null : { value: dailyVal, index });
-                        }}
-                      />
-                    </ScrollView>
-                    {chartScrollable && (
-                      <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: 46, height: 220, backgroundColor: C.surface, justifyContent: 'space-between', paddingTop: 8, paddingBottom: 8, alignItems: 'flex-end', paddingRight: 4 }}>
-                        {yLabels.map((val, i) => (
-                          <Text key={i} style={{ color: C.textMuted, fontSize: 9 }}>{fmtYLabel(String(Math.round(val)))}</Text>
-                        ))}
-                      </View>
-                    )}
-                  </View>
-                </View>
-              );
-            })()}
-            {chartType === 'bar' && (() => {
-              const lm = niceChartMax(chartData);
-              const chartH = 260;
-              const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 36) : SW - 64;
-              const yLabels = [lm, lm*0.75, lm*0.5, lm*0.25, 0];
-              return (
-                <View style={{ position: 'relative' }}>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable}>
-                    <BarChart
-                      data={{ labels: chartLabels, datasets: [{ data: chartData }] }}
-                      width={chartW} height={chartH}
-                      chartConfig={{ ...CHART_CFG, decimalPlaces: 0 }}
-                      formatYLabel={fmtYLabel}
-                      style={{ borderRadius: 10, marginLeft: -16 }} withInnerLines={false}
-                      fromZero yAxisLabel="" yAxisSuffix="" segments={4}
-                    />
-                  </ScrollView>
-                  {chartScrollable && (
-                    <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: 46, height: 220, backgroundColor: C.surface, justifyContent: 'space-between', paddingTop: 8, paddingBottom: 8, alignItems: 'flex-end', paddingRight: 4 }}>
-                      {yLabels.map((val, i) => (
-                        <Text key={i} style={{ color: C.textMuted, fontSize: 9 }}>{fmtYLabel(String(Math.round(val)))}</Text>
-                      ))}
-                    </View>
-                  )}
-                </View>
-              );
-            })()}
-            {chartType === 'pie' && catData && (
+          </View>
+        </View>
+
+        {/* ── Spending by Category ── */}
+        {catData && catData.length > 0 && (
+          <View style={s.section}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <Text style={s.sectionTitle}>Spending by Category</Text>
+              <View style={{ flexDirection: 'row', backgroundColor: C.surface2, borderRadius: 10, borderWidth: 1, borderColor: C.border, overflow: 'hidden' }}>
+                {[['bars', '▤'], ['pie', '◔']].map(([type, icon]) => (
+                  <TouchableOpacity key={type} onPress={() => setChartType(type === 'bars' ? 'line' : 'pie')}
+                    style={{ paddingHorizontal: 14, paddingVertical: 6, backgroundColor: (type === 'bars' ? chartType !== 'pie' : chartType === 'pie') ? C.accent : 'transparent' }}>
+                    <Text style={{ color: (type === 'bars' ? chartType !== 'pie' : chartType === 'pie') ? '#fff' : C.textSub, fontSize: 13, fontWeight: '700' }}>{icon}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            {chartType === 'pie' ? (
               <View style={{ overflow: 'visible' }}>
                 <PieChart
                   data={catData.map(([cat, amt], i) => ({
@@ -2560,54 +2545,53 @@ export default function App() {
                   backgroundColor="transparent" paddingLeft="12" absolute={false}
                 />
               </View>
-            )}
-          </View>
-        </View>
-
-        {catData && (
-          <View style={s.section}>
-            <Text style={[s.sectionTitle, { marginBottom: 4 }]}>Spending by Category</Text>
-            <Text style={{ color: C.textMuted, fontSize: 11, marginBottom: 14 }}>
-              {chartType !== 'pie' ? 'Tap a category to filter the chart' : 'Switch to line chart to filter by category'}
-            </Text>
-            {catData.map(([cat, amt], i) => {
-              const pctOfTotal = total > 0 ? Math.round((amt / total) * 100) : 0;
-              const budgetForCat = budgets.find(b => b.category === cat);
-              const budgetLimit = budgetForCat ? parseFloat(budgetForCat.monthly_limit || 0) : 0;
-              const pctOfBudget = budgetLimit > 0 ? Math.min(100, Math.floor((amt / budgetLimit) * 100)) : null;
-              const barPct = pctOfBudget !== null ? pctOfBudget : pctOfTotal;
-              const barColor = pctOfBudget !== null
-                ? (amt >= budgetLimit ? C.red : pctOfBudget >= 75 ? '#1EDFD5' : CAT_COLORS[i % CAT_COLORS.length])
-                : CAT_COLORS[i % CAT_COLORS.length];
-              const catTxCount = filteredTx.filter(tx => getEffectiveCategory(tx) === cat).length;
-              const isSelected = selectedCategory === cat;
-              return (
-                <TouchableOpacity
-                  key={cat}
-                  onPress={() => chartType !== 'pie' ? setSelectedCategory(isSelected ? null : cat) : null}
-                  activeOpacity={chartType !== 'pie' ? 0.7 : 1}
-                  style={[s.insightCard, isSelected && { borderColor: barColor, borderWidth: 2 }]}
-                >
-                  <View style={[s.insightDot, { backgroundColor: barColor, width: 12, height: 12, borderRadius: 6 }]} />
-                  <View style={{ flex: 1 }}>
-                    <View style={s.catInfo}>
-                      <Text style={[s.catName, isSelected && { color: barColor }]}>{PLAID_CATEGORIES.find(p => p.key === cat)?.label || cat.replace(/_/g,' ')}</Text>
-                      <Text style={s.catAmt}>${fmtMoney(amt)}</Text>
+            ) : (
+              catData.map(([cat, amt], i) => {
+                const pctOfTotal = total > 0 ? Math.round((amt / total) * 100) : 0;
+                const budgetForCat = budgets.find(b => b.category === cat);
+                const budgetLimit = budgetForCat ? parseFloat(budgetForCat.monthly_limit || 0) : 0;
+                const pctOfBudget = budgetLimit > 0 ? Math.min(100, Math.floor((amt / budgetLimit) * 100)) : null;
+                const barPct = pctOfBudget !== null ? pctOfBudget : pctOfTotal;
+                const barColor = pctOfBudget !== null
+                  ? (amt >= budgetLimit ? C.red : pctOfBudget >= 75 ? '#1EDFD5' : CAT_COLORS[i % CAT_COLORS.length])
+                  : CAT_COLORS[i % CAT_COLORS.length];
+                const catTxCount = filteredTx.filter(tx => getEffectiveCategory(tx) === cat).length;
+                return (
+                  <View key={cat} style={s.insightCard}>
+                    <View style={[s.insightDot, { backgroundColor: barColor, width: 12, height: 12, borderRadius: 6 }]} />
+                    <View style={{ flex: 1 }}>
+                      <View style={s.catInfo}>
+                        <Text style={s.catName}>{PLAID_CATEGORIES.find(p => p.key === cat)?.label || cat.replace(/_/g,' ')}</Text>
+                        <Text style={s.catAmt}>${fmtMoney(amt)}</Text>
+                      </View>
+                      <View style={s.barBg}>
+                        <View style={[s.bar, { width: `${barPct}%`, backgroundColor: barColor }]} />
+                      </View>
+                      <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 4 }}>
+                        {catTxCount} transaction{catTxCount !== 1 ? 's' : ''}{pctOfBudget !== null ? ` · ${pctOfBudget}% of $${fmtMoney(budgetLimit)} budget` : ` · ${pctOfTotal}% of total`}
+                      </Text>
                     </View>
-                    <View style={s.barBg}>
-                      <View style={[s.bar, { width: `${barPct}%`, backgroundColor: barColor }]} />
-                    </View>
-                    <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 4 }}>
-                      {catTxCount} transaction{catTxCount !== 1 ? 's' : ''}{pctOfBudget !== null ? ` · ${pctOfBudget}% of $${fmtMoney(budgetLimit)} budget` : ` · ${pctOfTotal}% of total`}
-                    </Text>
+                    <Text style={[s.pct, { color: barColor }]}>{pctOfBudget !== null ? `${pctOfBudget}%` : `${pctOfTotal}%`}</Text>
                   </View>
-                  <Text style={[s.pct, { color: barColor }]}>{pctOfBudget !== null ? `${pctOfBudget}%` : `${pctOfTotal}%`}</Text>
-                </TouchableOpacity>
-              );
-            })}
+                );
+              })
+            )}
           </View>
         )}
 
+        {budgets.length === 0 && (
+          <TouchableOpacity
+            style={{ backgroundColor: C.accent + '18', borderRadius: 14, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: C.accent + '44', flexDirection: 'row', alignItems: 'center', gap: 12 }}
+            onPress={() => { setActiveTab('more'); setTimeout(() => setMoreSection('budget'), 100); }}
+          >
+            <Text style={{ fontSize: 24 }}>💡</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700', marginBottom: 2 }}>Set up budgets to unlock your full score</Text>
+              <Text style={{ color: C.textSub, fontSize: 12 }}>Budget Adherence and Coverage are worth up to 55 points. Tap to set up.</Text>
+            </View>
+            <Text style={{ color: C.accent, fontSize: 18 }}>›</Text>
+          </TouchableOpacity>
+        )}
 
         <View style={{ height: 24 }} />
       </ScrollView>
