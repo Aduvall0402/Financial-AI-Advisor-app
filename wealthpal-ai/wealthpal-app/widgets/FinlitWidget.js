@@ -11,80 +11,26 @@ const GREEN   = '#22c55e';
 const AMBER   = '#f59e0b';
 const RED     = '#ef4444';
 
-const CAT_COLORS = {
-  GROCERY:       '#3b82f6',
-  DINING:        '#22c55e',
-  TRANSPORT:     '#f59e0b',
-  ENTERTAINMENT: '#a855f7',
-  SHOPPING:      '#ec4899',
-  TRAVEL:        '#06b6d4',
-  HEALTH:        '#10b981',
-  UTILITIES:     '#6366f1',
-  PERSONAL_CARE: '#f472b6',
-  EDUCATION:     '#8b5cf6',
-  FEES:          '#94a3b8',
-  OTHER:         '#64748b',
-};
-
-const CAT_INITIALS = {
-  GROCERY: 'G', DINING: 'D', TRANSPORT: 'T', ENTERTAINMENT: 'E',
-  SHOPPING: 'S', TRAVEL: 'V', HEALTH: 'H', UTILITIES: 'U',
-  PERSONAL_CARE: 'P', EDUCATION: 'Ed', FEES: 'F', OTHER: 'O',
-};
-
-function StatCard({ label, value, valueColor, sub, subColor }) {
-  return (
-    <FlexWidget style={{
-      flex: 1, flexBasis: 0, backgroundColor: SURFACE, borderRadius: 14,
-      padding: 10, borderWidth: 1, borderColor: BORDER, minHeight: 72,
-    }}>
-      <TextWidget text={label} style={{ color: MUTED, fontSize: 8, marginBottom: 4 }} maxLines={2} />
-      <TextWidget text={value} style={{ color: valueColor || TEXT, fontSize: 14, fontWeight: '700' }} maxLines={1} />
-      <TextWidget text={sub || ' '} style={{ color: subColor || MUTED, fontSize: 8, marginTop: 3 }} maxLines={1} />
-    </FlexWidget>
-  );
-}
-
-function BudgetRow({ label, category, spent, limit, pct }) {
-  const barWidth  = Math.min(100, Math.max(0, pct));
+function BudgetCol({ label, spent, limit, pct }) {
+  const barWidth = Math.min(100, Math.max(0, pct));
   const overBudget = pct >= 100;
-  const color     = CAT_COLORS[category] || ACCENT;
-  const barColor  = overBudget ? RED : pct >= 80 ? AMBER : color;
-  const remaining = Math.max(0, limit - spent);
+  const barColor = overBudget ? RED : pct >= 80 ? AMBER : ACCENT;
 
   return (
-    <FlexWidget style={{ width: 'match_parent', marginBottom: 11 }}>
-      {/* Row: icon + name | remaining + pct */}
-      <FlexWidget style={{
-        flexDirection: 'row', alignItems: 'center',
-        justifyContent: 'space-between', marginBottom: 5,
-      }}>
-        <FlexWidget style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <FlexWidget style={{
-            width: 28, height: 28, backgroundColor: color + '28',
-            borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginRight: 9,
-          }}>
-            <TextWidget text={CAT_INITIALS[category] || label[0]} style={{ color, fontSize: 11, fontWeight: '700' }} />
-          </FlexWidget>
-          <TextWidget text={label} style={{ color: TEXT, fontSize: 12, fontWeight: '600' }} />
-        </FlexWidget>
-        <FlexWidget style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <TextWidget
-            text={overBudget ? 'Over!' : `$${remaining.toFixed(0)} left`}
-            style={{ color: overBudget ? RED : GREEN, fontSize: 10, fontWeight: '600', marginRight: 7 }}
-          />
-          <TextWidget text={`${Math.round(pct)}%`} style={{ color: MUTED, fontSize: 10 }} />
-        </FlexWidget>
-      </FlexWidget>
-      {/* Progress bar */}
-      <FlexWidget style={{ height: 4, width: 'match_parent', backgroundColor: BORDER, borderRadius: 3, marginBottom: 3 }}>
-        <FlexWidget style={{ height: 4, width: `${barWidth}%`, backgroundColor: barColor, borderRadius: 3 }} />
-      </FlexWidget>
-      {/* Spent / limit */}
+    <FlexWidget style={{ flex: 1 }}>
       <TextWidget
-        text={`$${spent.toFixed(0)} of $${limit.toFixed(0)}`}
-        style={{ color: MUTED, fontSize: 10 }}
+        text={label}
+        style={{ color: MUTED, fontSize: 8, marginBottom: 2 }}
+        maxLines={1}
       />
+      <TextWidget
+        text={`${Math.round(spent)}/${Math.round(limit)}`}
+        style={{ color: overBudget ? RED : TEXT, fontSize: 10, fontWeight: '700', marginBottom: 3 }}
+        maxLines={1}
+      />
+      <FlexWidget style={{ height: 2, width: 'match_parent', backgroundColor: BORDER, borderRadius: 1 }}>
+        <FlexWidget style={{ height: 2, width: `${barWidth}%`, backgroundColor: barColor, borderRadius: 1 }} />
+      </FlexWidget>
     </FlexWidget>
   );
 }
@@ -99,100 +45,118 @@ export function FinlitWidget({ width, height, budgetData, statsData }) {
     budgetLeft       = 0,
     budgetTotal      = 0,
     yesterdayDate    = 'Yesterday',
-    periodLabel      = 'This Month',
+    periodLabel      = 'This Pay Period',
   } = stats;
+
+  // Group budgets into pairs for two-column layout
+  const pairs = [];
+  for (let i = 0; i < budgets.length; i += 2) {
+    pairs.push(budgets.slice(i, i + 2));
+  }
 
   const noData = budgets.length === 0 && yesterdaySpent === 0 && budgetTotal === 0;
 
   return (
     <FlexWidget style={{
       height: 'match_parent', width: 'match_parent',
-      backgroundColor: BG, borderRadius: 22, padding: 18,
+      backgroundColor: BG, borderRadius: 22, padding: 16,
       flexDirection: 'column',
     }}>
 
       {/* ── Header ── */}
       <FlexWidget style={{
         flexDirection: 'row', alignItems: 'center',
-        justifyContent: 'space-between', width: 'match_parent', marginBottom: 14,
+        justifyContent: 'space-between', width: 'match_parent', marginBottom: 10,
       }}>
         <FlexWidget style={{ flexDirection: 'column' }}>
           <ImageWidget
             image={require('../assets/finlit-logo.png')}
-            imageWidth={88}
-            imageHeight={40}
+            imageWidth={80}
+            imageHeight={36}
           />
-          <TextWidget text={yesterdayDate} style={{ color: MUTED, fontSize: 10, marginTop: 3 }} />
+          <TextWidget text={yesterdayDate} style={{ color: MUTED, fontSize: 9, marginTop: 2 }} />
         </FlexWidget>
         <FlexWidget
           style={{
-            backgroundColor: SURFACE, borderRadius: 20,
-            paddingVertical: 7, paddingHorizontal: 14,
+            backgroundColor: SURFACE, borderRadius: 18,
+            paddingVertical: 6, paddingHorizontal: 12,
             borderWidth: 1, borderColor: BORDER,
           }}
           clickAction="OPEN_URI"
           clickActionData={{ uri: 'finlit://scan' }}
         >
-          <TextWidget text="Scan Receipt" style={{ color: ACCENT, fontSize: 10, fontWeight: '600' }} />
+          <TextWidget text="Scan Receipt" style={{ color: ACCENT, fontSize: 9, fontWeight: '600' }} />
         </FlexWidget>
       </FlexWidget>
 
-      {/* ── Stat cards ── */}
-      <FlexWidget style={{ flexDirection: 'row', width: 'match_parent', gap: 7, marginBottom: 12, alignItems: 'stretch' }}>
-        <StatCard
-          label="Yesterday Spend"
-          value={`$${yesterdaySpent.toFixed(2)}`}
-          sub=" "
-        />
-        <StatCard
-          label="Budget Left"
-          value={`$${budgetLeft.toFixed(0)}`}
-          valueColor={budgetLeft > 0 ? GREEN : RED}
-          sub={`of $${budgetTotal.toFixed(0)}`}
-        />
-        <StatCard
-          label="Transactions"
-          value={`${yesterdayTxCount}`}
-          sub="yesterday"
-        />
+      {/* ── Stats row (neat text, no bubbles) ── */}
+      <FlexWidget style={{
+        flexDirection: 'row', width: 'match_parent',
+        justifyContent: 'space-between', marginBottom: 10,
+      }}>
+        <FlexWidget style={{ flexDirection: 'column' }}>
+          <TextWidget text="Yesterday" style={{ color: MUTED, fontSize: 8 }} />
+          <TextWidget text={`$${yesterdaySpent.toFixed(2)}`} style={{ color: TEXT, fontSize: 13, fontWeight: '700' }} />
+        </FlexWidget>
+        <FlexWidget style={{ flexDirection: 'column', alignItems: 'center' }}>
+          <TextWidget text="Budget Left" style={{ color: MUTED, fontSize: 8 }} />
+          <TextWidget
+            text={`$${budgetLeft.toFixed(0)}`}
+            style={{ color: budgetLeft > 0 ? GREEN : RED, fontSize: 13, fontWeight: '700' }}
+          />
+        </FlexWidget>
+        <FlexWidget style={{ flexDirection: 'column', alignItems: 'flex-end' }}>
+          <TextWidget text="Txns" style={{ color: MUTED, fontSize: 8 }} />
+          <TextWidget text={`${yesterdayTxCount}`} style={{ color: TEXT, fontSize: 13, fontWeight: '700' }} />
+        </FlexWidget>
       </FlexWidget>
 
       {/* ── Divider ── */}
-      <FlexWidget style={{ height: 1, width: 'match_parent', backgroundColor: BORDER, marginBottom: 12 }} />
+      <FlexWidget style={{ height: 1, width: 'match_parent', backgroundColor: BORDER, marginBottom: 8 }} />
 
       {/* ── Budget section header ── */}
       <FlexWidget style={{
         flexDirection: 'row', justifyContent: 'space-between',
-        alignItems: 'center', width: 'match_parent', marginBottom: 10,
+        alignItems: 'center', width: 'match_parent', marginBottom: 8,
       }}>
-        <TextWidget text="Budget Overview" style={{ color: TEXT, fontSize: 13, fontWeight: '700' }} />
-        <TextWidget text={periodLabel} style={{ color: MUTED, fontSize: 10 }} />
+        <TextWidget text="Budgets" style={{ color: TEXT, fontSize: 11, fontWeight: '700' }} />
+        <TextWidget text={periodLabel} style={{ color: MUTED, fontSize: 8 }} />
       </FlexWidget>
 
-      {/* ── Budget rows ── */}
+      {/* ── Budget rows (2-column) ── */}
       <FlexWidget style={{ flex: 1, width: 'match_parent' }}>
         {noData ? (
           <TextWidget
             text="Open Finlit and sync your bank to load data."
-            style={{ color: MUTED, fontSize: 11, lineHeight: 18 }}
+            style={{ color: MUTED, fontSize: 10 }}
             maxLines={3}
           />
         ) : budgets.length === 0 ? (
           <TextWidget
             text="No budgets set. Open Finlit to create budgets."
-            style={{ color: MUTED, fontSize: 11 }}
+            style={{ color: MUTED, fontSize: 10 }}
             maxLines={2}
           />
         ) : (
-          budgets.map((b, i) => (
-            <BudgetRow
-              key={i}
-              label={b.label}
-              category={b.category}
-              spent={b.spent}
-              limit={b.limit}
-              pct={b.pct}
-            />
+          pairs.map((pair, pi) => (
+            <FlexWidget key={pi} style={{ flexDirection: 'row', width: 'match_parent', gap: 12, marginBottom: 9 }}>
+              <BudgetCol
+                label={pair[0].label}
+                spent={pair[0].spent}
+                limit={pair[0].limit}
+                pct={pair[0].pct}
+              />
+              {pair[1] ? (
+                <BudgetCol
+                  label={pair[1].label}
+                  spent={pair[1].spent}
+                  limit={pair[1].limit}
+                  pct={pair[1].pct}
+                />
+              ) : (
+                <FlexWidget style={{ flex: 1 }} />
+              )}
+            </FlexWidget>
           ))
         )}
       </FlexWidget>

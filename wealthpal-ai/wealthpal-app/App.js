@@ -2928,7 +2928,7 @@ export default function App() {
     const getBudgetSpend2 = (budget) => {
       const start = getPeriodStart('paycycle', budget.paycycle_start, budget.paycycle_freq);
       return transactions
-        .filter(tx => (tx.transaction_date || '') >= start && tx.category === budget.category)
+        .filter(tx => !isIncomeTx(tx) && (tx.transaction_date || '') >= start && getEffectiveCategory(tx) === budget.category)
         .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
     };
     const totalBudgeted = budgets.reduce((s, b) => s + parseFloat(b.monthly_limit || 0), 0);
@@ -3711,7 +3711,7 @@ export default function App() {
     const getBudgetSpend = (budget) => {
       const start = getPeriodStart('paycycle', budget.paycycle_start, budget.paycycle_freq);
       return transactions
-        .filter(tx => (tx.transaction_date || '') >= start && tx.category === budget.category)
+        .filter(tx => !isIncomeTx(tx) && (tx.transaction_date || '') >= start && getEffectiveCategory(tx) === budget.category)
         .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
     };
     const totalBudgeted = budgets.reduce((s, b) => s + parseFloat(b.monthly_limit || 0), 0);
