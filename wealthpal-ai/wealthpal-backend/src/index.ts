@@ -307,10 +307,17 @@ app.post("/api/transactions", async (req: Request, res: Response) => {
 app.patch("/api/transactions/:txId", async (req: Request, res: Response) => {
   try {
     const { txId } = req.params;
-    const { merchant_name, amount, category, transaction_date, description } = req.body;
+    const { merchant_name, amount, category, transaction_date, description, reviewed } = req.body;
+    const updateFields: any = { updated_at: new Date().toISOString() };
+    if (merchant_name !== undefined) updateFields.merchant_name = merchant_name;
+    if (amount !== undefined) updateFields.amount = amount;
+    if (category !== undefined) updateFields.category = category;
+    if (transaction_date !== undefined) updateFields.transaction_date = transaction_date;
+    if (description !== undefined) updateFields.description = description;
+    if (reviewed !== undefined) updateFields.reviewed = reviewed;
     const { error } = await supabase
       .from("transactions")
-      .update({ merchant_name, amount, category, transaction_date, description, updated_at: new Date().toISOString() })
+      .update(updateFields)
       .eq("id", txId);
     if (error) throw error;
     res.json({ message: "Transaction updated" });

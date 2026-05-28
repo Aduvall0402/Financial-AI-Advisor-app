@@ -16,6 +16,8 @@ import { Audio } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
 import * as Updates from 'expo-updates';
 import * as Linking from 'expo-linking';
+import { requestWidgetUpdate } from 'react-native-android-widget';
+import { FinlitWidget } from './widgets/FinlitWidget';
 
 // Categories to exclude from all spending calculations (income, transfers, non-purchase flows)
 const INCOME_CATEGORIES = new Set([
@@ -442,7 +444,6 @@ export default function App() {
   const [postSyncIdx, setPostSyncIdx] = useState(0);
   const [postSyncCat, setPostSyncCat] = useState('');
   const [postSyncGoalId, setPostSyncGoalId] = useState(null);
-  const [reviewedTxIds, setReviewedTxIds] = useState(new Set());
 
   // Currency
   const [currency, setCurrency] = useState('USD');
@@ -621,7 +622,7 @@ export default function App() {
       'displayName',
       'notifOverall', 'notifDaily', 'notifWeekly', 'notifMonthly', 'notifBudget',
       'currency', 'autoSyncHour', 'autoSyncEnabled', 'lastSyncTime',
-      'savedUserId', 'savedToken', 'savedEmail', 'reviewedTxIds',
+      'savedUserId', 'savedToken', 'savedEmail',
     ]).then(pairs => {
       const m = Object.fromEntries(pairs.map(([k, v]) => [k, v]));
       if (m.displayName) setDisplayName(m.displayName);
@@ -634,7 +635,6 @@ export default function App() {
       if (m.autoSyncHour) setAutoSyncHour(parseInt(m.autoSyncHour));
       if (m.autoSyncEnabled) setAutoSyncEnabled(m.autoSyncEnabled === 'true');
       if (m.lastSyncTime) setLastSyncTime(parseInt(m.lastSyncTime));
-      if (m.reviewedTxIds) { try { setReviewedTxIds(new Set(JSON.parse(m.reviewedTxIds))); } catch (_) {} }
       // Restore session if "Stay logged in" was used
       if (m.savedUserId && m.savedToken) {
         setUserId(m.savedUserId); userIdRef.current = m.savedUserId;
@@ -962,7 +962,7 @@ export default function App() {
         else { setSyncError(''); setPlaidStatus(`Synced ${data.synced} transaction${data.synced !== 1 ? 's' : ''}`); setTimeout(() => setPlaidStatus(''), 4000); }
         const txRes = await apiCall(`/api/transactions/${userIdRef.current}`);
         const txData = txRes.ok ? await txRes.json() : {};
-        const fresh = (txData.transactions || []).filter(tx => !isIncomeTx(tx) && !reviewedTxIds.has(tx.plaid_transaction_id || String(tx.id)));
+        const fresh = (txData.transactions || []).filter(tx => !isIncomeTx(tx) && !tx.reviewed);
         if (fresh.length > 0) {
           setPostSyncTxs(fresh);
           setPostSyncIdx(0);
@@ -1481,11 +1481,21 @@ export default function App() {
           }))
         : [];
 
+      const statsJson = JSON.stringify({ totalSpent, budgetLeft, budgetTotal, txCount, yesterdayTxCount, todaySpent, yesterdaySpent, periodLabel, periodRange, yesterdayDate: yest.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) });
+      const budgetJson = JSON.stringify(widgetBudgets);
       await AsyncStorage.multiSet([
-        ['widgetBudgetData', JSON.stringify(widgetBudgets)],
-        ['widgetStatsData', JSON.stringify({ totalSpent, budgetLeft, budgetTotal, txCount, yesterdayTxCount, todaySpent, yesterdaySpent, periodLabel, periodRange, yesterdayDate: yest.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) })],
+        ['widgetBudgetData', budgetJson],
+        ['widgetStatsData', statsJson],
         ['widgetRecentTx', JSON.stringify(dayTxs)],
       ]);
+      // Push updated data directly to the widget — no waiting for the 30-min timer
+      requestWidgetUpdate({
+        widgetName: 'FinlitWidget',
+        renderWidget: (info) => (
+          <FinlitWidget width={info.width} height={info.height} budgetData={budgetJson} statsData={statsJson} />
+        ),
+        widgetNotFound: () => {},
+      }).catch(() => {});
     } catch (_) {}
   }, [userPayday, isIncomeTx, getEffectiveCategory]);
 
@@ -5346,12 +5356,7 @@ export default function App() {
                     <TouchableOpacity style={[s.btn, { flex: 1, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border }]}
                       onPress={() => {
                         setPostSyncGoalId(null);
-                        const txKey = tx.plaid_transaction_id || String(tx.id);
-                        if (txKey) {
-                          const newSet = new Set(reviewedTxIds); newSet.add(txKey);
-                          setReviewedTxIds(newSet);
-                          AsyncStorage.setItem('reviewedTxIds', JSON.stringify([...newSet]));
-                        }
+                        if (tx.id) fetch(`${API_URL}/api/transactions/${tx.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reviewed: true }) });
                         const next = postSyncIdx + 1;
                         if (next >= postSyncTxs.length) { setPostSyncVisible(false); }
                         else { setPostSyncIdx(next); setPostSyncCat(getEffectiveCategory(postSyncTxs[next])); }
@@ -5360,12 +5365,14 @@ export default function App() {
                     </TouchableOpacity>
                     <TouchableOpacity style={[s.btn, { flex: 1 }]}
                       onPress={async () => {
+                        const patchBody = { reviewed: true };
                         if (postSyncCat && postSyncCat !== getEffectiveCategory(tx)) {
                           const merchant = (tx.merchant_name || tx.description || '').toLowerCase();
                           const updated = { ...categoryRules, [merchant]: postSyncCat };
                           saveCategoryRules(updated);
-                          if (tx.id) await fetch(`${API_URL}/api/transactions/${tx.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category: postSyncCat }) });
+                          patchBody.category = postSyncCat;
                         }
+                        if (tx.id) await fetch(`${API_URL}/api/transactions/${tx.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patchBody) });
                         if (postSyncGoalId) {
                           const goal = goals.find(g => g.id === postSyncGoalId);
                           if (goal) {
@@ -5375,12 +5382,6 @@ export default function App() {
                           }
                         }
                         setPostSyncGoalId(null);
-                        const txKey = tx.plaid_transaction_id || String(tx.id);
-                        if (txKey) {
-                          const newSet = new Set(reviewedTxIds); newSet.add(txKey);
-                          setReviewedTxIds(newSet);
-                          AsyncStorage.setItem('reviewedTxIds', JSON.stringify([...newSet]));
-                        }
                         const next = postSyncIdx + 1;
                         if (next >= postSyncTxs.length) { setPostSyncVisible(false); }
                         else { setPostSyncIdx(next); setPostSyncCat(getEffectiveCategory(postSyncTxs[next])); }
