@@ -58,10 +58,15 @@ export async function refreshTransactions(accessToken: string) {
   }
 }
 
-// Fetch all transactions via transactionsSync (cursor-based, works without webhook init)
-export async function getTransactions(accessToken: string) {
+// Fetch transactions via transactionsSync (cursor-based).
+// Pass initialCursor to fetch only transactions added since that cursor (incremental).
+// Omit initialCursor to fetch all historical transactions (full sync).
+export async function getTransactions(
+  accessToken: string,
+  initialCursor?: string
+): Promise<{ transactions: any[]; nextCursor: string | undefined }> {
   try {
-    let cursor: string | undefined = undefined;
+    let cursor: string | undefined = initialCursor;
     let added: any[] = [];
     let hasMore = true;
     let pages = 0;
@@ -79,12 +84,11 @@ export async function getTransactions(accessToken: string) {
       pages++;
     }
 
-    console.log(`transactionsSync: ${added.length} transactions across ${pages} page(s)`);
-    return added;
+    console.log(`transactionsSync: ${added.length} new transactions across ${pages} page(s) (cursor: ${initialCursor ? 'incremental' : 'full'})`);
+    return { transactions: added, nextCursor: cursor };
   } catch (error: any) {
     const detail = error?.response?.data || error?.message || error;
     console.error("getTransactions error:", JSON.stringify(detail));
-    // Re-throw with the full Plaid error message
     const msg = error?.response?.data?.error_message || error?.response?.data?.error_code || error?.message || "Failed to fetch transactions";
     throw new Error(msg);
   }

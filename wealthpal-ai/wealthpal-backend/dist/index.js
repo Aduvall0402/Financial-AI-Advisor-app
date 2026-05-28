@@ -44,6 +44,7 @@ const multer_1 = __importDefault(require("multer"));
 const fs_1 = __importDefault(require("fs"));
 const supabase_1 = __importDefault(require("./supabase"));
 const plaidService = __importStar(require("./plaidService"));
+const plaidService_1 = require("./plaidService");
 const openaiService = __importStar(require("./openaiService"));
 const auth = __importStar(require("./auth"));
 const upload = (0, multer_1.default)({ dest: "/tmp/wealthpal-audio/" });
@@ -180,26 +181,38 @@ app.get("/api/plaid/accounts/:userId", async (req, res) => {
         const { userId } = req.params;
         const { data, error } = await supabase_1.default
             .from("accounts")
-            .select("plaid_access_token, plaid_account_id")
+            .select("id, plaid_access_token, plaid_account_id")
             .eq("user_id", userId)
             .order("created_at", { ascending: false });
         if (error || !data?.length) {
             return res.status(404).json({ error: "No connected account found" });
         }
-        // Aggregate accounts from all linked Plaid items
+        // Aggregate accounts from all linked Plaid items, keyed by DB row id
         const allAccounts = [];
+        const dbAccounts = [];
         for (const row of data) {
             if (!row.plaid_access_token)
                 continue;
             try {
                 const accounts = await plaidService.getAccounts(row.plaid_access_token);
                 allAccounts.push(...accounts);
+                let institutionName = '';
+                try {
+                    const itemResp = await plaidService_1.plaidClient.itemGet({ access_token: row.plaid_access_token });
+                    const institutionId = itemResp.data.item.institution_id;
+                    if (institutionId) {
+                        const instResp = await plaidService_1.plaidClient.institutionsGetById({ institution_id: institutionId, country_codes: ['US'] });
+                        institutionName = instResp.data.institution.name;
+                    }
+                }
+                catch { /* institution name is optional */ }
+                dbAccounts.push({ id: row.id, plaid_item_id: row.plaid_account_id, accounts, institutionName });
             }
             catch { /* skip failed items */ }
         }
         if (!allAccounts.length)
             return res.status(404).json({ error: "No connected account found" });
-        res.json({ accounts: allAccounts, itemId: data[0].plaid_account_id });
+        res.json({ accounts: allAccounts, itemId: data[0].plaid_account_id, dbAccounts });
     }
     catch (error) {
         res.status(500).json({ error: error?.message || "Failed to fetch accounts" });
@@ -230,14 +243,19 @@ app.post("/api/transactions/sync/:userId", async (req, res) => {
         const { userId } = req.params;
         const { data: accountData, error: accountError } = await supabase_1.default
             .from("accounts")
-            .select("id, plaid_access_token, plaid_account_id")
+            .select("id, plaid_access_token, plaid_account_id, plaid_sync_cursor")
             .eq("user_id", userId)
             .order("created_at", { ascending: false });
         if (accountError || !accountData?.length) {
             return res.status(404).json({ error: "No connected account found" });
         }
-        // Clear existing transactions for this user, then re-sync from all linked banks
-        await supabase_1.default.from("transactions").delete().eq("user_id", userId);
+        // Load existing plaid_transaction_ids for this user to skip re-inserting
+        const { data: existingRows } = await supabase_1.default
+            .from("transactions")
+            .select("plaid_transaction_id")
+            .eq("user_id", userId)
+            .not("plaid_transaction_id", "is", null);
+        const existingIds = new Set((existingRows || []).map((r) => r.plaid_transaction_id));
         let synced = 0;
         let failed = 0;
         let totalTx = 0;
@@ -246,9 +264,12 @@ app.post("/api/transactions/sync/:userId", async (req, res) => {
                 continue;
             try {
                 await plaidService.refreshTransactions(acct.plaid_access_token);
-                const transactions = await plaidService.getTransactions(acct.plaid_access_token);
+                const { transactions, nextCursor } = await plaidService.getTransactions(acct.plaid_access_token, acct.plaid_sync_cursor || undefined);
                 totalTx += transactions.length;
                 for (const tx of transactions) {
+                    // Skip transactions already in the database (prevents duplicates)
+                    if (existingIds.has(tx.transaction_id))
+                        continue;
                     const { error } = await supabase_1.default
                         .from("transactions")
                         .insert([{
@@ -273,20 +294,53 @@ app.post("/api/transactions/sync/:userId", async (req, res) => {
                     }
                     else {
                         synced++;
+                        existingIds.add(tx.transaction_id);
                     }
+                }
+                // Save the cursor so next sync only fetches new transactions
+                if (nextCursor) {
+                    await supabase_1.default.from("accounts").update({ plaid_sync_cursor: nextCursor }).eq("id", acct.id);
                 }
             }
             catch (itemErr) {
                 console.error("Error syncing account item", acct.plaid_account_id, itemErr?.message);
             }
         }
-        console.log(`Synced ${synced}/${totalTx} transactions for user ${userId} (${failed} failed)`);
+        console.log(`Synced ${synced}/${totalTx} new transactions for user ${userId} (${failed} failed)`);
         res.json({ synced, total: totalTx });
     }
     catch (error) {
         const msg = error?.message || "Failed to sync transactions";
         console.error("Sync error:", msg);
         res.status(500).json({ error: msg });
+    }
+});
+app.post("/api/transactions", async (req, res) => {
+    try {
+        const { user_id, merchant_name, amount, transaction_date, category, description, source } = req.body;
+        if (!user_id || !merchant_name || amount == null) {
+            return res.status(400).json({ error: "Missing required fields" });
+        }
+        const { data, error } = await supabase_1.default
+            .from("transactions")
+            .insert([{
+                user_id,
+                merchant_name,
+                amount: Math.abs(parseFloat(amount)),
+                transaction_date: transaction_date || new Date().toISOString().split("T")[0],
+                category: category || "GENERAL_MERCHANDISE",
+                description: description || merchant_name,
+                source: source || "manual",
+                is_pending: false,
+                currency_code: "USD",
+            }])
+            .select();
+        if (error)
+            throw error;
+        res.json({ transaction: data[0] });
+    }
+    catch (error) {
+        res.status(500).json({ error: error?.message || "Failed to create transaction" });
     }
 });
 app.patch("/api/transactions/:txId", async (req, res) => {
@@ -312,7 +366,7 @@ app.post("/api/transactions/sync", async (req, res) => {
         if (!userId || !accessToken || !startDate || !endDate) {
             return res.status(400).json({ error: "Missing required fields" });
         }
-        const transactions = await plaidService.getTransactions(accessToken);
+        const { transactions } = await plaidService.getTransactions(accessToken);
         let synced = 0;
         for (const tx of transactions) {
             const { error } = await supabase_1.default

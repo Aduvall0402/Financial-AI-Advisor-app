@@ -442,6 +442,7 @@ export default function App() {
   const [postSyncIdx, setPostSyncIdx] = useState(0);
   const [postSyncCat, setPostSyncCat] = useState('');
   const [postSyncGoalId, setPostSyncGoalId] = useState(null);
+  const [reviewedTxIds, setReviewedTxIds] = useState(new Set());
 
   // Currency
   const [currency, setCurrency] = useState('USD');
@@ -620,7 +621,7 @@ export default function App() {
       'displayName',
       'notifOverall', 'notifDaily', 'notifWeekly', 'notifMonthly', 'notifBudget',
       'currency', 'autoSyncHour', 'autoSyncEnabled', 'lastSyncTime',
-      'savedUserId', 'savedToken', 'savedEmail',
+      'savedUserId', 'savedToken', 'savedEmail', 'reviewedTxIds',
     ]).then(pairs => {
       const m = Object.fromEntries(pairs.map(([k, v]) => [k, v]));
       if (m.displayName) setDisplayName(m.displayName);
@@ -633,6 +634,7 @@ export default function App() {
       if (m.autoSyncHour) setAutoSyncHour(parseInt(m.autoSyncHour));
       if (m.autoSyncEnabled) setAutoSyncEnabled(m.autoSyncEnabled === 'true');
       if (m.lastSyncTime) setLastSyncTime(parseInt(m.lastSyncTime));
+      if (m.reviewedTxIds) { try { setReviewedTxIds(new Set(JSON.parse(m.reviewedTxIds))); } catch (_) {} }
       // Restore session if "Stay logged in" was used
       if (m.savedUserId && m.savedToken) {
         setUserId(m.savedUserId); userIdRef.current = m.savedUserId;
@@ -960,7 +962,7 @@ export default function App() {
         else { setSyncError(''); setPlaidStatus(`Synced ${data.synced} transaction${data.synced !== 1 ? 's' : ''}`); setTimeout(() => setPlaidStatus(''), 4000); }
         const txRes = await apiCall(`/api/transactions/${userIdRef.current}`);
         const txData = txRes.ok ? await txRes.json() : {};
-        const fresh = (txData.transactions || []).filter(tx => !isIncomeTx(tx));
+        const fresh = (txData.transactions || []).filter(tx => !isIncomeTx(tx) && !reviewedTxIds.has(tx.plaid_transaction_id || String(tx.id)));
         if (fresh.length > 0) {
           setPostSyncTxs(fresh);
           setPostSyncIdx(0);
@@ -1006,9 +1008,10 @@ export default function App() {
           await AsyncStorage.setItem('widgetBudgetData', JSON.stringify(widgetBudgets));
 
           // Overall stats for the period
-          const todayStr = now.toISOString().split('T')[0];
+          const localDate = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+          const todayStr = localDate(now);
           const yest = new Date(now); yest.setDate(yest.getDate() - 1);
-          const yesterdayStr = yest.toISOString().split('T')[0];
+          const yesterdayStr = localDate(yest);
           const periodTxs = allTxs.filter(tx => !isIncomeTx(tx) && (tx.transaction_date || '') >= periodStart);
           const totalSpent = periodTxs.reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
           const todaySpent = allTxs.filter(tx => !isIncomeTx(tx) && (tx.transaction_date || '') === todayStr).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
@@ -1419,9 +1422,10 @@ export default function App() {
     if (!userIdRef.current) return;
     try {
       const now = new Date();
-      const todayStr = now.toISOString().split('T')[0];
+      const localDate = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      const todayStr = localDate(now);
       const yest = new Date(now); yest.setDate(yest.getDate() - 1);
-      const yesterdayStr = yest.toISOString().split('T')[0];
+      const yesterdayStr = localDate(yest);
       const fmtDate = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
       const periodStart = (() => {
@@ -1430,9 +1434,9 @@ export default function App() {
           const msPerCycle = freqDays * 86400000;
           const anchor = new Date(userPayday.nextDate + 'T00:00:00');
           while (anchor > now) anchor.setTime(anchor.getTime() - msPerCycle);
-          return anchor.toISOString().split('T')[0];
+          return localDate(anchor);
         }
-        return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+        return localDate(new Date(now.getFullYear(), now.getMonth(), 1));
       })();
       const freqDays = userPayday?.frequency === 'weekly' ? 7 : userPayday?.frequency === 'biweekly' ? 14 : 30;
       const periodLabel = userPayday
@@ -1451,8 +1455,8 @@ export default function App() {
 
       const widgetBudgets = budgetList.map(b => {
         const bStart = (() => {
-          if (b.period === 'weekly') { const d = new Date(now); d.setDate(d.getDate() - 6); return d.toISOString().split('T')[0]; }
-          if (b.period === 'biweekly') { const d = new Date(now); d.setDate(d.getDate() - 13); return d.toISOString().split('T')[0]; }
+          if (b.period === 'weekly') { const d = new Date(now); d.setDate(d.getDate() - 6); return localDate(d); }
+          if (b.period === 'biweekly') { const d = new Date(now); d.setDate(d.getDate() - 13); return localDate(d); }
           return periodStart;
         })();
         const spent = spendingTxs
@@ -1485,12 +1489,12 @@ export default function App() {
     } catch (_) {}
   }, [userPayday, isIncomeTx, getEffectiveCategory]);
 
-  // Auto-refresh widget whenever transactions or budgets change (covers login restore)
+  // Auto-refresh widget whenever transactions, budgets, or payday changes (covers login restore)
   useEffect(() => {
     if (transactions.length > 0 && userIdRef.current) {
       refreshWidgetData(transactions, budgets);
     }
-  }, [transactions, budgets]);
+  }, [transactions, budgets, userPayday]);
 
   const getPeriodStart = (period, paycycleStart, paycycleFreq) => {
     const now = new Date();
@@ -5315,7 +5319,7 @@ export default function App() {
                   </View>
                   <Text style={s.label}>Category</Text>
                   <ScrollView style={{ maxHeight: 180, marginBottom: 16 }} showsVerticalScrollIndicator={true} nestedScrollEnabled={true}>
-                    {[...PLAID_CATEGORIES, ...customCategories.map(c => ({ key: c, label: c, icon: '★' }))].map(cat => (
+                    {(() => { const all = [...PLAID_CATEGORIES, ...customCategories.map(c => ({ key: c, label: c, icon: '★' }))]; return [...all.filter(c => c.key === postSyncCat), ...all.filter(c => c.key !== postSyncCat)]; })().map(cat => (
                       <TouchableOpacity key={cat.key} onPress={() => setPostSyncCat(cat.key)}
                         style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 9, paddingHorizontal: 12, borderRadius: 10, marginBottom: 3, backgroundColor: postSyncCat === cat.key ? C.accent : C.surface, borderWidth: 1, borderColor: postSyncCat === cat.key ? C.accent : C.border }}>
                         <Text style={{ color: postSyncCat === cat.key ? '#fff' : C.textSub, fontSize: 13, fontWeight: '700', width: 22 }}>{cat.icon}</Text>
@@ -5342,6 +5346,12 @@ export default function App() {
                     <TouchableOpacity style={[s.btn, { flex: 1, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border }]}
                       onPress={() => {
                         setPostSyncGoalId(null);
+                        const txKey = tx.plaid_transaction_id || String(tx.id);
+                        if (txKey) {
+                          const newSet = new Set(reviewedTxIds); newSet.add(txKey);
+                          setReviewedTxIds(newSet);
+                          AsyncStorage.setItem('reviewedTxIds', JSON.stringify([...newSet]));
+                        }
                         const next = postSyncIdx + 1;
                         if (next >= postSyncTxs.length) { setPostSyncVisible(false); }
                         else { setPostSyncIdx(next); setPostSyncCat(getEffectiveCategory(postSyncTxs[next])); }
@@ -5365,6 +5375,12 @@ export default function App() {
                           }
                         }
                         setPostSyncGoalId(null);
+                        const txKey = tx.plaid_transaction_id || String(tx.id);
+                        if (txKey) {
+                          const newSet = new Set(reviewedTxIds); newSet.add(txKey);
+                          setReviewedTxIds(newSet);
+                          AsyncStorage.setItem('reviewedTxIds', JSON.stringify([...newSet]));
+                        }
                         const next = postSyncIdx + 1;
                         if (next >= postSyncTxs.length) { setPostSyncVisible(false); }
                         else { setPostSyncIdx(next); setPostSyncCat(getEffectiveCategory(postSyncTxs[next])); }

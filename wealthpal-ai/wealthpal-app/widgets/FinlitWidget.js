@@ -35,12 +35,12 @@ const CAT_INITIALS = {
 function StatCard({ label, value, valueColor, sub, subColor }) {
   return (
     <FlexWidget style={{
-      flex: 1, backgroundColor: SURFACE, borderRadius: 14,
-      padding: 11, borderWidth: 1, borderColor: BORDER,
+      flex: 1, flexBasis: 0, backgroundColor: SURFACE, borderRadius: 14,
+      padding: 10, borderWidth: 1, borderColor: BORDER, minHeight: 72,
     }}>
-      <TextWidget text={label} style={{ color: MUTED, fontSize: 9, marginBottom: 5 }} />
-      <TextWidget text={value} style={{ color: valueColor || TEXT, fontSize: 15, fontWeight: '700' }} />
-      {sub ? <TextWidget text={sub} style={{ color: subColor || MUTED, fontSize: 9, marginTop: 4 }} /> : null}
+      <TextWidget text={label} style={{ color: MUTED, fontSize: 8, marginBottom: 4 }} maxLines={2} />
+      <TextWidget text={value} style={{ color: valueColor || TEXT, fontSize: 14, fontWeight: '700' }} maxLines={1} />
+      <TextWidget text={sub || ' '} style={{ color: subColor || MUTED, fontSize: 8, marginTop: 3 }} maxLines={1} />
     </FlexWidget>
   );
 }
@@ -138,16 +138,17 @@ export function FinlitWidget({ width, height, budgetData, statsData }) {
       </FlexWidget>
 
       {/* ── Stat cards ── */}
-      <FlexWidget style={{ flexDirection: 'row', width: 'match_parent', gap: 8, marginBottom: 14 }}>
+      <FlexWidget style={{ flexDirection: 'row', width: 'match_parent', gap: 7, marginBottom: 12, alignItems: 'stretch' }}>
         <StatCard
-          label="Yesterday's Spend"
+          label="Yesterday Spend"
           value={`$${yesterdaySpent.toFixed(2)}`}
+          sub=" "
         />
         <StatCard
           label="Budget Left"
           value={`$${budgetLeft.toFixed(0)}`}
           valueColor={budgetLeft > 0 ? GREEN : RED}
-          sub={`of $${budgetTotal.toFixed(0)} · ${periodLabel}`}
+          sub={`of $${budgetTotal.toFixed(0)}`}
         />
         <StatCard
           label="Transactions"

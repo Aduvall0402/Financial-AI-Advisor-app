@@ -205,14 +205,21 @@ app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) =
     const { userId } = req.params;
     const { data: accountData, error: accountError } = await supabase
       .from("accounts")
-      .select("id, plaid_access_token, plaid_account_id")
+      .select("id, plaid_access_token, plaid_account_id, plaid_sync_cursor")
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
     if (accountError || !accountData?.length) {
       return res.status(404).json({ error: "No connected account found" });
     }
-    // Clear existing transactions for this user, then re-sync from all linked banks
-    await supabase.from("transactions").delete().eq("user_id", userId);
+
+    // Load existing plaid_transaction_ids for this user to skip re-inserting
+    const { data: existingRows } = await supabase
+      .from("transactions")
+      .select("plaid_transaction_id")
+      .eq("user_id", userId)
+      .not("plaid_transaction_id", "is", null);
+    const existingIds = new Set((existingRows || []).map((r: any) => r.plaid_transaction_id));
+
     let synced = 0;
     let failed = 0;
     let totalTx = 0;
@@ -220,9 +227,14 @@ app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) =
       if (!acct.plaid_access_token) continue;
       try {
         await plaidService.refreshTransactions(acct.plaid_access_token);
-        const transactions = await plaidService.getTransactions(acct.plaid_access_token);
+        const { transactions, nextCursor } = await plaidService.getTransactions(
+          acct.plaid_access_token,
+          acct.plaid_sync_cursor || undefined
+        );
         totalTx += transactions.length;
         for (const tx of transactions) {
+          // Skip transactions already in the database (prevents duplicates)
+          if (existingIds.has(tx.transaction_id)) continue;
           const { error } = await supabase
             .from("transactions")
             .insert([{
@@ -245,13 +257,18 @@ app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) =
             if (failed <= 3) console.error("Insert error for tx", tx.transaction_id, JSON.stringify(error));
           } else {
             synced++;
+            existingIds.add(tx.transaction_id);
           }
+        }
+        // Save the cursor so next sync only fetches new transactions
+        if (nextCursor) {
+          await supabase.from("accounts").update({ plaid_sync_cursor: nextCursor }).eq("id", acct.id);
         }
       } catch (itemErr: any) {
         console.error("Error syncing account item", acct.plaid_account_id, itemErr?.message);
       }
     }
-    console.log(`Synced ${synced}/${totalTx} transactions for user ${userId} (${failed} failed)`);
+    console.log(`Synced ${synced}/${totalTx} new transactions for user ${userId} (${failed} failed)`);
     res.json({ synced, total: totalTx });
   } catch (error: any) {
     const msg = error?.message || "Failed to sync transactions";
@@ -309,7 +326,7 @@ app.post("/api/transactions/sync", async (req: Request, res: Response) => {
     if (!userId || !accessToken || !startDate || !endDate) {
       return res.status(400).json({ error: "Missing required fields" });
     }
-    const transactions = await plaidService.getTransactions(accessToken);
+    const { transactions } = await plaidService.getTransactions(accessToken);
     let synced = 0;
     for (const tx of transactions) {
       const { error } = await supabase
