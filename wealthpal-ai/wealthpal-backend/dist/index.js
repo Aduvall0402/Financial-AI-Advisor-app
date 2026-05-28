@@ -243,7 +243,7 @@ app.post("/api/transactions/sync/:userId", async (req, res) => {
         const { userId } = req.params;
         const { data: accountData, error: accountError } = await supabase_1.default
             .from("accounts")
-            .select("id, plaid_access_token, plaid_account_id, plaid_sync_cursor")
+            .select("*")
             .eq("user_id", userId)
             .order("created_at", { ascending: false });
         if (accountError || !accountData?.length) {
