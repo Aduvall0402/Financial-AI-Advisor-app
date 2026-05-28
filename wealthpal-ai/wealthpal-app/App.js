@@ -990,18 +990,22 @@ export default function App() {
             todaySpent, yesterdaySpent, periodLabel, periodRange,
           }));
 
-          // Recent transactions for widget (most recent 15, spending only)
-          const recentTxs = allTxs
+          // All transactions from the most recent transaction day
+          const spendingTxs = allTxs
             .filter(tx => !isIncomeTx(tx))
-            .sort((a, b) => (b.transaction_date || '').localeCompare(a.transaction_date || ''))
-            .slice(0, 15)
-            .map(tx => ({
-              date: tx.transaction_date || '',
-              merchant: tx.merchant_name || tx.description || 'Unknown',
-              amount: parseFloat(tx.amount || 0),
-              category: getEffectiveCategory(tx) || 'OTHER',
-            }));
-          await AsyncStorage.setItem('widgetRecentTx', JSON.stringify(recentTxs));
+            .sort((a, b) => (b.transaction_date || '').localeCompare(a.transaction_date || ''));
+          const mostRecentDate = spendingTxs[0]?.transaction_date || '';
+          const dayTxs = mostRecentDate
+            ? spendingTxs
+                .filter(tx => tx.transaction_date === mostRecentDate)
+                .map(tx => ({
+                  date: tx.transaction_date || '',
+                  merchant: tx.merchant_name || tx.description || 'Unknown',
+                  amount: parseFloat(tx.amount || 0),
+                  category: getEffectiveCategory(tx) || 'OTHER',
+                }))
+            : [];
+          await AsyncStorage.setItem('widgetRecentTx', JSON.stringify(dayTxs));
         } catch (_) { /* widget update is non-critical */ }
       }
     } catch (e) { setSyncError('Network error — could not reach server'); setPlaidError('Network error'); }
