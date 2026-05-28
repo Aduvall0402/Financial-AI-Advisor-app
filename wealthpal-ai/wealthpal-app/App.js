@@ -1008,14 +1008,16 @@ export default function App() {
         else { setSyncError(''); setPlaidStatus(`Synced ${data.synced} transaction${data.synced !== 1 ? 's' : ''}`); setTimeout(() => setPlaidStatus(''), 4000); }
         const txRes = await apiCall(`/api/transactions/${userIdRef.current}`);
         const txData = txRes.ok ? await txRes.json() : {};
-        // Only recent + not yet reviewed (DB flag OR seen this session)
-        const reviewCutoff = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
-        const fresh = (txData.transactions || []).filter(tx =>
-          !isIncomeTx(tx) &&
-          !tx.reviewed &&
-          !reviewedInSessionRef.current.has(tx.id) &&
-          (tx.transaction_date || '') >= reviewCutoff
-        );
+        const allTxs = txData.transactions || [];
+        // Only show review for transactions newly inserted THIS sync
+        const newIds = new Set(data.newTxIds || []);
+        const fresh = newIds.size > 0
+          ? allTxs.filter(tx =>
+              newIds.has(tx.id) &&
+              !isIncomeTx(tx) &&
+              !reviewedInSessionRef.current.has(tx.id)
+            )
+          : [];
         if (fresh.length > 0) {
           setPostSyncTxs(fresh);
           setPostSyncIdx(0);

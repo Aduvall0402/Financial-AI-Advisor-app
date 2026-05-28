@@ -342,6 +342,7 @@ app.post("/api/transactions/sync/:userId", requireAuth, selfOnly, async (req, re
         let synced = 0;
         let failed = 0;
         let totalTx = 0;
+        const newTxIds = []; // IDs of transactions actually inserted this sync
         for (const acct of accountData) {
             if (!acct.plaid_access_token)
                 continue;
@@ -380,6 +381,7 @@ app.post("/api/transactions/sync/:userId", requireAuth, selfOnly, async (req, re
                     }
                     else if (inserted?.length) {
                         synced++;
+                        newTxIds.push(inserted[0].id);
                     }
                 }
                 // Save cursor so next sync only fetches new transactions from Plaid
@@ -392,7 +394,7 @@ app.post("/api/transactions/sync/:userId", requireAuth, selfOnly, async (req, re
             }
         }
         console.log(`Synced ${synced}/${totalTx} new transactions for user ${userId} (${failed} failed)`);
-        res.json({ synced, total: totalTx });
+        res.json({ synced, total: totalTx, newTxIds });
     }
     catch (error) {
         const msg = error?.message || "Failed to sync transactions";
