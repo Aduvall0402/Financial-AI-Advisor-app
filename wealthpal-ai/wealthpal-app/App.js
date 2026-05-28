@@ -431,6 +431,8 @@ export default function App() {
   const [bulkSelectMode, setBulkSelectMode] = useState(false);
   const [insightsCatFilter, setInsightsCatFilter] = useState('all');
   const [insightsCatDropdownVisible, setInsightsCatDropdownVisible] = useState(false);
+  const [insightsInfoVisible, setInsightsInfoVisible] = useState(false);
+  const [insightsChartTooltip, setInsightsChartTooltip] = useState(null);
 
   // More tab sub-section + group share loading — MUST be declared here (before any early returns)
   const [moreSection, setMoreSection] = useState(null);
@@ -2310,43 +2312,45 @@ export default function App() {
       );
     }
 
-    // ── Score calculation ──────────────────────────────
-    const filteredTx = getFilteredTx();
-    const total = filteredTx.reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+    // ── Score components ────────────────────────────────
     const rangeDays = { '7d': 7, '30d': 30, '3m': 90, '6m': 180, 'all': 90 }[insightsRange] || 30;
-    const dailyAvg = rangeDays > 0 ? total / rangeDays : 0;
+    const periodStart = getPeriodStart('paycycle');
+    const freqDays = userPayday?.frequency === 'weekly' ? 7 : userPayday?.frequency === 'biweekly' ? 14 : 30;
+    const budgetedCats = new Set(budgets.map(b => b.category));
+    const totalBudget = budgets.reduce((s, b) => s + parseFloat(b.monthly_limit || 0), 0);
 
-    // 1. Budget Adherence (0–35): spent vs limit for budgeted categories this period
-    let budgetAdherenceScore = 20; // neutral when no budgets
+    // Spending in budgeted categories this pay period
+    const periodBudgetedSpend = transactions
+      .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= periodStart && budgetedCats.has(getEffectiveCategory(tx)))
+      .reduce((s, tx) => s + parseFloat(tx.amount||0), 0);
+
+    // All spending this range (for trend/daily avg)
+    const currCutoff = new Date(Date.now() - rangeDays * 86400000).toISOString().split('T')[0];
+    const prevCutoff = new Date(Date.now() - 2 * rangeDays * 86400000).toISOString().split('T')[0];
+    const spendingTxsCurr = transactions.filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= currCutoff);
+    const spendingTxsPrev = transactions.filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= prevCutoff && (tx.transaction_date||'') < currCutoff);
+    const totalCurr = spendingTxsCurr.reduce((s, tx) => s + parseFloat(tx.amount||0), 0);
+    const totalPrev = spendingTxsPrev.reduce((s, tx) => s + parseFloat(tx.amount||0), 0);
+    const dailyAvg = totalCurr / rangeDays;
+
+    // 1. Budget Adherence (0-35)
+    let budgetAdherenceScore = 20;
     let budgetAdherencePct = null;
-    if (budgets.length > 0) {
-      const periodStart = getPeriodStart('paycycle');
-      const budgetedCats = new Set(budgets.map(b => b.category));
-      const periodSpent = transactions
-        .filter(tx => !isIncomeTx(tx) && (tx.transaction_date || '') >= periodStart && budgetedCats.has(getEffectiveCategory(tx)))
-        .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
-      const totalLimit = budgets.reduce((s, b) => s + parseFloat(b.monthly_limit || 0), 0);
-      if (totalLimit > 0) {
-        const ratio = periodSpent / totalLimit;
-        budgetAdherencePct = Math.round(ratio * 100);
-        if (ratio <= 0.75) budgetAdherenceScore = 35;
-        else if (ratio <= 0.90) budgetAdherenceScore = 30;
-        else if (ratio <= 1.00) budgetAdherenceScore = 22;
-        else if (ratio <= 1.15) budgetAdherenceScore = 12;
-        else budgetAdherenceScore = 0;
-      }
+    if (budgets.length > 0 && totalBudget > 0) {
+      const ratio = periodBudgetedSpend / totalBudget;
+      budgetAdherencePct = Math.round(ratio * 100);
+      if (ratio <= 0.75) budgetAdherenceScore = 35;
+      else if (ratio <= 0.90) budgetAdherenceScore = 30;
+      else if (ratio <= 1.00) budgetAdherenceScore = 22;
+      else if (ratio <= 1.15) budgetAdherenceScore = 12;
+      else budgetAdherenceScore = 0;
     }
 
-    // 2. Spending Trend (0–25): this period vs previous same-length period
-    const prevCutoff = new Date(Date.now() - 2 * rangeDays * 86400000).toISOString().split('T')[0];
-    const currCutoff = new Date(Date.now() - rangeDays * 86400000).toISOString().split('T')[0];
-    const prevTotal = transactions
-      .filter(tx => !isIncomeTx(tx) && (tx.transaction_date || '') >= prevCutoff && (tx.transaction_date || '') < currCutoff)
-      .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+    // 2. Spending Trend (0-25)
     let trendScore = 18;
     let trendPct = null;
-    if (prevTotal > 0 && total > 0) {
-      const change = (total - prevTotal) / prevTotal;
+    if (totalPrev > 0 && totalCurr > 0) {
+      const change = (totalCurr - totalPrev) / totalPrev;
       trendPct = Math.round(change * 100);
       if (change <= -0.10) trendScore = 25;
       else if (change <= 0.02) trendScore = 20;
@@ -2355,25 +2359,24 @@ export default function App() {
       else trendScore = 2;
     }
 
-    // 3. Budget Coverage (0–20): % of spending under a budget category
+    // 3. Budget Coverage (0-20)
     let coverageScore = 8;
     let coveragePct = null;
-    if (transactions.length > 0) {
-      const budgetedCats = new Set(budgets.map(b => b.category));
-      const coveredSpend = filteredTx.filter(tx => budgetedCats.has(getEffectiveCategory(tx)))
-        .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
-      coveragePct = total > 0 ? Math.round((coveredSpend / total) * 100) : 0;
+    const coveredSpend = spendingTxsCurr.filter(tx => budgetedCats.has(getEffectiveCategory(tx)))
+      .reduce((s, tx) => s + parseFloat(tx.amount||0), 0);
+    if (totalCurr > 0) {
+      coveragePct = Math.round((coveredSpend / totalCurr) * 100);
       coverageScore = Math.round((coveragePct / 100) * 20);
     }
 
-    // 4. Consistency (0–20): low day-to-day spend variance = consistent
+    // 4. Consistency (0-20)
     let consistencyScore = 14;
     const byDay = {};
-    filteredTx.forEach(tx => { const d = tx.transaction_date; if (d) byDay[d] = (byDay[d] || 0) + parseFloat(tx.amount || 0); });
-    const dailyAmounts = Object.values(byDay);
-    if (dailyAmounts.length > 3) {
-      const dAvg = dailyAmounts.reduce((a, b) => a + b, 0) / dailyAmounts.length;
-      const cv = dAvg > 0 ? Math.sqrt(dailyAmounts.reduce((s, v) => s + Math.pow(v - dAvg, 2), 0) / dailyAmounts.length) / dAvg : 0;
+    spendingTxsCurr.forEach(tx => { const d = tx.transaction_date; if (d) byDay[d] = (byDay[d]||0) + parseFloat(tx.amount||0); });
+    const dayAmts = Object.values(byDay);
+    if (dayAmts.length > 3) {
+      const dAvg = dayAmts.reduce((a,b)=>a+b,0)/dayAmts.length;
+      const cv = dAvg > 0 ? Math.sqrt(dayAmts.reduce((s,v)=>s+Math.pow(v-dAvg,2),0)/dayAmts.length)/dAvg : 0;
       if (cv < 0.5) consistencyScore = 20;
       else if (cv < 0.9) consistencyScore = 16;
       else if (cv < 1.4) consistencyScore = 10;
@@ -2385,30 +2388,99 @@ export default function App() {
     const scoreLabel = healthScore >= 85 ? 'Excellent' : healthScore >= 70 ? 'Good' : healthScore >= 50 ? 'Fair' : 'Needs Attention';
 
     // ── SVG Gauge ──────────────────────────────────────
-    const gaugeSize = 180;
-    const strokeW = 14;
+    const gaugeSize = 170;
+    const strokeW = 13;
     const r = (gaugeSize - strokeW) / 2;
-    const cx = gaugeSize / 2;
-    const cy = gaugeSize / 2;
+    const cx = gaugeSize / 2, cy = gaugeSize / 2;
     const toRad = deg => (deg * Math.PI) / 180;
-    const startDeg = 135; // bottom-left
-    const sweep = 270;   // total degrees
+    const startDeg = 135, sweep = 270;
     const endDeg = startDeg + (healthScore / 100) * sweep;
-    const sx = cx + r * Math.cos(toRad(startDeg));
-    const sy = cy + r * Math.sin(toRad(startDeg));
-    const ex = cx + r * Math.cos(toRad(endDeg));
-    const ey = cy + r * Math.sin(toRad(endDeg));
+    const sx = cx + r * Math.cos(toRad(startDeg)), sy = cy + r * Math.sin(toRad(startDeg));
+    const ex = cx + r * Math.cos(toRad(endDeg)), ey = cy + r * Math.sin(toRad(endDeg));
     const largeArc = (healthScore / 100) * sweep > 180 ? 1 : 0;
 
-    // ── Category data ──────────────────────────────────
-    const catData = getCatData();
+    // ── Coaching tips ──────────────────────────────────
+    const components = [
+      { key: 'budget', label: 'Budget', score: budgetAdherenceScore, max: 35 },
+      { key: 'trend',  label: 'Trend',  score: trendScore, max: 25 },
+      { key: 'coverage', label: 'Coverage', score: coverageScore, max: 20 },
+      { key: 'consistency', label: 'Consistency', score: consistencyScore, max: 20 },
+    ];
+    const getTip = (key) => {
+      if (key === 'budget') {
+        if (!budgets.length) return { title: 'Set up budgets', body: 'Budget Adherence is worth 35 points but requires budgets. Go to the Budget tab to create some.' };
+        const overBudget = budgets.map(b => {
+          const sp = transactions.filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= periodStart && getEffectiveCategory(tx) === b.category).reduce((s,tx)=>s+parseFloat(tx.amount||0),0);
+          return { label: PLAID_CATEGORIES.find(c=>c.key===b.category)?.label||b.category, over: sp - parseFloat(b.monthly_limit||0) };
+        }).filter(b => b.over > 0).sort((a,b)=>b.over-a.over)[0];
+        return overBudget
+          ? { title: `Overspending on ${overBudget.label}`, body: `You're $${fmtMoney(overBudget.over)} over your ${overBudget.label} budget this period. Cutting back here has the most impact on your score.` }
+          : { title: 'Stay under budget', body: `You've used ${budgetAdherencePct}% of your budget. Keep spending below 90% to score full points here.` };
+      }
+      if (key === 'trend') {
+        if (trendPct === null) return { title: 'Not enough history', body: 'Sync a few weeks of transactions so we can compare this period to last period.' };
+        return trendPct > 0
+          ? { title: `Spending up ${trendPct}% vs last period`, body: `Your spending rose by $${fmtMoney(Math.abs(totalCurr - totalPrev))}. Try to match or beat last period's total of $${fmtMoney(totalPrev)}.` }
+          : { title: 'Spending is trending down', body: 'Great work! Keep it up to maintain a high trend score.' };
+      }
+      if (key === 'coverage') {
+        const uncovered = spendingTxsCurr.filter(tx => !budgetedCats.has(getEffectiveCategory(tx)));
+        const topUncovered = Object.entries(uncovered.reduce((m, tx) => { const c = getEffectiveCategory(tx)||'Other'; m[c]=(m[c]||0)+parseFloat(tx.amount||0); return m; }, {})).sort(([,a],[,b])=>b-a)[0];
+        return topUncovered
+          ? { title: `Add a budget for ${PLAID_CATEGORIES.find(c=>c.key===topUncovered[0])?.label||topUncovered[0]}`, body: `$${fmtMoney(topUncovered[1])} of untracked spending this period. Creating a budget for this category gives you visibility and boosts your score.` }
+          : { title: 'Good coverage', body: 'Most of your spending is covered by budgets. Keep adding budgets as your spending patterns change.' };
+      }
+      if (key === 'consistency') {
+        return { title: 'Reduce spending spikes', body: 'Large one-off purchases hurt this score. When possible, spread big purchases across multiple smaller transactions or plan them in advance.' };
+      }
+      return { title: '', body: '' };
+    };
+    const weakComponents = [...components].sort((a,b) => (a.score/a.max) - (b.score/b.max)).slice(0, 2).filter(c => (c.score/c.max) < 0.85);
+
+    // ── Spending pace chart (pay period) ───────────────
+    const paceLabels = [], actualPace = [], budgetPace = [], rawDaily = [];
+    const periodStartDate = new Date(periodStart + 'T00:00:00');
+    const todayDate = new Date(); todayDate.setHours(0,0,0,0);
+    const daysElapsed = Math.min(freqDays, Math.round((todayDate - periodStartDate) / 86400000) + 1);
+    let runningSpend = 0;
+    const paceRef = { startX: 0, startY: 0, scrollX: 0 };
+    for (let i = 0; i < daysElapsed; i++) {
+      const d = new Date(periodStartDate); d.setDate(d.getDate() + i);
+      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      const dayAmt = transactions.filter(tx => !isIncomeTx(tx) && tx.transaction_date === key && (budgetedCats.size === 0 || budgetedCats.has(getEffectiveCategory(tx)))).reduce((s,tx)=>s+parseFloat(tx.amount||0),0);
+      runningSpend += dayAmt;
+      rawDaily.push(dayAmt);
+      actualPace.push(runningSpend);
+      budgetPace.push(totalBudget > 0 ? Math.round((totalBudget / freqDays) * (i + 1)) : 0);
+      paceLabels.push(freqDays <= 7 ? ['Su','M','T','W','Th','F','Sa'][d.getDay()] : (i % Math.ceil(daysElapsed/6) === 0 ? String(d.getDate()) : ''));
+    }
+    const paceMax = Math.max(...actualPace, ...budgetPace, 1);
+    const paceChartMax = niceChartMax([paceMax]);
+    const paceChartH = 220;
+    const paceChartW = Math.max(SW - 64, daysElapsed * 30);
+    const paceScrollable = daysElapsed > 10;
+    const selectPacePoint = (touchX) => {
+      const n = actualPace.length; if (!n) return;
+      const contentX = touchX + paceRef.scrollX;
+      const yW = 46, rp = 32;
+      const idx = Math.min(n-1, Math.max(0, Math.round((contentX - yW) / (paceChartW - yW - rp) * (n-1))));
+      setInsightsChartTooltip(prev => prev?.index === idx ? null : { index: idx, actual: actualPace[idx], daily: rawDaily[idx], pace: budgetPace[idx] });
+    };
+
+    // ── Category data (budgeted cats only) ─────────────
+    const catSpend = {};
+    spendingTxsCurr.forEach(tx => {
+      const cat = getEffectiveCategory(tx);
+      if (cat && budgetedCats.has(cat)) catSpend[cat] = (catSpend[cat]||0) + parseFloat(tx.amount||0);
+    });
+    const catData = Object.entries(catSpend).sort(([,a],[,b])=>b-a);
 
     return (
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshAll} tintColor={C.accent} />}
       >
-        {/* Range + category filter */}
-        <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
+        {/* Header row: date range + info button */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
           <TouchableOpacity onPress={() => setInsightsDropdownVisible(true)}
             style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: C.surface, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 13, borderWidth: 1, borderColor: C.border }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -2417,59 +2489,48 @@ export default function App() {
             </View>
             <Text style={{ color: C.textSub, fontSize: 18, lineHeight: 20 }}>▾</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => setInsightsCatDropdownVisible(true)}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: insightsCatFilter !== 'all' ? C.accent + '22' : C.surface, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 13, borderWidth: 1, borderColor: insightsCatFilter !== 'all' ? C.accent : C.border }}>
-            <Text style={{ fontSize: 14 }}>⊟</Text>
-            <Text style={{ color: insightsCatFilter !== 'all' ? C.accent : C.textSub, fontSize: 13, fontWeight: insightsCatFilter !== 'all' ? '700' : '400' }}>
-              {insightsCatFilter === 'all' ? 'Category' : (PLAID_CATEGORIES.find(p => p.key === insightsCatFilter)?.label || insightsCatFilter.replace(/_/g,' ')).slice(0, 14)}
-            </Text>
-            <Text style={{ color: insightsCatFilter !== 'all' ? C.accent : C.textSub, fontSize: 16, lineHeight: 18 }}>▾</Text>
+          <TouchableOpacity onPress={() => setInsightsInfoVisible(true)}
+            style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, justifyContent: 'center', alignItems: 'center' }}>
+            <Text style={{ color: C.textSub, fontSize: 16, fontWeight: '700' }}>?</Text>
           </TouchableOpacity>
         </View>
 
-        {/* ── Financial Health Score Card ── */}
+        {/* ── Score card ── */}
         <View style={{ backgroundColor: C.surface, borderRadius: 22, padding: 20, marginBottom: 14, borderWidth: 1, borderColor: C.border }}>
           <Text style={{ color: C.textSub, fontSize: 11, fontWeight: '700', letterSpacing: 1, marginBottom: 12 }}>FINANCIAL HEALTH SCORE</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            {/* Gauge */}
             <Svg width={gaugeSize} height={gaugeSize}>
-              {/* Background track */}
               <Circle cx={cx} cy={cy} r={r} fill="none" stroke={C.border} strokeWidth={strokeW} strokeLinecap="round"
-                strokeDasharray={`${(sweep / 360) * 2 * Math.PI * r} ${2 * Math.PI * r}`}
-                strokeDashoffset={-(startDeg / 360) * 2 * Math.PI * r}
-                transform={`rotate(0, ${cx}, ${cy})`}
+                strokeDasharray={`${(sweep/360)*2*Math.PI*r} ${2*Math.PI*r}`}
+                strokeDashoffset={-(startDeg/360)*2*Math.PI*r}
               />
-              {/* Score arc */}
               {healthScore > 0 && (
-                <Path
-                  d={`M ${sx} ${sy} A ${r} ${r} 0 ${largeArc} 1 ${ex} ${ey}`}
-                  fill="none" stroke={scoreColor} strokeWidth={strokeW} strokeLinecap="round"
-                />
+                <Path d={`M ${sx} ${sy} A ${r} ${r} 0 ${largeArc} 1 ${ex} ${ey}`}
+                  fill="none" stroke={scoreColor} strokeWidth={strokeW} strokeLinecap="round" />
               )}
-              <SvgText x={cx} y={cy - 10} textAnchor="middle" fontSize="44" fontWeight="bold" fill={C.text}>{healthScore}</SvgText>
-              <SvgText x={cx} y={cy + 16} textAnchor="middle" fontSize="13" fontWeight="600" fill={scoreColor}>{scoreLabel}</SvgText>
-              <SvgText x={cx} y={cy + 34} textAnchor="middle" fontSize="10" fill={C.textMuted}>out of 100</SvgText>
+              <SvgText x={cx} y={cy - 12} textAnchor="middle" fontSize="44" fontWeight="bold" fill={C.text}>{healthScore}</SvgText>
+              <SvgText x={cx} y={cy + 14} textAnchor="middle" fontSize="13" fontWeight="600" fill={scoreColor}>{scoreLabel}</SvgText>
+              <SvgText x={cx} y={cy + 32} textAnchor="middle" fontSize="10" fill={C.textMuted}>out of 100</SvgText>
             </Svg>
-
-            {/* Component breakdown */}
             <View style={{ flex: 1, marginLeft: 16, gap: 10 }}>
               {[
-                { label: 'Budget', score: budgetAdherenceScore, max: 35, hint: budgetAdherencePct != null ? `${budgetAdherencePct}% of limit used` : 'No budgets set' },
-                { label: 'Trend', score: trendScore, max: 25, hint: trendPct != null ? `${trendPct > 0 ? '+' : ''}${trendPct}% vs prior period` : 'Not enough history' },
-                { label: 'Coverage', score: coverageScore, max: 20, hint: coveragePct != null ? `${coveragePct}% of spend tracked` : 'Add budgets' },
-                { label: 'Consistency', score: consistencyScore, max: 20, hint: 'Day-to-day spending variance' },
+                { label: 'Budget', score: budgetAdherenceScore, max: 35, hint: budgetAdherencePct != null ? `${budgetAdherencePct}% of limit` : 'No budgets set' },
+                { label: 'Trend', score: trendScore, max: 25, hint: trendPct != null ? `${trendPct > 0 ? '+' : ''}${trendPct}% vs prior\` : 'Not enough history' },
+                { label: 'Coverage', score: coverageScore, max: 20, hint: coveragePct != null ? `${coveragePct}% tracked` : 'Add budgets' },
+                { label: 'Consistency', score: consistencyScore, max: 20, hint: 'Daily variance' },
               ].map(({ label, score, max, hint }) => {
                 const pct = Math.round((score / max) * 100);
-                const color = pct >= 80 ? C.green : pct >= 55 ? C.accent : pct >= 35 ? C.amber : C.red;
+                const col = pct >= 80 ? C.green : pct >= 55 ? C.accent : pct >= 35 ? C.amber : C.red;
                 return (
                   <View key={label}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
                       <Text style={{ color: C.textSub, fontSize: 11, fontWeight: '600' }}>{label}</Text>
-                      <Text style={{ color, fontSize: 11, fontWeight: '700' }}>{score}/{max}</Text>
+                      <Text style={{ color: col, fontSize: 11, fontWeight: '700' }}>{score}/{max}</Text>
                     </View>
                     <View style={{ height: 4, backgroundColor: C.border, borderRadius: 2 }}>
-                      <View style={{ height: 4, width: `${pct}%`, backgroundColor: color, borderRadius: 2 }} />
+                      <View style={{ height: 4, width: `${pct}%`, backgroundColor: col, borderRadius: 2 }} />
                     </View>
+                    <Text style={{ color: C.textMuted, fontSize: 9, marginTop: 2 }}>{hint}</Text>
                   </View>
                 );
               })}
@@ -2477,105 +2538,120 @@ export default function App() {
           </View>
         </View>
 
-        {/* ── 4 Metric Cards ── */}
-        <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
-          <View style={[s.statCard, { flex: 1 }]}>
-            <Text style={s.statLabel}>Total Spent</Text>
-            <Text style={[s.statVal, { fontSize: 18 }]}>${fmtMoney(total)}</Text>
-            <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 2 }}>{filteredTx.length} transactions</Text>
-          </View>
-          <View style={[s.statCard, { flex: 1 }]}>
-            <Text style={s.statLabel}>Daily Avg</Text>
-            <Text style={[s.statVal, { fontSize: 18 }]}>${fmtMoney(dailyAvg)}</Text>
-            <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 2 }}>per day</Text>
-          </View>
-        </View>
-        <View style={{ flexDirection: 'row', gap: 10, marginBottom: 20 }}>
-          {(() => {
-            const topCat = catData?.[0];
-            const topCatLabel = topCat ? (PLAID_CATEGORIES.find(p => p.key === topCat[0])?.label || topCat[0].replace(/_/g,' ')) : null;
-            return topCat ? (
-              <View style={[s.statCard, { flex: 1 }]}>
-                <Text style={s.statLabel}>Top Category</Text>
-                <Text style={[s.statVal, { fontSize: 15 }]} numberOfLines={1}>{topCatLabel}</Text>
-                <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 2 }}>${fmtMoney(topCat[1])} spent</Text>
-              </View>
-            ) : <View style={{ flex: 1 }} />;
-          })()}
-          <View style={[s.statCard, { flex: 1 }]}>
-            <Text style={s.statLabel}>vs Prior Period</Text>
-            {trendPct != null ? (
-              <>
-                <Text style={[s.statVal, { fontSize: 18, color: trendPct <= 0 ? C.green : C.red }]}>
-                  {trendPct > 0 ? '+' : ''}{trendPct}%
-                </Text>
-                <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 2 }}>{trendPct <= 0 ? 'spending down ↓' : 'spending up ↑'}</Text>
-              </>
-            ) : (
-              <Text style={{ color: C.textMuted, fontSize: 12, marginTop: 4 }}>Not enough data</Text>
-            )}
-          </View>
-        </View>
-
-        {/* ── Spending by Category ── */}
-        {catData && catData.length > 0 && (
-          <View style={s.section}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-              <Text style={s.sectionTitle}>Spending by Category</Text>
-              <View style={{ flexDirection: 'row', backgroundColor: C.surface2, borderRadius: 10, borderWidth: 1, borderColor: C.border, overflow: 'hidden' }}>
-                {[['bars', '▤'], ['pie', '◔']].map(([type, icon]) => (
-                  <TouchableOpacity key={type} onPress={() => setChartType(type === 'bars' ? 'line' : 'pie')}
-                    style={{ paddingHorizontal: 14, paddingVertical: 6, backgroundColor: (type === 'bars' ? chartType !== 'pie' : chartType === 'pie') ? C.accent : 'transparent' }}>
-                    <Text style={{ color: (type === 'bars' ? chartType !== 'pie' : chartType === 'pie') ? '#fff' : C.textSub, fontSize: 13, fontWeight: '700' }}>{icon}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-
-            {chartType === 'pie' ? (
-              <View style={{ overflow: 'visible' }}>
-                <PieChart
-                  data={catData.map(([cat, amt], i) => ({
-                    name: (PLAID_CATEGORIES.find(p => p.key === cat)?.label || cat.replace(/_/g, ' ')).slice(0, 16),
-                    population: Math.round(amt * 100) / 100,
-                    color: CAT_COLORS[i % CAT_COLORS.length],
-                    legendFontColor: C.textSub, legendFontSize: 12,
-                  }))}
-                  width={SW - 48} height={280} chartConfig={CHART_CFG} accessor="population"
-                  backgroundColor="transparent" paddingLeft="12" absolute={false}
-                />
-              </View>
-            ) : (
-              catData.map(([cat, amt], i) => {
-                const pctOfTotal = total > 0 ? Math.round((amt / total) * 100) : 0;
-                const budgetForCat = budgets.find(b => b.category === cat);
-                const budgetLimit = budgetForCat ? parseFloat(budgetForCat.monthly_limit || 0) : 0;
-                const pctOfBudget = budgetLimit > 0 ? Math.min(100, Math.floor((amt / budgetLimit) * 100)) : null;
-                const barPct = pctOfBudget !== null ? pctOfBudget : pctOfTotal;
-                const barColor = pctOfBudget !== null
-                  ? (amt >= budgetLimit ? C.red : pctOfBudget >= 75 ? '#1EDFD5' : CAT_COLORS[i % CAT_COLORS.length])
-                  : CAT_COLORS[i % CAT_COLORS.length];
-                const catTxCount = filteredTx.filter(tx => getEffectiveCategory(tx) === cat).length;
-                return (
-                  <View key={cat} style={s.insightCard}>
-                    <View style={[s.insightDot, { backgroundColor: barColor, width: 12, height: 12, borderRadius: 6 }]} />
-                    <View style={{ flex: 1 }}>
-                      <View style={s.catInfo}>
-                        <Text style={s.catName}>{PLAID_CATEGORIES.find(p => p.key === cat)?.label || cat.replace(/_/g,' ')}</Text>
-                        <Text style={s.catAmt}>${fmtMoney(amt)}</Text>
-                      </View>
-                      <View style={s.barBg}>
-                        <View style={[s.bar, { width: `${barPct}%`, backgroundColor: barColor }]} />
-                      </View>
-                      <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 4 }}>
-                        {catTxCount} transaction{catTxCount !== 1 ? 's' : ''}{pctOfBudget !== null ? ` · ${pctOfBudget}% of $${fmtMoney(budgetLimit)} budget` : ` · ${pctOfTotal}% of total`}
-                      </Text>
-                    </View>
-                    <Text style={[s.pct, { color: barColor }]}>{pctOfBudget !== null ? `${pctOfBudget}%` : `${pctOfTotal}%`}</Text>
+        {/* ── Coaching tips ── */}
+        {weakComponents.length > 0 && (
+          <View style={{ marginBottom: 14 }}>
+            <Text style={{ color: C.textSub, fontSize: 11, fontWeight: '700', letterSpacing: 1, marginBottom: 10 }}>HOW TO IMPROVE YOUR SCORE</Text>
+            {weakComponents.map(c => {
+              const tip = getTip(c.key);
+              const col = (c.score/c.max) < 0.45 ? C.red : C.amber;
+              return (
+                <View key={c.key} style={{ backgroundColor: col + '14', borderRadius: 14, padding: 14, marginBottom: 8, borderLeftWidth: 3, borderLeftColor: col }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <Text style={{ color: col, fontSize: 11, fontWeight: '800', textTransform: 'uppercase' }}>{c.label} — {c.score}/{c.max} pts</Text>
                   </View>
-                );
-              })
-            )}
+                  <Text style={{ color: C.text, fontSize: 13, fontWeight: '700', marginBottom: 3 }}>{tip.title}</Text>
+                  <Text style={{ color: C.textSub, fontSize: 12, lineHeight: 18 }}>{tip.body}</Text>
+                </View>
+              );
+            })}
+          </View>
+        )}
+
+        {/* ── Spending pace chart ── */}
+        {actualPace.length > 1 && (
+          <View style={{ backgroundColor: C.surface, borderRadius: 18, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: C.border }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <View>
+                <Text style={{ color: C.text, fontSize: 14, fontWeight: '700' }}>Spending This Period</Text>
+                <Text style={{ color: C.textMuted, fontSize: 11, marginTop: 1 }}>
+                  {totalBudget > 0 ? `Blue = actual · Red = budget pace` : 'Cumulative spending'}
+                </Text>
+              </View>
+              <Text style={{ color: periodBudgetedSpend > totalBudget && totalBudget > 0 ? C.red : C.green, fontSize: 13, fontWeight: '700' }}>
+                ${fmtMoney(periodBudgetedSpend)}{totalBudget > 0 ? ` / $${fmtMoney(totalBudget)}` : ''}
+              </Text>
+            </View>
+            {/* Tooltip */}
+            <View style={{ height: 28, alignItems: 'center', justifyContent: 'center', marginBottom: 2 }}>
+              {insightsChartTooltip && (
+                <View style={{ backgroundColor: C.accent + '22', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1, borderColor: C.accent }}>
+                  <Text style={{ color: C.accent, fontSize: 12, fontWeight: '700' }}>
+                    {paceLabels[insightsChartTooltip.index] || `Day ${insightsChartTooltip.index + 1}`}: ${fmtMoney(insightsChartTooltip.daily)} today · ${fmtMoney(insightsChartTooltip.actual)} total
+                  </Text>
+                </View>
+              )}
+            </View>
+            <View style={{ position: 'relative', overflow: 'hidden' }} collapsable={false}
+              onTouchStart={e => { paceRef.startX = e.nativeEvent.pageX; paceRef.startY = e.nativeEvent.pageY; }}
+              onTouchEnd={e => {
+                const dx = Math.abs(e.nativeEvent.pageX - paceRef.startX);
+                const dy = Math.abs(e.nativeEvent.pageY - paceRef.startY);
+                if (dx < 12 && dy < 12) selectPacePoint(e.nativeEvent.locationX);
+              }}
+            >
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={paceScrollable}
+                bounces={false} overScrollMode="never" scrollEventThrottle={32}
+                onScroll={e => { paceRef.scrollX = e.nativeEvent.contentOffset.x; }}>
+                <LineChart
+                  data={{ labels: paceLabels, datasets: [
+                    { data: actualPace.map(v => Math.max(0.01, v)), color: () => C.accent, strokeWidth: 2 },
+                    ...(totalBudget > 0 ? [{ data: budgetPace.map(v => Math.max(0.01, v)), withDots: false, color: () => C.red, strokeWidth: 1.5 }] : []),
+                    { data: actualPace.map(() => paceChartMax), withDots: false, color: () => 'rgba(0,0,0,0)' },
+                    { data: actualPace.map(() => 0.01), withDots: false, color: () => 'rgba(0,0,0,0)' },
+                  ]}}
+                  width={paceChartW} height={paceChartH} bezier
+                  chartConfig={{ ...CHART_CFG, decimalPlaces: 0, ...(paceScrollable ? { paddingLeft: 50 } : {}) }}
+                  formatYLabel={paceScrollable ? () => '' : fmtYLabel}
+                  style={{ borderRadius: 10 }} withInnerLines={false}
+                  withHorizontalLabels={!paceScrollable}
+                  yAxisLabel="" yAxisSuffix="" segments={4}
+                  onDataPointClick={({ index }) => {
+                    setInsightsChartTooltip(prev => prev?.index === index ? null : { index, actual: actualPace[index], daily: rawDaily[index], pace: budgetPace[index] });
+                  }}
+                />
+              </ScrollView>
+              {paceScrollable && (
+                <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: 46, height: 190, backgroundColor: C.surface, justifyContent: 'space-between', paddingTop: 8, paddingBottom: 8, alignItems: 'flex-end', paddingRight: 4 }}>
+                  {[paceChartMax, paceChartMax*0.75, paceChartMax*0.5, paceChartMax*0.25, 0].map((v, i) => (
+                    <Text key={i} style={{ color: C.textMuted, fontSize: 9 }}>{fmtYLabel(String(Math.round(v)))}</Text>
+                  ))}
+                </View>
+              )}
+            </View>
+          </View>
+        )}
+
+        {/* ── Spending by Category (budgeted cats only) ── */}
+        {catData.length > 0 && (
+          <View style={s.section}>
+            <Text style={[s.sectionTitle, { marginBottom: 14 }]}>Spending by Category</Text>
+            {catData.map(([cat, amt], i) => {
+              const budgetForCat = budgets.find(b => b.category === cat);
+              const budgetLimit = budgetForCat ? parseFloat(budgetForCat.monthly_limit || 0) : 0;
+              const pctOfBudget = budgetLimit > 0 ? Math.min(100, Math.floor((amt / budgetLimit) * 100)) : null;
+              const barColor = pctOfBudget != null
+                ? (amt >= budgetLimit ? C.red : pctOfBudget >= 75 ? '#1EDFD5' : CAT_COLORS[i % CAT_COLORS.length])
+                : CAT_COLORS[i % CAT_COLORS.length];
+              return (
+                <View key={cat} style={s.insightCard}>
+                  <View style={[s.insightDot, { backgroundColor: barColor, width: 12, height: 12, borderRadius: 6 }]} />
+                  <View style={{ flex: 1 }}>
+                    <View style={s.catInfo}>
+                      <Text style={s.catName}>{PLAID_CATEGORIES.find(p => p.key === cat)?.label || cat.replace(/_/g,' ')}</Text>
+                      <Text style={s.catAmt}>${fmtMoney(amt)}</Text>
+                    </View>
+                    <View style={s.barBg}>
+                      <View style={[s.bar, { width: `${pctOfBudget ?? Math.round((amt/totalCurr)*100)}%`, backgroundColor: barColor }]} />
+                    </View>
+                    <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 4 }}>
+                      {pctOfBudget != null ? `${pctOfBudget}% of $${fmtMoney(budgetLimit)} budget` : `${Math.round((amt/totalCurr)*100)}% of total`}
+                    </Text>
+                  </View>
+                  <Text style={[s.pct, { color: barColor }]}>{pctOfBudget != null ? `${pctOfBudget}%` : `${Math.round((amt/totalCurr)*100)}%`}</Text>
+                </View>
+              );
+            })}
           </View>
         )}
 
@@ -2587,7 +2663,7 @@ export default function App() {
             <Text style={{ fontSize: 24 }}>💡</Text>
             <View style={{ flex: 1 }}>
               <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700', marginBottom: 2 }}>Set up budgets to unlock your full score</Text>
-              <Text style={{ color: C.textSub, fontSize: 12 }}>Budget Adherence and Coverage are worth up to 55 points. Tap to set up.</Text>
+              <Text style={{ color: C.textSub, fontSize: 12 }}>Budget Adherence and Coverage are worth up to 55 points.</Text>
             </View>
             <Text style={{ color: C.accent, fontSize: 18 }}>›</Text>
           </TouchableOpacity>
@@ -2598,9 +2674,6 @@ export default function App() {
     );
   };
 
-  // ════════════════════════════════════════════════════
-  // TRANSACTIONS TAB
-  // ════════════════════════════════════════════════════
   const renderTransactions = () => (
     <View style={{ flex: 1 }}>
       <View style={s.txTopBar}>
@@ -4418,6 +4491,35 @@ export default function App() {
             ))}
             <TouchableOpacity style={[s.btn, { marginTop: 16 }]} onPress={() => setCalendarDayDetail(null)}>
               <Text style={s.btnText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Insights Score Info Modal */}
+      <Modal visible={insightsInfoVisible} animationType="slide" transparent onRequestClose={() => setInsightsInfoVisible(false)}>
+        <View style={s.modalOverlay}>
+          <View style={s.modalCard}>
+            <Text style={s.modalTitle}>How Your Score Works</Text>
+            <Text style={{ color: C.textSub, fontSize: 13, marginBottom: 18 }}>
+              Your Financial Health Score (0–100) is made up of four components:
+            </Text>
+            {[
+              { label: 'Budget Adherence', max: 35, color: C.green, desc: 'Compares your spending in budgeted categories to your budget limits for the current pay period. Under 75% of your limit = full points. Over your limit = 0 points.' },
+              { label: 'Spending Trend', max: 25, color: C.accent, desc: 'Compares your total spending this period to the previous same-length period. Spending less than before = full points. Spending 25%+ more = near 0.' },
+              { label: 'Budget Coverage', max: 20, color: C.amber, desc: 'The percentage of your total spending that falls within a category you\'ve budgeted for. 100% covered = full points. This rewards you for setting up thorough budgets.' },
+              { label: 'Consistency', max: 20, color: '#8b5cf6', desc: 'Measures how evenly distributed your daily spending is (coefficient of variation). Steady day-to-day habits = full points. Large unpredictable spikes = lower score.' },
+            ].map(({ label, max, color, desc }) => (
+              <View key={label} style={{ marginBottom: 16, padding: 12, backgroundColor: C.bg, borderRadius: 12, borderWidth: 1, borderColor: C.border }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <Text style={{ color, fontSize: 13, fontWeight: '800' }}>{label}</Text>
+                  <Text style={{ color: C.textMuted, fontSize: 12 }}>up to {max} pts</Text>
+                </View>
+                <Text style={{ color: C.textSub, fontSize: 12, lineHeight: 18 }}>{desc}</Text>
+              </View>
+            ))}
+            <TouchableOpacity style={s.btn} onPress={() => setInsightsInfoVisible(false)}>
+              <Text style={s.btnText}>Got it</Text>
             </TouchableOpacity>
           </View>
         </View>
