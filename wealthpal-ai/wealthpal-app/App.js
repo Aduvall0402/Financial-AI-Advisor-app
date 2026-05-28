@@ -25,6 +25,9 @@ const INCOME_CATEGORIES = new Set([
   'Income', 'Transfer In', 'Transfer Out', 'Transfer',
   'Payroll', 'PAYROLL', 'INTEREST_EARNED', 'Interest',
   'Refund', 'REFUND', 'LOAN_PROCEEDS',
+  // Credit card payments & loan payments are inter-account transfers, not spending
+  'LOAN_PAYMENT', 'LOAN_PAYMENTS', 'Loan Payments', 'Loan Payment',
+  'CREDIT_CARD_PAYMENT', 'Credit Card Payment',
 ]);
 const isIncomeTx = (tx) => tx.category === 'IGNORED' || INCOME_CATEGORIES.has(tx.category) || INCOME_CATEGORIES.has((tx.category || '').toUpperCase());
 
@@ -1647,14 +1650,15 @@ export default function App() {
       return `${y}-${m}-${day}`;
     };
 
-    const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const DOW_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
     if (insightsRange === '7d') {
       const labels = [], data = [], incomeData = [];
       for (let i = 6; i >= 0; i--) {
         const d = new Date(now); d.setDate(d.getDate() - i);
         const key = dayKey(d);
-        labels.push(`${d.getMonth()+1}/${d.getDate()}\n${DOW[d.getDay()]}`);
+        // "Mon 28" — day abbreviation + date, clean single line
+        labels.push(`${DOW_SHORT[d.getDay()]} ${d.getDate()}`);
         data.push(txs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
         incomeData.push(incomeTxs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
       }
@@ -1666,7 +1670,8 @@ export default function App() {
       for (let i = 29; i >= 0; i--) {
         const d = new Date(now); d.setDate(d.getDate() - i);
         const key = dayKey(d);
-        labels.push(`${d.getMonth()+1}/${d.getDate()}\n${DOW[d.getDay()]}`);
+        // Just the date number for 30d — less crowded, tooltip shows full detail
+        labels.push(`${d.getMonth()+1}/${d.getDate()}`);
         data.push(txs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
         incomeData.push(incomeTxs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
       }
@@ -2395,9 +2400,7 @@ export default function App() {
                       </View>
                     </View>
                   )}
-                  <View style={{ position: 'relative' }}
-                    onStartShouldSetResponder={() => true}
-                    onResponderRelease={handleLineTouch}>
+                  <View style={{ position: 'relative' }}>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable}>
                       <LineChart
                         data={{ labels: chartLabels, datasets: [

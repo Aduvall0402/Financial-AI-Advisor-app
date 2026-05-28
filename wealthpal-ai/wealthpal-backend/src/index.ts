@@ -222,7 +222,14 @@ app.get("/api/plaid/accounts/:userId", requireAuth, selfOnly, async (req: Reques
       } catch { /* skip failed items */ }
     }
     if (!allAccounts.length) return res.status(404).json({ error: "No connected account found" });
-    res.json({ accounts: allAccounts, itemId: data[0].plaid_account_id, dbAccounts });
+    // Deduplicate by account_id — multiple DB rows for same bank produce duplicate Plaid accounts
+    const seenAccountIds = new Set<string>();
+    const dedupedAccounts = allAccounts.filter(a => {
+      if (!a.account_id || seenAccountIds.has(a.account_id)) return false;
+      seenAccountIds.add(a.account_id);
+      return true;
+    });
+    res.json({ accounts: dedupedAccounts, itemId: data[0].plaid_account_id, dbAccounts });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "Failed to fetch accounts" });
   }
@@ -509,6 +516,7 @@ app.post("/api/ai/chat", requireAuth, async (req: Request, res: Response) => {
     const NON_SPENDING_CATS = new Set([
       'INCOME', 'TRANSFER_IN', 'TRANSFER_OUT', 'TRANSFER',
       'INTEREST_EARNED', 'PAYROLL', 'REFUND', 'LOAN_PROCEEDS',
+      'LOAN_PAYMENT', 'LOAN_PAYMENTS', 'CREDIT_CARD_PAYMENT',
     ]);
     const isSpendingCat = (cat: string) => !NON_SPENDING_CATS.has((cat || '').toUpperCase());
 
