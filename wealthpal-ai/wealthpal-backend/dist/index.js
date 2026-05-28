@@ -318,10 +318,10 @@ app.post("/api/transactions/sync/:userId", requireAuth, selfOnly, async (req, re
                 const { transactions, nextCursor } = await plaidService.getTransactions(acct.plaid_access_token, acct.plaid_sync_cursor || undefined);
                 totalTx += transactions.length;
                 for (const tx of transactions) {
-                    // Upsert — DB unique constraint on (user_id, plaid_transaction_id) blocks duplicates
-                    const { error } = await supabase_1.default
+                    // Insert only — never overwrite existing rows (preserves reviewed, category, etc.)
+                    const { error, data: inserted } = await supabase_1.default
                         .from("transactions")
-                        .upsert([{
+                        .insert([{
                             user_id: userId,
                             account_id: acct.id,
                             plaid_transaction_id: tx.transaction_id,
@@ -335,13 +335,18 @@ app.post("/api/transactions/sync/:userId", requireAuth, selfOnly, async (req, re
                             transaction_date: tx.date,
                             posted_date: tx.authorized_date || null,
                             description: tx.name,
-                        }], { onConflict: "user_id,plaid_transaction_id", ignoreDuplicates: true });
+                            reviewed: false,
+                        }])
+                        .select("id");
                     if (error) {
-                        failed++;
-                        if (failed <= 3)
-                            console.error("Upsert error for tx", tx.transaction_id, JSON.stringify(error));
+                        // 23505 = unique_violation (already exists) — not a real error
+                        if (error.code !== '23505') {
+                            failed++;
+                            if (failed <= 3)
+                                console.error("Insert error for tx", tx.transaction_id, JSON.stringify(error));
+                        }
                     }
-                    else {
+                    else if (inserted?.length) {
                         synced++;
                     }
                 }
