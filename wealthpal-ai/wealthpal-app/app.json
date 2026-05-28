@@ -21,9 +21,11 @@
         "widgets": [
           {
             "name": "FinlitWidget",
-            "label": "Finlit AI Assistant",
-            "minWidth": "250dp",
-            "minHeight": "250dp",
+            "label": "Finlit",
+            "minWidth": "220dp",
+            "minHeight": "294dp",
+            "targetCellWidth": 3,
+            "targetCellHeight": 4,
             "description": "Track your spending and budgets at a glance",
             "resizeMode": "horizontal|vertical",
             "updatePeriodMillis": 1800000

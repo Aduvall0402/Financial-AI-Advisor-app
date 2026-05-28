@@ -1018,9 +1018,10 @@ export default function App() {
           const txCount = periodTxs.length;
           const yesterdayTxCount = allTxs.filter(tx => !isIncomeTx(tx) && (tx.transaction_date || '') === yesterdayStr).length;
 
+          const yesterdayDate = yest.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
           await AsyncStorage.setItem('widgetStatsData', JSON.stringify({
             totalSpent, budgetLeft, budgetTotal, txCount, yesterdayTxCount,
-            todaySpent, yesterdaySpent, periodLabel, periodRange,
+            todaySpent, yesterdaySpent, periodLabel, periodRange, yesterdayDate,
           }));
 
           // All transactions from the most recent transaction day
@@ -1478,7 +1479,7 @@ export default function App() {
 
       await AsyncStorage.multiSet([
         ['widgetBudgetData', JSON.stringify(widgetBudgets)],
-        ['widgetStatsData', JSON.stringify({ totalSpent, budgetLeft, budgetTotal, txCount, yesterdayTxCount, todaySpent, yesterdaySpent, periodLabel, periodRange })],
+        ['widgetStatsData', JSON.stringify({ totalSpent, budgetLeft, budgetTotal, txCount, yesterdayTxCount, todaySpent, yesterdaySpent, periodLabel, periodRange, yesterdayDate: yest.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) })],
         ['widgetRecentTx', JSON.stringify(dayTxs)],
       ]);
     } catch (_) {}
