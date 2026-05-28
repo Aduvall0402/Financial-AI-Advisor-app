@@ -25,16 +25,18 @@ function BudgetCol({ label, spent, limit, pct }) {
     <FlexWidget style={{ flex: 1, flexDirection: 'column' }}>
       <TextWidget
         text={label}
-        style={{ color: MUTED, fontSize: 8, marginBottom: 2 }}
+        style={{ color: MUTED, fontSize: 8, height: 11 }}
         maxLines={1}
+        truncate="END"
       />
       <TextWidget
         text={`$${Math.round(spent)}/$${Math.round(limit)}`}
-        style={{ color: over ? RED : TEXT, fontSize: 10, fontWeight: '700', marginBottom: 4 }}
+        style={{ color: over ? RED : TEXT, fontSize: 10, fontWeight: '700', height: 16, marginBottom: 4 }}
         maxLines={1}
+        truncate="END"
       />
-      <FlexWidget style={{ height: 5, width: 'match_parent', backgroundColor: BAR_BG, borderRadius: 3, flexDirection: 'row' }}>
-        <FlexWidget style={{ flex: filled, height: 5, backgroundColor: barColor, borderRadius: 3 }} />
+      <FlexWidget style={{ height: 5, width: 'match_parent', backgroundColor: BAR_BG, borderRadius: 3, overflow: 'hidden', flexDirection: 'row' }}>
+        <FlexWidget style={{ flex: filled, height: 5, backgroundColor: barColor }} />
         <FlexWidget style={{ flex: empty,  height: 5 }} />
       </FlexWidget>
     </FlexWidget>

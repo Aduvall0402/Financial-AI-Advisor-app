@@ -264,7 +264,7 @@ export default function App() {
     if (!isDarkMode) {
       return {
         ...BASE,
-        bg: '#f1f5f9', surface: '#ffffff', surface2: '#e2e8f0', border: '#cbd5e1',
+        bg: '#e4e9f0', surface: '#edf1f7', surface2: '#d8dfe8', border: '#b8c4d0',
         text: '#0f172a', textSub: '#0369a1', textMuted: '#0e7490',
         accent: BRAND_BLUE, blue: '#1E5EFF',
         green: '#059669', red: '#dc2626', amber: '#d97706',
@@ -2434,10 +2434,10 @@ export default function App() {
               const budgetForCat = budgets.find(b => b.category === cat);
               const budgetLimit = budgetForCat ? parseFloat(budgetForCat.monthly_limit || 0) : 0;
               const pctOfTotal = total > 0 ? Math.round((amt / total) * 100) : 0;
-              const pctOfBudget = budgetLimit > 0 ? Math.min(100, Math.round((amt / budgetLimit) * 100)) : null;
+              const pctOfBudget = budgetLimit > 0 ? Math.min(100, Math.floor((amt / budgetLimit) * 100)) : null;
               const barPct = pctOfBudget !== null ? pctOfBudget : pctOfTotal;
               const barColor = pctOfBudget !== null
-                ? (pctOfBudget >= 100 ? C.red : pctOfBudget >= 75 ? '#1EDFD5' : CAT_COLORS[i % CAT_COLORS.length])
+                ? (amt >= budgetLimit ? C.red : pctOfBudget >= 75 ? '#1EDFD5' : CAT_COLORS[i % CAT_COLORS.length])
                 : CAT_COLORS[i % CAT_COLORS.length];
               const catTxCount = filteredTx.filter(tx => tx.category === cat).length;
               const isSelected = selectedCategory === cat;
@@ -3074,8 +3074,8 @@ export default function App() {
           budgets.map(b => {
             const spent = getBudgetSpend2(b);
             const limit = parseFloat(b.monthly_limit || 0);
-            const pct = limit > 0 ? Math.min(100, Math.round((spent / limit) * 100)) : 0;
-            const barColor = pct >= 100 ? C.red : pct >= 75 ? '#1EDFD5' : C.green;
+            const pct = limit > 0 ? Math.min(100, Math.floor((spent / limit) * 100)) : 0;
+            const barColor = spent >= limit ? C.red : pct >= 75 ? '#1EDFD5' : C.green;
             const remaining = Math.max(0, limit - spent);
             const catInfo = PLAID_CATEGORIES.find(c => c.key === b.category);
             const catLabel = catInfo?.label || b.category;
@@ -3536,8 +3536,8 @@ export default function App() {
               const groupSpent = groupSharedTx
                 .filter(tx => tx.category === b.category)
                 .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
-              const pct = limit > 0 ? Math.min(100, Math.round((groupSpent / limit) * 100)) : 0;
-              const barColor = pct >= 100 ? C.red : pct >= 75 ? '#1EDFD5' : C.green;
+              const pct = limit > 0 ? Math.min(100, Math.floor((groupSpent / limit) * 100)) : 0;
+              const barColor = groupSpent >= limit ? C.red : pct >= 75 ? '#1EDFD5' : C.green;
               const periodLabel = { weekly: 'Weekly', monthly: 'Monthly', biweekly: 'Biweekly' }[b.period || 'monthly'];
               return (
                 <View key={b.id} style={{ backgroundColor: C.surface, borderRadius: 14, marginBottom: 10, padding: 14 }}>
@@ -3867,8 +3867,8 @@ export default function App() {
           budgets.map(b => {
             const spent = getBudgetSpend(b);
             const limit = parseFloat(b.monthly_limit || 0);
-            const pct = limit > 0 ? Math.min(100, Math.round((spent / limit) * 100)) : 0;
-            const barColor = pct >= 100 ? C.red : pct >= 75 ? '#1EDFD5' : C.green;
+            const pct = limit > 0 ? Math.min(100, Math.floor((spent / limit) * 100)) : 0;
+            const barColor = spent >= limit ? C.red : pct >= 75 ? '#1EDFD5' : C.green;
             const remaining = Math.max(0, limit - spent);
             const catInfo = PLAID_CATEGORIES.find(c => c.key === b.category);
             const catLabel = catInfo?.label || b.category;
