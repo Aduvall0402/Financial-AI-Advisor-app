@@ -335,7 +335,7 @@ export default function App() {
   const [widgetInfoVisible, setWidgetInfoVisible] = useState(false);
 
   // Chart type for insights
-  const [chartType, setChartType] = useState('line');
+  const [chartType, setChartType] = useState('line'); // 'line' | 'pie' (bar removed)
   const [chartTooltip, setChartTooltip] = useState(null); // { index, value, x, y }
 
   // Insights filters
@@ -949,8 +949,14 @@ export default function App() {
       if (!res.ok) { setAccountsError(true); return; }
       const data = await res.json();
       if (data.accounts?.length > 0) {
-        setAccounts(data.accounts);
-        setSelectedAccount(data.accounts[0]);
+        // Deduplicate by account_id — multiple Plaid items can return same account
+        const seen = new Set();
+        const dedupedAccounts = (data.accounts || []).filter(a => {
+          if (seen.has(a.account_id)) return false;
+          seen.add(a.account_id); return true;
+        });
+        setAccounts(dedupedAccounts);
+        setSelectedAccount(dedupedAccounts[0]);
         setLinkedAccount(data.itemId);
         setAccountsError(false);
         // Build a map from DB UUID → display label (e.g. "Chase Checking, Savings")
@@ -1618,7 +1624,7 @@ export default function App() {
     const days = ranges[insightsRange] || 30;
     const cutoff = Date.now() - days * 86400000;
     let txs = transactions.filter(tx => new Date(tx.transaction_date).getTime() >= cutoff && !isIncomeTx(tx));
-    if (insightsCatFilter !== 'all') txs = txs.filter(tx => tx.category === insightsCatFilter);
+    if (insightsCatFilter !== 'all') txs = txs.filter(tx => getEffectiveCategory(tx) === insightsCatFilter);
     return txs;
   };
 
@@ -1626,13 +1632,13 @@ export default function App() {
     const txs = getFilteredTx();
     if (!txs.length) return null;
     const m = {};
-    txs.forEach(tx => { const c = tx.category || 'Other'; m[c] = (m[c] || 0) + parseFloat(tx.amount || 0); });
+    txs.forEach(tx => { const c = getEffectiveCategory(tx) || 'Other'; m[c] = (m[c] || 0) + parseFloat(tx.amount || 0); });
     return Object.entries(m).sort(([, a], [, b]) => b - a).slice(0, 5);
   };
 
   const getChartData = () => {
     const txs = selectedCategory
-      ? getFilteredTx().filter(tx => tx.category === selectedCategory)
+      ? getFilteredTx().filter(tx => getEffectiveCategory(tx) === selectedCategory)
       : getFilteredTx();
     const incomeTxs = transactions.filter(tx => isIncomeTx(tx));
     const now = new Date();
@@ -1641,12 +1647,14 @@ export default function App() {
       return `${y}-${m}-${day}`;
     };
 
+    const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
     if (insightsRange === '7d') {
       const labels = [], data = [], incomeData = [];
       for (let i = 6; i >= 0; i--) {
         const d = new Date(now); d.setDate(d.getDate() - i);
         const key = dayKey(d);
-        labels.push(`${d.getMonth()+1}/${d.getDate()}`);
+        labels.push(`${d.getMonth()+1}/${d.getDate()}\n${DOW[d.getDay()]}`);
         data.push(txs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
         incomeData.push(incomeTxs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
       }
@@ -1658,7 +1666,7 @@ export default function App() {
       for (let i = 29; i >= 0; i--) {
         const d = new Date(now); d.setDate(d.getDate() - i);
         const key = dayKey(d);
-        labels.push(`${d.getMonth()+1}/${d.getDate()}`);
+        labels.push(`${d.getMonth()+1}/${d.getDate()}\n${DOW[d.getDay()]}`);
         data.push(txs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
         incomeData.push(incomeTxs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
       }
@@ -2049,46 +2057,51 @@ export default function App() {
           if (!Object.keys(billMap).length) return null;
 
           const totalMonthly = recurringTxs.filter(r => r.frequency === 'monthly').reduce((s, r) => s + parseFloat(r.amount || 0), 0);
-          const DAY_ABBR = ['Su','M','T','W','Th','F','Sa'];
+          const DAY_HDR = ['Su','M','T','W','Th','F','Sa'];
           const BILL_BLUE = BRAND_BLUE;
 
           return (
             <View style={[s.section, { backgroundColor: C.surface, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: C.border }]}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                <Text style={s.sectionTitle}>Recurring Payments — {MONTHS_SHORT[month]} {year}</Text>
-                <Text style={{ color: BILL_BLUE, fontSize: 12, fontWeight: '700' }}>${fmtMoney(totalMonthly)}/mo</Text>
+              <Text style={s.sectionTitle}>Recurring Payments — {MONTHS_SHORT[month]} {year}</Text>
+              <Text style={{ color: BILL_BLUE, fontSize: 12, fontWeight: '600', marginBottom: 10, marginTop: 2 }}>
+                ${fmtMoney(totalMonthly)}/mo total
+              </Text>
+              {/* Day-of-week header row */}
+              <View style={{ flexDirection: 'row', marginBottom: 4 }}>
+                {DAY_HDR.map(d => (
+                  <View key={d} style={{ flex: 1, alignItems: 'center' }}>
+                    <Text style={{ color: C.textMuted, fontSize: 10, fontWeight: '600' }}>{d}</Text>
+                  </View>
+                ))}
               </View>
-              {/* Calendar grid — day abbrev lives inside each cell */}
+              {/* Calendar grid */}
               {Array.from({ length: Math.ceil((firstDow + daysInMonth) / 7) }, (_, week) => (
-                <View key={week} style={{ flexDirection: 'row', marginBottom: 2 }}>
+                <View key={week} style={{ flexDirection: 'row', marginBottom: 3 }}>
                   {Array.from({ length: 7 }, (_, dow) => {
                     const cellDay = week * 7 + dow - firstDow + 1;
-                    if (cellDay < 1 || cellDay > daysInMonth) return <View key={dow} style={{ flex: 1, minHeight: 52 }} />;
+                    if (cellDay < 1 || cellDay > daysInMonth) return <View key={dow} style={{ flex: 1 }} />;
                     const bills = billMap[cellDay] || [];
                     const isToday = cellDay === todayNum;
                     const isPast = cellDay < todayNum;
                     const hasBill = bills.length > 0;
                     const dayTotal = bills.reduce((s, b) => s + parseFloat(b.amount || 0), 0);
                     return (
-                      <View key={dow} style={{ flex: 1, alignItems: 'center', minHeight: 52, paddingVertical: 3 }}>
-                        {/* Shaded background for upcoming bill days */}
-                        {hasBill && !isPast && !isToday && (
-                          <View style={{ position: 'absolute', top: 1, left: 2, right: 2, bottom: 1, backgroundColor: BILL_BLUE + '1A', borderRadius: 8 }} />
-                        )}
-                        {/* Day abbreviation */}
-                        <Text style={{ color: isPast ? C.textMuted : C.textMuted, fontSize: 8, marginBottom: 1 }}>{DAY_ABBR[dow]}</Text>
-                        {/* Date circle (today only) */}
-                        <View style={{ width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center',
-                          backgroundColor: isToday ? BILL_BLUE : 'transparent' }}>
-                          <Text style={{ color: isToday ? '#fff' : hasBill && !isPast ? BILL_BLUE : isPast ? C.textMuted : C.textSub,
-                            fontSize: 12, fontWeight: isToday || (hasBill && !isPast) ? '700' : '400' }}>{cellDay}</Text>
+                      <View key={dow} style={{ flex: 1, alignItems: 'center', paddingVertical: 2 }}>
+                        <View style={{
+                          width: 32, minHeight: 42, borderRadius: 10, alignItems: 'center', justifyContent: 'flex-start',
+                          paddingTop: 5, paddingBottom: 4,
+                          backgroundColor: isToday ? BILL_BLUE : hasBill && !isPast ? BILL_BLUE + '20' : 'transparent',
+                        }}>
+                          <Text style={{
+                            color: isToday ? '#fff' : hasBill && !isPast ? BILL_BLUE : isPast ? C.textMuted : C.textSub,
+                            fontSize: 12, fontWeight: isToday || (hasBill && !isPast) ? '700' : '400',
+                          }}>{cellDay}</Text>
+                          {hasBill && !isPast && (
+                            <Text style={{ color: isToday ? '#ffffff' : BILL_BLUE, fontSize: 7, fontWeight: '700', marginTop: 2 }} numberOfLines={1}>
+                              ${dayTotal < 10 ? dayTotal.toFixed(0) : Math.round(dayTotal)}
+                            </Text>
+                          )}
                         </View>
-                        {/* Bill amount */}
-                        {hasBill && !isPast && (
-                          <Text style={{ color: isToday ? BILL_BLUE : BILL_BLUE, fontSize: 7, fontWeight: '700', marginTop: 1, opacity: isPast ? 0.4 : 1 }} numberOfLines={1}>
-                            ${dayTotal < 10 ? dayTotal.toFixed(1) : Math.round(dayTotal)}
-                          </Text>
-                        )}
                       </View>
                     );
                   })}
@@ -2276,7 +2289,7 @@ export default function App() {
           >
             <Text style={{ fontSize: 14 }}>⊟</Text>
             <Text style={{ color: insightsCatFilter !== 'all' ? C.accent : C.textSub, fontSize: 13, fontWeight: insightsCatFilter !== 'all' ? '700' : '400' }}>
-              {insightsCatFilter === 'all' ? 'Category' : insightsCatFilter.replace(/_/g,' ').slice(0, 10)}
+              {insightsCatFilter === 'all' ? 'Category' : (PLAID_CATEGORIES.find(p => p.key === insightsCatFilter)?.label || insightsCatFilter.replace(/_/g,' ')).slice(0, 14)}
             </Text>
             <Text style={{ color: insightsCatFilter !== 'all' ? C.accent : C.textSub, fontSize: 16, lineHeight: 18 }}>▾</Text>
           </TouchableOpacity>
@@ -2335,11 +2348,11 @@ export default function App() {
               )}
             </View>
             <View style={{ flexDirection: 'row', backgroundColor: C.surface2, borderRadius: 10, borderWidth: 1, borderColor: C.border, overflow: 'hidden' }}>
-              {[['line', '↗'], ['bar', '▌▌'], ['pie', '◔']].map(([type, icon]) => (
+              {[['line', '↗'], ['pie', '◔']].map(([type, icon]) => (
                 <TouchableOpacity
                   key={type}
                   onPress={() => setChartType(type)}
-                  style={{ paddingHorizontal: 13, paddingVertical: 7, backgroundColor: chartType === type ? C.accent : 'transparent' }}
+                  style={{ paddingHorizontal: 16, paddingVertical: 7, backgroundColor: chartType === type ? C.accent : 'transparent' }}
                 >
                   <Text style={{ color: chartType === type ? '#fff' : C.textSub, fontSize: 13, fontWeight: '700' }}>{icon}</Text>
                 </TouchableOpacity>
@@ -2444,7 +2457,7 @@ export default function App() {
             {chartType === 'pie' && catData && (
               <PieChart
                 data={catData.map(([cat, amt], i) => ({
-                  name: cat.replace(/_/g, ' ').slice(0, 12),
+                  name: (PLAID_CATEGORIES.find(p => p.key === cat)?.label || cat.replace(/_/g, ' ')).slice(0, 14),
                   population: Math.round(amt * 100) / 100,
                   color: CAT_COLORS[i % CAT_COLORS.length],
                   legendFontColor: C.textSub, legendFontSize: 11,
@@ -2471,7 +2484,7 @@ export default function App() {
               const barColor = pctOfBudget !== null
                 ? (amt >= budgetLimit ? C.red : pctOfBudget >= 75 ? '#1EDFD5' : CAT_COLORS[i % CAT_COLORS.length])
                 : CAT_COLORS[i % CAT_COLORS.length];
-              const catTxCount = filteredTx.filter(tx => tx.category === cat).length;
+              const catTxCount = filteredTx.filter(tx => getEffectiveCategory(tx) === cat).length;
               const isSelected = selectedCategory === cat;
               return (
                 <TouchableOpacity
@@ -2483,7 +2496,7 @@ export default function App() {
                   <View style={[s.insightDot, { backgroundColor: barColor, width: 12, height: 12, borderRadius: 6 }]} />
                   <View style={{ flex: 1 }}>
                     <View style={s.catInfo}>
-                      <Text style={[s.catName, isSelected && { color: barColor }]}>{cat.replace(/_/g,' ')}</Text>
+                      <Text style={[s.catName, isSelected && { color: barColor }]}>{PLAID_CATEGORIES.find(p => p.key === cat)?.label || cat.replace(/_/g,' ')}</Text>
                       <Text style={s.catAmt}>${fmtMoney(amt)}</Text>
                     </View>
                     <View style={s.barBg}>
