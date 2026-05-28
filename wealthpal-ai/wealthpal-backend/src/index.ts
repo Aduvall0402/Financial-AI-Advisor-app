@@ -212,6 +212,18 @@ app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) =
       return res.status(404).json({ error: "No connected account found" });
     }
 
+    // If the transactions table is empty for this user, reset all cursors so Plaid
+    // returns the full history instead of 0 transactions since the last cursor.
+    const { count: txCount } = await supabase
+      .from("transactions")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId);
+    if (txCount === 0) {
+      await supabase.from("accounts").update({ plaid_sync_cursor: null }).eq("user_id", userId);
+      accountData.forEach((a: any) => { a.plaid_sync_cursor = null; });
+      console.log(`User ${userId} has 0 transactions — reset cursors for full re-pull`);
+    }
+
     let synced = 0;
     let failed = 0;
     let totalTx = 0;
