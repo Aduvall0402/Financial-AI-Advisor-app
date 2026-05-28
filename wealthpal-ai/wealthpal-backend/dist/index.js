@@ -428,6 +428,42 @@ app.patch("/api/transactions/:txId", requireAuth, async (req, res) => {
         res.status(500).json({ error: error?.message || "Failed to update transaction" });
     }
 });
+app.delete("/api/transactions/:txId", requireAuth, async (req, res) => {
+    try {
+        const userId = req.authUser.id;
+        const { error } = await supabase_1.default
+            .from("transactions")
+            .delete()
+            .eq("id", req.params.txId)
+            .eq("user_id", userId);
+        if (error)
+            throw error;
+        res.json({ message: "Transaction deleted" });
+    }
+    catch (error) {
+        res.status(500).json({ error: error?.message || "Failed to delete transaction" });
+    }
+});
+app.delete("/api/transactions", requireAuth, async (req, res) => {
+    try {
+        const userId = req.authUser.id;
+        const { ids } = req.body;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ error: "ids array required" });
+        }
+        const { error } = await supabase_1.default
+            .from("transactions")
+            .delete()
+            .in("id", ids)
+            .eq("user_id", userId);
+        if (error)
+            throw error;
+        res.json({ deleted: ids.length });
+    }
+    catch (error) {
+        res.status(500).json({ error: error?.message || "Failed to delete transactions" });
+    }
+});
 // Legacy sync endpoint (kept for compatibility)
 app.post("/api/transactions/sync", async (req, res) => {
     try {

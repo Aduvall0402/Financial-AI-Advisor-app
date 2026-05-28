@@ -2518,6 +2518,37 @@ export default function App() {
                   <TouchableOpacity style={[s.syncBtn, { backgroundColor: C.accent + '22', borderColor: C.accent }]} onPress={exportCSV}>
                     <Text style={[s.syncText, { color: C.accent }]}>Export {selectedTxIds.size > 0 ? `(${selectedTxIds.size})` : 'All'}</Text>
                   </TouchableOpacity>
+                  {selectedTxIds.size > 0 && (
+                    <TouchableOpacity
+                      style={[s.syncBtn, { backgroundColor: C.red + '22', borderColor: C.red }]}
+                      onPress={() => {
+                        Alert.alert(
+                          'Delete Transactions',
+                          `Delete ${selectedTxIds.size} transaction${selectedTxIds.size !== 1 ? 's' : ''}? This cannot be undone.`,
+                          [
+                            { text: 'Cancel', style: 'cancel' },
+                            {
+                              text: 'Delete', style: 'destructive',
+                              onPress: async () => {
+                                const ids = [...selectedTxIds];
+                                try {
+                                  await apiCall(`/api/transactions`, {
+                                    method: 'DELETE',
+                                    body: JSON.stringify({ ids }),
+                                  });
+                                } catch {}
+                                setTransactions(prev => prev.filter(tx => !ids.includes(tx.id)));
+                                setSelectedTxIds(new Set());
+                                setBulkSelectMode(false);
+                              },
+                            },
+                          ]
+                        );
+                      }}
+                    >
+                      <Text style={[s.syncText, { color: C.red }]}>Delete ({selectedTxIds.size})</Text>
+                    </TouchableOpacity>
+                  )}
                   <TouchableOpacity style={s.syncBtn} onPress={() => { setBulkSelectMode(false); setSelectedTxIds(new Set()); }}>
                     <Text style={s.syncText}>Done</Text>
                   </TouchableOpacity>
