@@ -1509,11 +1509,8 @@ export default function App() {
       const yesterdayTxCount = spendingTxs.filter(tx => tx.transaction_date === yesterdayStr).length;
 
       const widgetBudgets = budgetList.map(b => {
-        const bStart = (() => {
-          if (b.period === 'weekly') { const d = new Date(now); d.setDate(d.getDate() - 6); return localDate(d); }
-          if (b.period === 'biweekly') { const d = new Date(now); d.setDate(d.getDate() - 13); return localDate(d); }
-          return periodStart;
-        })();
+        // Use the same getPeriodStart logic as the budget tab — same period start = same numbers
+        const bStart = getPeriodStart('paycycle', b.paycycle_start, b.paycycle_freq);
         const spent = spendingTxs
           .filter(tx => (tx.transaction_date || '') >= bStart && getEffectiveCategory(tx) === b.category)
           .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
