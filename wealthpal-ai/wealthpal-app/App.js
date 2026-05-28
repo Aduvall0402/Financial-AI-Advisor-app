@@ -2515,7 +2515,7 @@ export default function App() {
             <View style={{ flex: 1, marginLeft: 16, gap: 10 }}>
               {[
                 { label: 'Budget', score: budgetAdherenceScore, max: 35, hint: budgetAdherencePct != null ? `${budgetAdherencePct}% of limit` : 'No budgets set' },
-                { label: 'Trend', score: trendScore, max: 25, hint: trendPct != null ? `${trendPct > 0 ? '+' : ''}${trendPct}% vs prior\` : 'Not enough history' },
+                { label: 'Trend', score: trendScore, max: 25, hint: trendPct != null ? `${trendPct > 0 ? '+' : ''}${trendPct}% vs prior` : 'Not enough history' },
                 { label: 'Coverage', score: coverageScore, max: 20, hint: coveragePct != null ? `${coveragePct}% tracked` : 'Add budgets' },
                 { label: 'Consistency', score: consistencyScore, max: 20, hint: 'Daily variance' },
               ].map(({ label, score, max, hint }) => {
