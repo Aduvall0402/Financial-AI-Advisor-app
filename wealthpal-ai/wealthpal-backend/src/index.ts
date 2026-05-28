@@ -775,7 +775,7 @@ app.get("/api/groups/:groupId/detail", requireAuth, async (req: Request, res: Re
       supabase.from("group_goals").select("*").eq("group_id", req.params.groupId),
     ]);
     const members = membersRes.data || [];
-    // Fetch Plaid balances for members who share accounts
+    // Fetch Plaid balances + account list for members who share accounts
     const membersWithBalances = await Promise.all(members.map(async (m: any) => {
       if (!m.share_accounts || !m.user_id) return m;
       try {
@@ -783,7 +783,12 @@ app.get("/api/groups/:groupId/detail", requireAuth, async (req: Request, res: Re
         if (!acctData?.length || !acctData[0]?.plaid_access_token) return m;
         const plaidAccts = await plaidService.getAccounts(acctData[0].plaid_access_token);
         const totalBalance = plaidAccts.reduce((s: number, a: any) => s + (a.balances?.current || 0), 0);
-        return { ...m, total_balance: totalBalance };
+        const shared_accounts = plaidAccts.map((a: any) => ({
+          name: a.name,
+          subtype: a.subtype,
+          balance: a.balances?.current || 0,
+        }));
+        return { ...m, total_balance: totalBalance, shared_accounts };
       } catch { return m; }
     }));
     res.json({ members: membersWithBalances, goals: goalsRes.data || [] });

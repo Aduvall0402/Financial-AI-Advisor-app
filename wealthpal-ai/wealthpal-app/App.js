@@ -1892,36 +1892,59 @@ export default function App() {
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshAll} tintColor={C.accent} />}
       >
-        {/* Balance card */}
-        <View style={s.balanceCard}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-            <View style={{ flex: 1 }}>
-              <Text style={s.balanceLabel}>{selectedAccount ? selectedAccount.name.toUpperCase() : 'TOTAL BALANCE'}</Text>
-              <Text style={s.balanceAmt}>{fmtCurrency(selectedAccount?.balances?.current || 0)}</Text>
-              {selectedAccount && <Text style={s.balanceSub}>{selectedAccount.subtype} · {selectedAccount.type}</Text>}
+        {/* Balance card(s) — snapping horizontal scroll when multiple accounts */}
+        {accounts.length <= 1 ? (
+          <View style={s.balanceCard}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <View style={{ flex: 1 }}>
+                <Text style={s.balanceLabel}>{selectedAccount ? selectedAccount.name.toUpperCase() : 'TOTAL BALANCE'}</Text>
+                <Text style={s.balanceAmt}>{fmtCurrency(selectedAccount?.balances?.current || 0)}</Text>
+                {selectedAccount && <Text style={s.balanceSub}>{selectedAccount.subtype} · {selectedAccount.type}</Text>}
+              </View>
+              {(loadingAccounts || loadingTx) && (
+                <ActivityIndicator color={C.accent} size="small" style={{ marginTop: 4 }} />
+              )}
             </View>
-            {(loadingAccounts || loadingTx) && (
-              <ActivityIndicator color={C.accent} size="small" style={{ marginTop: 4 }} />
-            )}
           </View>
-        </View>
-
-        {/* Account pills */}
-        {accounts.length > 1 && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14, marginTop: -4 }}>
-            {accounts.map(acc => (
-              <TouchableOpacity
-                key={acc.account_id}
-                style={[s.acctPill, selectedAccount?.account_id === acc.account_id && s.acctPillActive]}
-                onPress={() => setSelectedAccount(acc)}
-              >
-                <Text style={[s.acctPillText, selectedAccount?.account_id === acc.account_id && { color: '#fff' }]}>
-                  {acc.name} · {fmtCurrency(acc.balances?.current || 0)}
-                </Text>
-              </TouchableOpacity>
-            ))}
-            <View style={{ width: 8 }} />
-          </ScrollView>
+        ) : (
+          <>
+            <FlatList
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              data={accounts}
+              keyExtractor={item => item.account_id}
+              style={{ marginHorizontal: -16, marginTop: 8, marginBottom: 12 }}
+              snapToAlignment="start"
+              decelerationRate="fast"
+              onMomentumScrollEnd={e => {
+                const idx = Math.round(e.nativeEvent.contentOffset.x / SW);
+                setSelectedAccount(accounts[Math.min(idx, accounts.length - 1)]);
+              }}
+              renderItem={({ item }) => (
+                <View style={{ width: SW, paddingHorizontal: 16 }}>
+                  <View style={[s.balanceCard, { marginTop: 0, marginBottom: 0 }]}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={s.balanceLabel}>{item.name.toUpperCase()}</Text>
+                        <Text style={s.balanceAmt}>{fmtCurrency(item.balances?.current || 0)}</Text>
+                        <Text style={s.balanceSub}>{item.subtype} · {item.type}</Text>
+                      </View>
+                      {(loadingAccounts || loadingTx) && (
+                        <ActivityIndicator color={C.accent} size="small" style={{ marginTop: 4 }} />
+                      )}
+                    </View>
+                  </View>
+                </View>
+              )}
+            />
+            {/* Page dots */}
+            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 6, marginBottom: 12, marginTop: -6 }}>
+              {accounts.map(acc => (
+                <View key={acc.account_id} style={{ width: selectedAccount?.account_id === acc.account_id ? 16 : 6, height: 6, borderRadius: 3, backgroundColor: selectedAccount?.account_id === acc.account_id ? C.accent : C.border }} />
+              ))}
+            </View>
+          </>
         )}
 
         {/* Bank reconnect prompt */}
@@ -2026,46 +2049,45 @@ export default function App() {
           if (!Object.keys(billMap).length) return null;
 
           const totalMonthly = recurringTxs.filter(r => r.frequency === 'monthly').reduce((s, r) => s + parseFloat(r.amount || 0), 0);
-          const DAY_LABELS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+          const DAY_ABBR = ['Su','M','T','W','Th','F','Sa'];
           const BILL_BLUE = BRAND_BLUE;
 
           return (
             <View style={[s.section, { backgroundColor: C.surface, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: C.border }]}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                <Text style={s.sectionTitle}>Bills — {MONTHS_SHORT[month]} {year}</Text>
+                <Text style={s.sectionTitle}>Recurring Payments — {MONTHS_SHORT[month]} {year}</Text>
                 <Text style={{ color: BILL_BLUE, fontSize: 12, fontWeight: '700' }}>${fmtMoney(totalMonthly)}/mo</Text>
               </View>
-              {/* Day-of-week headers */}
-              <View style={{ flexDirection: 'row', marginBottom: 6 }}>
-                {DAY_LABELS.map(d => (
-                  <View key={d} style={{ flex: 1, alignItems: 'center' }}>
-                    <Text style={{ color: C.textMuted, fontSize: 10, fontWeight: '600', letterSpacing: 0.3 }}>{d}</Text>
-                  </View>
-                ))}
-              </View>
-              {/* Calendar grid */}
+              {/* Calendar grid — day abbrev lives inside each cell */}
               {Array.from({ length: Math.ceil((firstDow + daysInMonth) / 7) }, (_, week) => (
-                <View key={week} style={{ flexDirection: 'row', marginBottom: 4 }}>
+                <View key={week} style={{ flexDirection: 'row', marginBottom: 2 }}>
                   {Array.from({ length: 7 }, (_, dow) => {
                     const cellDay = week * 7 + dow - firstDow + 1;
-                    if (cellDay < 1 || cellDay > daysInMonth) return <View key={dow} style={{ flex: 1 }} />;
+                    if (cellDay < 1 || cellDay > daysInMonth) return <View key={dow} style={{ flex: 1, minHeight: 52 }} />;
                     const bills = billMap[cellDay] || [];
                     const isToday = cellDay === todayNum;
                     const isPast = cellDay < todayNum;
                     const hasBill = bills.length > 0;
+                    const dayTotal = bills.reduce((s, b) => s + parseFloat(b.amount || 0), 0);
                     return (
-                      <View key={dow} style={{ flex: 1, alignItems: 'center', paddingVertical: 1 }}>
-                        <View style={{
-                          width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center',
-                          backgroundColor: isToday ? BILL_BLUE : hasBill && !isPast ? BILL_BLUE + '22' : 'transparent',
-                        }}>
-                          <Text style={{
-                            color: isToday ? '#fff' : hasBill && !isPast ? BILL_BLUE : isPast ? C.textMuted : C.textSub,
-                            fontSize: 12, fontWeight: isToday || (hasBill && !isPast) ? '700' : '400',
-                          }}>{cellDay}</Text>
+                      <View key={dow} style={{ flex: 1, alignItems: 'center', minHeight: 52, paddingVertical: 3 }}>
+                        {/* Shaded background for upcoming bill days */}
+                        {hasBill && !isPast && !isToday && (
+                          <View style={{ position: 'absolute', top: 1, left: 2, right: 2, bottom: 1, backgroundColor: BILL_BLUE + '1A', borderRadius: 8 }} />
+                        )}
+                        {/* Day abbreviation */}
+                        <Text style={{ color: isPast ? C.textMuted : C.textMuted, fontSize: 8, marginBottom: 1 }}>{DAY_ABBR[dow]}</Text>
+                        {/* Date circle (today only) */}
+                        <View style={{ width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center',
+                          backgroundColor: isToday ? BILL_BLUE : 'transparent' }}>
+                          <Text style={{ color: isToday ? '#fff' : hasBill && !isPast ? BILL_BLUE : isPast ? C.textMuted : C.textSub,
+                            fontSize: 12, fontWeight: isToday || (hasBill && !isPast) ? '700' : '400' }}>{cellDay}</Text>
                         </View>
-                        {hasBill && !isToday && (
-                          <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: isPast ? C.textMuted : BILL_BLUE, marginTop: 1 }} />
+                        {/* Bill amount */}
+                        {hasBill && !isPast && (
+                          <Text style={{ color: isToday ? BILL_BLUE : BILL_BLUE, fontSize: 7, fontWeight: '700', marginTop: 1, opacity: isPast ? 0.4 : 1 }} numberOfLines={1}>
+                            ${dayTotal < 10 ? dayTotal.toFixed(1) : Math.round(dayTotal)}
+                          </Text>
                         )}
                       </View>
                     );
@@ -2336,10 +2358,19 @@ export default function App() {
               const minVal = realVals.length > 0 ? Math.min(...realVals) : 0;
               const floorVal = Math.max(0, minVal * 0.7);
               const chartH = 260;
-              const clipH = 232;
               const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 36) : SW - 64;
               const yStep = (lm - floorVal) / 4;
               const yLabels = [lm, lm-yStep, lm-2*yStep, lm-3*yStep, floorVal];
+              const yAxisW = 46; const rightPad = 32;
+              const handleLineTouch = (evt) => {
+                if (!chartData.length) return;
+                const x = evt.nativeEvent.locationX;
+                const n = chartData.length;
+                const dataW = chartW - yAxisW - rightPad;
+                const idx = Math.min(n - 1, Math.max(0, Math.round((x - yAxisW) / dataW * (n - 1))));
+                const realVal = chartData[idx] < 0.02 ? 0 : chartData[idx];
+                setChartTooltip(prev => prev?.index === idx ? null : { value: realVal, index: idx });
+              };
               return (
                 <View>
                   {chartTooltip && (
@@ -2351,7 +2382,9 @@ export default function App() {
                       </View>
                     </View>
                   )}
-                  <View style={{ position: 'relative', height: clipH, overflow: 'hidden' }}>
+                  <View style={{ position: 'relative' }}
+                    onStartShouldSetResponder={() => true}
+                    onResponderRelease={handleLineTouch}>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable}>
                       <LineChart
                         data={{ labels: chartLabels, datasets: [
@@ -2371,7 +2404,7 @@ export default function App() {
                       />
                     </ScrollView>
                     {chartScrollable && (
-                      <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: 46, height: clipH, backgroundColor: C.surface, justifyContent: 'space-between', paddingTop: 8, paddingBottom: 8, alignItems: 'flex-end', paddingRight: 4 }}>
+                      <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: 46, height: 220, backgroundColor: C.surface, justifyContent: 'space-between', paddingTop: 8, paddingBottom: 8, alignItems: 'flex-end', paddingRight: 4 }}>
                         {yLabels.map((val, i) => (
                           <Text key={i} style={{ color: C.textMuted, fontSize: 9 }}>{fmtYLabel(String(Math.round(val)))}</Text>
                         ))}
@@ -2384,11 +2417,10 @@ export default function App() {
             {chartType === 'bar' && (() => {
               const lm = niceChartMax(chartData);
               const chartH = 260;
-              const clipH = 232;
               const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 36) : SW - 64;
               const yLabels = [lm, lm*0.75, lm*0.5, lm*0.25, 0];
               return (
-                <View style={{ position: 'relative', height: clipH, overflow: 'hidden' }}>
+                <View style={{ position: 'relative' }}>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable}>
                     <BarChart
                       data={{ labels: chartLabels, datasets: [{ data: chartData }] }}
@@ -2400,7 +2432,7 @@ export default function App() {
                     />
                   </ScrollView>
                   {chartScrollable && (
-                    <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: 46, height: clipH, backgroundColor: C.surface, justifyContent: 'space-between', paddingTop: 8, paddingBottom: 8, alignItems: 'flex-end', paddingRight: 4 }}>
+                    <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: 46, height: 220, backgroundColor: C.surface, justifyContent: 'space-between', paddingTop: 8, paddingBottom: 8, alignItems: 'flex-end', paddingRight: 4 }}>
                       {yLabels.map((val, i) => (
                         <Text key={i} style={{ color: C.textMuted, fontSize: 9 }}>{fmtYLabel(String(Math.round(val)))}</Text>
                       ))}
@@ -2743,7 +2775,7 @@ export default function App() {
                 {goal.is_completed && <Text style={{ color: C.green, fontSize: 12, fontWeight: '700' }}>✓</Text>}
               </View>
               <Text style={{ color: typeInfo.color, fontSize: 11, fontWeight: '600', marginTop: 2 }}>
-                {typeInfo.label}{goal.update_mode === 'auto' ? ' · Auto-tracked' : ''}
+                {typeInfo.label}
               </Text>
             </View>
             {goal.target_amount > 0 && (
@@ -2852,7 +2884,7 @@ export default function App() {
       { id: 'goals', label: 'Goals', icon: '★', color: C.accent, desc: 'Track savings, debt payoff & streaks' },
       { id: 'groups', label: 'Groups', icon: '◈', color: C.blue, desc: 'Shared budgets & group goals' },
       { id: 'budget', label: 'Budget', icon: '◎', color: C.green, desc: 'Spending limits by category' },
-      { id: 'recurring', label: 'Recurring', icon: '↻', color: '#06b6d4', desc: 'Bills, subscriptions & repeating payments' },
+      { id: 'recurring', label: 'Recurring Payments', icon: '↻', color: '#06b6d4', desc: 'Subscriptions & repeating payments' },
       { id: 'networth', label: 'Net Worth', icon: '▲', color: '#1EDFD5', desc: 'Assets minus liabilities', comingSoon: true },
       { id: 'creditscore', label: 'Credit Score', icon: '★', color: '#f97316', desc: 'Monitor your credit health', comingSoon: true },
     ];
@@ -2905,7 +2937,7 @@ export default function App() {
                 {goal.is_completed && <Text style={{ color: C.green, fontSize: 12, fontWeight: '700' }}>✓</Text>}
               </View>
               <Text style={{ color: typeInfo.color, fontSize: 11, fontWeight: '600', marginTop: 2 }}>
-                {typeInfo.label}{goal.update_mode === 'auto' ? ' · Auto-tracked' : ''}
+                {typeInfo.label}
               </Text>
             </View>
             {goal.target_amount > 0 && (
@@ -3431,17 +3463,30 @@ export default function App() {
             <View style={s.section}>
               <Text style={s.sectionTitle}>Member Balances</Text>
               {groupDetail.members.filter(m => m.share_accounts).map(m => (
-                <View key={m.id} style={[s.txItem]}>
-                  <View style={{ width: 38, height: 38, borderRadius: 10, backgroundColor: C.blue, justifyContent: 'center', alignItems: 'center' }}>
-                    <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{(m.email?.[0] || '?').toUpperCase()}</Text>
+                <View key={m.id} style={{ backgroundColor: C.surface, borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: C.border }}>
+                  {/* Member header */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: m.shared_accounts?.length ? 10 : 0 }}>
+                    <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: C.blue, justifyContent: 'center', alignItems: 'center', marginRight: 10 }}>
+                      <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{(m.email?.[0] || '?').toUpperCase()}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: C.text, fontSize: 13, fontWeight: '700' }}>{m.email?.split('@')[0]}</Text>
+                      <Text style={{ color: C.textMuted, fontSize: 11 }}>{m.email}</Text>
+                    </View>
+                    <Text style={{ color: C.green, fontSize: 15, fontWeight: '700' }}>
+                      {m.total_balance != null ? `$${fmtMoney(m.total_balance)}` : '—'}
+                    </Text>
                   </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.txMerchant}>{m.email?.split('@')[0]}</Text>
-                    <Text style={s.txMeta}>Sharing balances</Text>
-                  </View>
-                  <Text style={{ color: C.green, fontSize: 15, fontWeight: '700' }}>
-                    {m.total_balance != null ? `$${fmtMoney(m.total_balance)}` : '—'}
-                  </Text>
+                  {/* Individual account rows */}
+                  {m.shared_accounts?.map((acct, i) => (
+                    <View key={i} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 7, paddingLeft: 46, borderTopWidth: 1, borderTopColor: C.border }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: C.textSub, fontSize: 12, fontWeight: '600' }}>{acct.name}</Text>
+                        <Text style={{ color: C.textMuted, fontSize: 10 }}>{acct.subtype}</Text>
+                      </View>
+                      <Text style={{ color: C.text, fontSize: 13, fontWeight: '600' }}>${fmtMoney(acct.balance)}</Text>
+                    </View>
+                  ))}
                 </View>
               ))}
             </View>
@@ -4660,40 +4705,7 @@ export default function App() {
                   </TouchableOpacity>
                 ))}
               </ScrollView>
-              {(addGoalType === 'savings' || addGoalType === 'debt_payoff') && (
-                <>
-                  <Text style={s.label}>Update Mode</Text>
-                  <View style={{ flexDirection: 'row', gap: 10, marginBottom: 18 }}>
-                    {[['manual','Manual'],['auto','Automatic']].map(([k, l]) => (
-                      <TouchableOpacity key={k} onPress={() => setAddGoalUpdateMode(k)}
-                        style={{ flex: 1, paddingVertical: 10, borderRadius: 14, alignItems: 'center', backgroundColor: addGoalUpdateMode === k ? C.accent : C.surface, borderWidth: 1, borderColor: addGoalUpdateMode === k ? C.accent : C.border }}>
-                        <Text style={{ color: addGoalUpdateMode === k ? '#fff' : C.textSub, fontWeight: '600', fontSize: 13 }}>{l}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                  {addGoalUpdateMode === 'auto' && (
-                    <View style={{ backgroundColor: C.bg, borderRadius: 10, padding: 12, marginBottom: 14, borderWidth: 1, borderColor: C.border }}>
-                      <Text style={{ color: C.textSub, fontSize: 12, lineHeight: 18, marginBottom: addGoalType === 'savings' ? 10 : 0 }}>
-                        {addGoalType === 'savings' ? 'After each sync, transactions from the linked category are summed and added toward this goal.' : 'Progress is computed from loan/payment transactions after each sync.'}
-                      </Text>
-                      {addGoalType === 'savings' && (
-                        <>
-                          <Text style={[s.label, { marginBottom: 6 }]}>Link Category (transactions that count)</Text>
-                          <ScrollView style={{ maxHeight: 130 }} showsVerticalScrollIndicator={false}>
-                            {PLAID_CATEGORIES.map(cat => (
-                              <TouchableOpacity key={cat.key} onPress={() => setNewGoal(p => ({...p, category: cat.key}))}
-                                style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 9, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: C.border }}>
-                                <Text style={{ color: newGoal.category === cat.key ? C.accent : C.text, fontSize: 13 }}>{cat.label}</Text>
-                                {newGoal.category === cat.key && <Text style={{ color: C.accent }}>✓</Text>}
-                              </TouchableOpacity>
-                            ))}
-                          </ScrollView>
-                        </>
-                      )}
-                    </View>
-                  )}
-                </>
-              )}
+              {/* update_mode is always 'manual' — auto tracking removed */}
               <Text style={s.label}>Title</Text>
               <TextInput style={s.input} placeholder={addGoalType === 'debt_payoff' ? 'e.g. Pay off car loan' : addGoalType === 'savings' ? 'e.g. Emergency fund' : addGoalType === 'spending_behavior' ? 'e.g. Reduce dining out' : 'e.g. Under budget streak'} placeholderTextColor={C.textMuted} value={newGoal.title || ''} onChangeText={v => setNewGoal(p => ({...p, title: v}))} />
               {addGoalType !== 'streak' && (
