@@ -949,7 +949,7 @@ export default function App() {
     if (!userIdRef.current) return;
     setSyncing(true); setSyncError(''); setPlaidError(''); setPlaidStatus('');
     try {
-      const res = await authFetch(`/api/transactions/sync/${userIdRef.current}`, { method: 'POST' });
+      const res = await apiCall(`/api/transactions/sync/${userIdRef.current}`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) {
         setSyncError(data.error || 'Sync failed');
@@ -958,7 +958,7 @@ export default function App() {
         if (data.total === 0) setSyncError('Plaid returned 0 transactions. Try reconnecting your bank.');
         else if (data.synced === 0 && data.total > 0) setSyncError(`Failed to save transactions (0/${data.total} saved).`);
         else { setSyncError(''); setPlaidStatus(`Synced ${data.synced} transaction${data.synced !== 1 ? 's' : ''}`); setTimeout(() => setPlaidStatus(''), 4000); }
-        const txRes = await authFetch(`/api/transactions/${userIdRef.current}`);
+        const txRes = await apiCall(`/api/transactions/${userIdRef.current}`);
         const txData = txRes.ok ? await txRes.json() : {};
         const fresh = (txData.transactions || []).filter(tx => !isIncomeTx(tx));
         if (fresh.length > 0) {
@@ -973,8 +973,8 @@ export default function App() {
         try {
           // Fresh fetch of both transactions and budgets (don't rely on state timing)
           const [allTxRes, budgetsRes] = await Promise.all([
-            authFetch(`/api/transactions/${userIdRef.current}`),
-            authFetch(`/api/budgets/${userIdRef.current}`),
+            apiCall(`/api/transactions/${userIdRef.current}`),
+            apiCall(`/api/budgets/${userIdRef.current}`),
           ]);
           const allTxs = allTxRes.ok ? ((await allTxRes.json()).transactions || []) : [];
           const freshBudgets = budgetsRes.ok ? ((await budgetsRes.json()).budgets || []) : [];
@@ -1816,9 +1816,17 @@ export default function App() {
 
   if (dashboardLoading) {
     return (
-      <View style={[s.bg, s.center]}>
-        <ActivityIndicator size="large" color={C.accent} />
-        <Text style={[s.subText, { marginTop: 16 }]}>Loading your finances...</Text>
+      <View style={{ flex: 1, backgroundColor: '#060c17', justifyContent: 'center', alignItems: 'center' }}>
+        <StatusBar barStyle="light-content" backgroundColor="#060c17" />
+        <View style={{ position: 'absolute', top: -120, right: -120, width: 380, height: 380, borderRadius: 190, backgroundColor: '#1E5EFF', opacity: 0.07 }} />
+        <View style={{ position: 'absolute', top: 40, right: -60, width: 200, height: 200, borderRadius: 100, borderWidth: 1.5, borderColor: '#16B7F6', opacity: 0.18 }} />
+        <View style={{ position: 'absolute', bottom: -80, left: -80, width: 320, height: 320, borderRadius: 160, backgroundColor: '#16B7F6', opacity: 0.07 }} />
+        <View style={{ position: 'absolute', bottom: 80, right: -40, width: 180, height: 180, borderRadius: 90, borderWidth: 1.5, borderColor: '#1EDFD5', opacity: 0.15 }} />
+        <Image
+          source={require('./assets/ChatGPT Image May 23, 2026, 02_15_23 PM.png')}
+          style={{ width: 300, height: 180, resizeMode: 'contain' }}
+        />
+        <ActivityIndicator color="#16B7F6" style={{ marginTop: 40 }} />
       </View>
     );
   }
