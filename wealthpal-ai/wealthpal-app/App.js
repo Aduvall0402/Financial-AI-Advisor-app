@@ -210,6 +210,7 @@ export default function App() {
   const [displayName, setDisplayName] = useState('');
   const [userId, setUserId] = useState(null);
   const userIdRef = useRef(null);
+  const txListRef = useRef(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [stayLoggedIn, setStayLoggedIn] = useState(true);
@@ -408,7 +409,7 @@ export default function App() {
   // Transactions sort
   const [txSortBy, setTxSortBy] = useState('date_desc');
   const [txSortDropdownVisible, setTxSortDropdownVisible] = useState(false);
-  const [txFilterCategory, setTxFilterCategory] = useState('all');
+  const [txFilterCategories, setTxFilterCategories] = useState(new Set());
   const [txFilterDropdownVisible, setTxFilterDropdownVisible] = useState(false);
   const [txFilterAccount, setTxFilterAccount] = useState('all');
   const [txFilterAccountVisible, setTxFilterAccountVisible] = useState(false);
@@ -558,9 +559,9 @@ export default function App() {
   }, [transactions]);
 
   const sortedTransactions = useMemo(() => {
-    let txs = txFilterCategory === 'all'
+    let txs = txFilterCategories.size === 0
       ? [...transactions]
-      : transactions.filter(tx => getEffectiveCategory(tx) === txFilterCategory);
+      : transactions.filter(tx => txFilterCategories.has(getEffectiveCategory(tx)));
     if (txFilterAccount !== 'all') txs = txs.filter(tx => tx.account_id === txFilterAccount);
     if (txFilterDateFrom) txs = txs.filter(tx => (tx.transaction_date || '') >= txFilterDateFrom);
     if (txSearch.trim()) {
@@ -579,7 +580,7 @@ export default function App() {
       case 'category':    return txs.sort((a, b) => (getEffectiveCategory(a) || '').localeCompare(getEffectiveCategory(b) || ''));
       default:            return txs.sort((a, b) => new Date(b.transaction_date) - new Date(a.transaction_date));
     }
-  }, [transactions, txSortBy, txFilterCategory, txFilterAccount, txFilterDateFrom, txSearch, getEffectiveCategory]);
+  }, [transactions, txSortBy, txFilterCategories, txFilterAccount, txFilterDateFrom, txSearch, getEffectiveCategory]);
 
   // Insights dropdown
   const [insightsDropdownVisible, setInsightsDropdownVisible] = useState(false);
@@ -2601,10 +2602,14 @@ export default function App() {
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => setTxFilterDropdownVisible(true)}
-            style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: txFilterCategory !== 'all' ? C.accent + '22' : C.surface, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: txFilterCategory !== 'all' ? C.accent : C.border }}
+            style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: txFilterCategories.size > 0 ? C.accent + '22' : C.surface, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: txFilterCategories.size > 0 ? C.accent : C.border }}
           >
-            <Text style={{ color: txFilterCategory !== 'all' ? C.accent : C.textSub, fontSize: 12, fontWeight: txFilterCategory !== 'all' ? '700' : '400' }}>
-              {txFilterCategory === 'all' ? 'Category' : (PLAID_CATEGORIES.find(c=>c.key===txFilterCategory)?.label || txFilterCategory.replace(/_/g,' '))}
+            <Text style={{ color: txFilterCategories.size > 0 ? C.accent : C.textSub, fontSize: 12, fontWeight: txFilterCategories.size > 0 ? '700' : '400' }}>
+              {txFilterCategories.size === 0
+                ? 'Category'
+                : txFilterCategories.size === 1
+                  ? (PLAID_CATEGORIES.find(c => c.key === [...txFilterCategories][0])?.label || [...txFilterCategories][0].replace(/_/g, ' '))
+                  : `${txFilterCategories.size} categories`}
             </Text>
           </TouchableOpacity>
           {Object.keys(dbAccountMap).length > 1 && (
@@ -2619,12 +2624,17 @@ export default function App() {
           )}
         </View>
       )}
-      {txFilterDateFrom && (
+      {(txFilterDateFrom || txFilterCategories.size > 0) && (
         <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginBottom: 8, backgroundColor: C.accent + '18', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: C.accent + '44' }}>
           <Text style={{ color: C.accent, fontSize: 12, flex: 1 }}>
-            Showing{txFilterCategory !== 'all' ? ` ${PLAID_CATEGORIES.find(c=>c.key===txFilterCategory)?.label || txFilterCategory}` : ''} since <Text style={{ fontWeight: '700' }}>{txFilterDateFrom}</Text>
+            {txFilterCategories.size > 0
+              ? (txFilterCategories.size === 1
+                ? (PLAID_CATEGORIES.find(c=>c.key===[...txFilterCategories][0])?.label || [...txFilterCategories][0])
+                : `${txFilterCategories.size} categories`)
+              : 'All categories'}
+            {txFilterDateFrom ? <Text> since <Text style={{ fontWeight: '700' }}>{txFilterDateFrom}</Text></Text> : null}
           </Text>
-          <TouchableOpacity onPress={() => { setTxFilterDateFrom(null); setTxFilterCategory('all'); }}>
+          <TouchableOpacity onPress={() => { setTxFilterDateFrom(null); setTxFilterCategories(new Set()); }}>
             <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700', marginLeft: 8 }}>Clear ✕</Text>
           </TouchableOpacity>
         </View>
@@ -2647,10 +2657,12 @@ export default function App() {
         </View>
       ) : (
         <FlatList
+          ref={txListRef}
           data={sortedTransactions}
           keyExtractor={(item, i) => item.id?.toString() || item.plaid_transaction_id || i.toString()}
           contentContainerStyle={{ padding: 16, paddingTop: 4 }}
           showsVerticalScrollIndicator={false}
+          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshAll} tintColor={C.accent} />}
           renderItem={({ item }) => {
             const itemKey = item.id || item.plaid_transaction_id;
@@ -4273,7 +4285,7 @@ export default function App() {
             <TouchableOpacity
               style={[s.btn, { alignSelf: 'stretch', marginBottom: 10 }]}
               onPress={() => {
-                setTxFilterCategory(budgetNavPrompt.category);
+                setTxFilterCategories(new Set([budgetNavPrompt.category]));
                 setTxFilterDateFrom(budgetNavPrompt.periodStart);
                 setActiveTab('transactions');
                 setBudgetNavPrompt(null);
@@ -4512,10 +4524,12 @@ export default function App() {
                   setSavingTx(true);
                   try {
                     await apiCall(`/api/transactions/${editingTx.id}`, { method: 'PATCH', body: JSON.stringify({ ...editTxFields, amount: parseFloat(editTxFields.amount) }) });
-                    // Save category rule if checked
-                    if (rememberCategoryRule && editTxFields.merchant_name) {
+                    // Always sync the category rule so getEffectiveCategory stays consistent
+                    if (editTxFields.merchant_name) {
                       const key = editTxFields.merchant_name.toLowerCase();
-                      saveCategoryRules({ ...categoryRules, [key]: editTxFields.category });
+                      if (rememberCategoryRule || categoryRules[key]) {
+                        saveCategoryRules({ ...categoryRules, [key]: editTxFields.category });
+                      }
                     }
                     // Contribute to goal if selected
                     if (contributeToGoalId) {
@@ -5059,25 +5073,44 @@ export default function App() {
         </TouchableOpacity>
       </Modal>
 
-      {/* Transaction Category Filter Dropdown Modal */}
+      {/* Transaction Category Filter Modal — multi-select */}
       <Modal visible={txFilterDropdownVisible} animationType="fade" transparent onRequestClose={() => setTxFilterDropdownVisible(false)}>
         <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setTxFilterDropdownVisible(false)}>
-          <View style={[s.modalCard, { paddingBottom: 8 }]}>
-            <Text style={s.modalTitle}>Filter by Category</Text>
-            <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
-              {[['all', 'All Categories'], ...Array.from(new Set(transactions.map(tx => getEffectiveCategory(tx)).filter(Boolean))).sort().map(c => [c, PLAID_CATEGORIES.find(p => p.key === c)?.label || c.replace(/_/g, ' ')])].map(([key, label]) => (
-                <TouchableOpacity
-                  key={key}
-                  onPress={() => { setTxFilterCategory(key); setTxFilterDropdownVisible(false); }}
-                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: C.border }}
-                >
-                  <Text style={{ color: txFilterCategory === key ? C.accent : C.text, fontSize: 15, fontWeight: txFilterCategory === key ? '700' : '400' }}>{label}</Text>
-                  {txFilterCategory === key && <Text style={{ color: C.accent, fontSize: 16 }}>✓</Text>}
+          <View style={[s.modalCard, { paddingBottom: 8 }]} onStartShouldSetResponder={() => true}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <Text style={s.modalTitle}>Filter by Category</Text>
+              {txFilterCategories.size > 0 && (
+                <TouchableOpacity onPress={() => setTxFilterCategories(new Set())}>
+                  <Text style={{ color: C.accent, fontSize: 13, fontWeight: '600' }}>Clear All</Text>
                 </TouchableOpacity>
-              ))}
+              )}
+            </View>
+            <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false}>
+              {Array.from(new Set(transactions.map(tx => getEffectiveCategory(tx)).filter(Boolean))).sort().map(key => {
+                const label = PLAID_CATEGORIES.find(p => p.key === key)?.label || key.replace(/_/g, ' ');
+                const checked = txFilterCategories.has(key);
+                return (
+                  <TouchableOpacity
+                    key={key}
+                    onPress={() => setTxFilterCategories(prev => {
+                      const next = new Set(prev);
+                      if (next.has(key)) next.delete(key); else next.add(key);
+                      return next;
+                    })}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: C.border, gap: 12 }}
+                  >
+                    <View style={{ width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: checked ? C.accent : C.border, backgroundColor: checked ? C.accent : 'transparent', justifyContent: 'center', alignItems: 'center' }}>
+                      {checked && <Text style={{ color: '#fff', fontSize: 13, fontWeight: '800' }}>✓</Text>}
+                    </View>
+                    <Text style={{ color: checked ? C.accent : C.text, fontSize: 14, fontWeight: checked ? '700' : '400', flex: 1 }}>{label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
             </ScrollView>
-            <TouchableOpacity style={[s.linkRow, { marginTop: 4 }]} onPress={() => setTxFilterDropdownVisible(false)}>
-              <Text style={s.linkText}>Cancel</Text>
+            <TouchableOpacity style={[s.btn, { marginTop: 12 }]} onPress={() => setTxFilterDropdownVisible(false)}>
+              <Text style={s.btnText}>
+                {txFilterCategories.size === 0 ? 'Show All' : `Show ${txFilterCategories.size} categor${txFilterCategories.size === 1 ? 'y' : 'ies'}`}
+              </Text>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
