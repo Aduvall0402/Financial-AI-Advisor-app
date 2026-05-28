@@ -530,7 +530,7 @@ export default function App() {
   const fetchRecurring = useCallback(async () => {
     if (!userIdRef.current) return;
     try {
-      const res = await fetch(`${API_URL}/api/recurring/${userIdRef.current}`);
+      const res = await apiCall(`/api/recurring/${userIdRef.current}`);
       const d = await res.json();
       setRecurringTxs(d.recurring || []);
     } catch {}
@@ -645,13 +645,13 @@ export default function App() {
         setDashboardLoading(true);
         const uid = m.savedUserId;
         Promise.all([
-          fetch(`${API_URL}/api/ai/financial-summary/${uid}`).then(r => r.ok ? r.json() : null).catch(() => null),
+          apiCall(`/api/ai/financial-summary/${uid}`).then(r => r.ok ? r.json() : null).catch(() => null),
           fetchAccounts(uid),
           fetchTransactions(uid),
           fetchGoals(uid),
           fetchGroups(uid),
           fetchBudgets(uid),
-          fetch(`${API_URL}/api/users/${uid}/subscription`).then(r => r.json()).then(d => setIsSubscribed(d.is_subscribed === true)).catch(() => {}),
+          apiCall(`/api/users/${uid}/subscription`).then(r => r.json()).then(d => setIsSubscribed(d.is_subscribed === true)).catch(() => {}),
         ]).then(([summary]) => {
           if (summary) setDashboardData(summary);
           setDashboardLoading(false);
@@ -768,7 +768,7 @@ export default function App() {
       if (!res.ok) { setError(data.error || 'Login failed'); return; }
       const uid = data.session.user.id;
       const token = data.session.access_token;
-      if (token) { setAuthToken(token); authTokenRef.current = token; }
+      if (token) { setAuthToken(token); authTokenRef.current = token; AsyncStorage.setItem('widgetAuthToken', token); }
       const firstName = data.first_name || data.session.user.user_metadata?.full_name?.split(' ')[0] || email.split('@')[0];
       setUserId(uid); userIdRef.current = uid;
       AsyncStorage.setItem('widgetUserId', uid);
@@ -784,7 +784,7 @@ export default function App() {
       setPassword('');
       setDashboardLoading(true);
       try {
-        const s = await fetch(`${API_URL}/api/ai/financial-summary/${uid}`);
+        const s = await apiCall(`/api/ai/financial-summary/${uid}`);
         if (s.ok) setDashboardData(await s.json());
       } catch { setDashboardData({ monthly_spending: 0, top_categories: [] }); }
       setScreen('dashboard');
@@ -795,7 +795,7 @@ export default function App() {
       fetchGroups(uid);
       fetchBudgets(uid);
       fetchRecurring();
-      fetch(`${API_URL}/api/users/${uid}/subscription`).then(r => r.json()).then(d => setIsSubscribed(d.is_subscribed === true)).catch(() => {});
+      apiCall(`/api/users/${uid}/subscription`).then(r => r.json()).then(d => setIsSubscribed(d.is_subscribed === true)).catch(() => {});
     } catch { setError('Could not connect to server'); }
     finally { setLoading(false); }
   };
@@ -824,7 +824,7 @@ export default function App() {
       }
       const uid = data.user.id;
       const token = data.session?.access_token;
-      if (token) { setAuthToken(token); authTokenRef.current = token; }
+      if (token) { setAuthToken(token); authTokenRef.current = token; AsyncStorage.setItem('widgetAuthToken', token); }
       setUserId(uid); userIdRef.current = uid;
       AsyncStorage.setItem('widgetUserId', uid);
       setDisplayName(firstName.trim());
@@ -832,7 +832,7 @@ export default function App() {
       setPassword(''); setFirstName(''); setLastName('');
       setDashboardLoading(true);
       try {
-        const s = await fetch(`${API_URL}/api/ai/financial-summary/${uid}`);
+        const s = await apiCall(`/api/ai/financial-summary/${uid}`);
         if (s.ok) setDashboardData(await s.json());
       } catch { setDashboardData({ monthly_spending: 0, top_categories: [] }); }
       setScreen('dashboard');
@@ -843,7 +843,7 @@ export default function App() {
       fetchGroups(uid);
       fetchBudgets(uid);
       fetchRecurring();
-      fetch(`${API_URL}/api/users/${uid}/subscription`).then(r => r.json()).then(d => setIsSubscribed(d.is_subscribed === true)).catch(() => {});
+      apiCall(`/api/users/${uid}/subscription`).then(r => r.json()).then(d => setIsSubscribed(d.is_subscribed === true)).catch(() => {});
       // Show tutorial for new users
       setTimeout(() => { setTutorialStep(0); setTutorialVisible(true); }, 600);
     } catch { setError('Could not connect to server'); }
@@ -868,8 +868,8 @@ export default function App() {
     setReceiptScanLoading(true);
     setReceiptScanError('');
     try {
-      const res = await fetch(`${API_URL}/api/ai/scan-receipt`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      const res = await apiCall(`/api/ai/scan-receipt`, {
+        method: 'POST',
         body: JSON.stringify({ imageBase64: result.assets[0].base64 }),
       });
       const data = await res.json();
@@ -898,6 +898,7 @@ export default function App() {
       setDisplayName(''); setError('');
       AsyncStorage.removeItem('displayName');
       AsyncStorage.removeItem('widgetUserId');
+      AsyncStorage.removeItem('widgetAuthToken');
       AsyncStorage.removeItem('widgetLastResponse');
       AsyncStorage.multiRemove(['savedUserId', 'savedToken', 'savedEmail']);
       setTransactions([]); setAccounts([]); setSelectedAccount(null);
@@ -912,7 +913,7 @@ export default function App() {
     if (!id) return;
     setLoadingAccounts(true); setAccountsError(false);
     try {
-      const res = await fetch(`${API_URL}/api/plaid/accounts/${id}`);
+      const res = await apiCall(`/api/plaid/accounts/${id}`);
       if (!res.ok) { setAccountsError(true); return; }
       const data = await res.json();
       if (data.accounts?.length > 0) {
@@ -940,7 +941,7 @@ export default function App() {
     if (!id) return;
     setLoadingTx(true);
     try {
-      const res = await fetch(`${API_URL}/api/transactions/${id}`);
+      const res = await apiCall(`/api/transactions/${id}`);
       const data = await res.json();
       setTransactions(data.transactions || []);
     } catch {}
@@ -1080,8 +1081,8 @@ export default function App() {
     if (!editFirst.trim()) { setProfileError('First name is required'); return; }
     setSavingProfile(true); setProfileError('');
     try {
-      const res = await fetch(`${API_URL}/api/auth/profile/${userIdRef.current}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      const res = await apiCall(`/api/auth/profile/${userIdRef.current}`, {
+        method: 'PUT',
         body: JSON.stringify({ firstName: editFirst.trim(), lastName: editLast.trim(), email }),
       });
       const data = await res.json();
@@ -1116,7 +1117,7 @@ export default function App() {
     await cancelNotif(key);
     let body = `You've spent $${fmtMoney(monthlySpend)} in the last 30 days across ${transactions.length} transactions.`;
     try {
-      const res = await fetch(`${API_URL}/api/ai/notification-summary/${userIdRef.current}`);
+      const res = await apiCall(`/api/ai/notification-summary/${userIdRef.current}`);
       if (res.ok) { const d = await res.json(); body = d.summary || body; }
     } catch { /* use fallback body */ }
     const id = await Notifications.scheduleNotificationAsync({
@@ -1192,8 +1193,8 @@ export default function App() {
     if (!userId) { setPlaidError('Please log in first'); return; }
     setPlaidLoading(true); setPlaidError(''); setPlaidStatus('');
     try {
-      const res = await fetch(`${API_URL}/api/plaid/create-link-token`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      const res = await apiCall(`/api/plaid/create-link-token`, {
+        method: 'POST',
         body: JSON.stringify({ userId }),
       });
       const data = await res.json();
@@ -1202,9 +1203,9 @@ export default function App() {
       open({
         onSuccess: async (success) => {
           try {
-            const er = await fetch(`${API_URL}/api/plaid/exchange-token`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ publicToken: success.publicToken, userId }),
+            const er = await apiCall(`/api/plaid/exchange-token`, {
+              method: 'POST',
+              body: JSON.stringify({ publicToken: success.publicToken }),
             });
             const ed = await er.json();
             if (!er.ok) throw new Error(ed.error || 'Exchange failed');
@@ -1239,9 +1240,9 @@ export default function App() {
     // Include last 10 turns of conversation history for context
     const history = chatMessages.slice(-10).map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text }));
     try {
-      const res = await fetch(`${API_URL}/api/ai/chat`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, message: msg, today: localToday, history }),
+      const res = await apiCall(`/api/ai/chat`, {
+        method: 'POST',
+        body: JSON.stringify({ message: msg, today: localToday, history }),
       });
       const data = await res.json();
       if (res.status === 429 && data.rate_limited) {
@@ -1283,9 +1284,10 @@ export default function App() {
       if (!uri) { setTranscribingVoice(false); return; }
       const formData = new FormData();
       formData.append('audio', { uri, name: 'voice.m4a', type: 'audio/m4a' });
+      const token = authTokenRef.current;
       const res = await fetch(`${API_URL}/api/ai/transcribe`, {
         method: 'POST',
-        headers: { 'Content-Type': 'multipart/form-data' },
+        headers: { ...(token ? { 'Authorization': `Bearer ${token}` } : {}), 'Content-Type': 'multipart/form-data' },
         body: formData,
       });
       const data = await res.json();
@@ -1328,7 +1330,7 @@ export default function App() {
     if (!id) return;
     setGoalsLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/goals/${id}`);
+      const res = await apiCall(`/api/goals/${id}`);
       const d = await res.json();
       setGoals(d.goals || []);
     } catch {}
@@ -1339,7 +1341,7 @@ export default function App() {
     const id = uid || userIdRef.current;
     if (!id) return;
     try {
-      const res = await fetch(`${API_URL}/api/groups/${id}`);
+      const res = await apiCall(`/api/groups/${id}`);
       const d = await res.json();
       setGroups(d.groups || []);
     } catch {}
@@ -1348,9 +1350,9 @@ export default function App() {
   const fetchGroupDetail = async (groupId) => {
     try {
       const [detailRes, sharedRes, budgetRes] = await Promise.all([
-        fetch(`${API_URL}/api/groups/${groupId}/detail`),
-        fetch(`${API_URL}/api/groups/${groupId}/shared-transactions`),
-        fetch(`${API_URL}/api/groups/${groupId}/budgets`),
+        apiCall(`/api/groups/${groupId}/detail`),
+        apiCall(`/api/groups/${groupId}/shared-transactions`),
+        apiCall(`/api/groups/${groupId}/budgets`),
       ]);
       if (detailRes.ok) setGroupDetail(await detailRes.json());
       if (sharedRes.ok) { const d = await sharedRes.json(); setGroupSharedTx(d.transactions || []); }
@@ -1361,7 +1363,7 @@ export default function App() {
 
   const fetchGroupSharedTx = async (groupId) => {
     try {
-      const res = await fetch(`${API_URL}/api/groups/${groupId}/shared-transactions`);
+      const res = await apiCall(`/api/groups/${groupId}/shared-transactions`);
       const d = await res.json();
       setGroupSharedTx(d.transactions || []);
     } catch {}
@@ -1371,7 +1373,7 @@ export default function App() {
     const id = uid || userIdRef.current;
     if (!id) return;
     try {
-      const res = await fetch(`${API_URL}/api/budgets/${id}`);
+      const res = await apiCall(`/api/budgets/${id}`);
       const d = await res.json();
       setBudgets(d.budgets || []);
     } catch {}
@@ -1408,8 +1410,8 @@ export default function App() {
           .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
       }
       if (Math.abs(total - goal.current_amount) > 0.01) {
-        await fetch(`${API_URL}/api/goals/${goal.id}`, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        await apiCall(`/api/goals/${goal.id}`, {
+          method: 'PATCH',
           body: JSON.stringify({ current_amount: total, is_completed: goal.target_amount > 0 && total >= goal.target_amount }),
         });
       }
@@ -1814,7 +1816,7 @@ export default function App() {
             style={[s.btn, { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border }]}
             onPress={async () => {
               try {
-                await fetch(`${API_URL}/api/auth/resend-verification`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: pendingVerifyEmail }) });
+                await apiCall(`/api/auth/resend-verification`, { method: 'POST', body: JSON.stringify({ email: pendingVerifyEmail }) });
                 Alert.alert('Sent', 'Verification email resent. Check your inbox.');
               } catch { Alert.alert('Error', 'Could not resend. Try again.'); }
             }}
@@ -2718,7 +2720,7 @@ export default function App() {
             </TouchableOpacity>
             <TouchableOpacity
               style={{ borderRadius: 9, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: C.border }}
-              onPress={() => Alert.alert('Delete Goal', `Delete "${goal.title}"?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await fetch(`${API_URL}/api/goals/${goal.id}`, { method: 'DELETE' }); fetchGoals(); } }])}
+              onPress={() => Alert.alert('Delete Goal', `Delete "${goal.title}"?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await apiCall(`/api/goals/${goal.id}`, { method: 'DELETE' }); fetchGoals(); } }])}
             >
               <Text style={{ color: C.textMuted, fontSize: 13 }}>✕</Text>
             </TouchableOpacity>
@@ -2877,7 +2879,7 @@ export default function App() {
             </TouchableOpacity>
             <TouchableOpacity
               style={{ borderRadius: 9, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: C.border }}
-              onPress={() => Alert.alert('Delete Goal', `Delete "${goal.title}"?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await fetch(`${API_URL}/api/goals/${goal.id}`, { method: 'DELETE' }); fetchGoals(); } }])}
+              onPress={() => Alert.alert('Delete Goal', `Delete "${goal.title}"?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await apiCall(`/api/goals/${goal.id}`, { method: 'DELETE' }); fetchGoals(); } }])}
             >
               <Text style={{ color: C.textMuted, fontSize: 13 }}>✕</Text>
             </TouchableOpacity>
@@ -3031,7 +3033,7 @@ export default function App() {
                     <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); setEditingBudget(b); setNewBudgetCat(b.category); setNewBudgetLimit(String(b.monthly_limit)); setNewBudgetPeriod(budgetGlobalPeriod); setNewBudgetPaycycleStart(b.paycycle_start || ''); setNewBudgetPaycycleFreq(b.paycycle_freq || 'biweekly'); setAddBudgetVisible(true); }}>
                       <Text style={{ color: C.accent, fontSize: 12, fontWeight: '600' }}>Edit</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); Alert.alert('Delete Budget', `Delete ${b.category.replace(/_/g,' ')} budget?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await fetch(`${API_URL}/api/budgets/${b.id}`, { method: 'DELETE' }); fetchBudgets(); } }]); }}>
+                    <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); Alert.alert('Delete Budget', `Delete ${b.category.replace(/_/g,' ')} budget?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await apiCall(`/api/budgets/${b.id}`, { method: 'DELETE' }); fetchBudgets(); } }]); }}>
                       <Text style={{ color: C.red, fontSize: 12, fontWeight: '600' }}>Delete</Text>
                     </TouchableOpacity>
                   </View>
@@ -3116,7 +3118,7 @@ export default function App() {
                     </Text>
                   </View>
                   <TouchableOpacity
-                    onPress={() => Alert.alert('Delete Recurring', `Delete "${r.name}"?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await fetch(`${API_URL}/api/recurring/${r.id}`, { method: 'DELETE' }); fetchRecurring(); } }])}
+                    onPress={() => Alert.alert('Delete Recurring', `Delete "${r.name}"?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await apiCall(`/api/recurring/${r.id}`, { method: 'DELETE' }); fetchRecurring(); } }])}
                   >
                     <Text style={{ color: C.red, fontSize: 12, fontWeight: '600' }}>✕</Text>
                   </TouchableOpacity>
@@ -3269,7 +3271,7 @@ export default function App() {
                     {groupShareLoading ? <ActivityIndicator size="small" color={C.accent} /> : (
                       <Switch value={!!m.share_transactions} onValueChange={async (v) => {
                         setGroupShareLoading(true);
-                        await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ share_transactions: v, share_accounts: !!m.share_accounts }) });
+                        await apiCall(`/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, { method: 'PATCH', body: JSON.stringify({ share_transactions: v, share_accounts: !!m.share_accounts }) });
                         await fetchGroupDetail(currentGroup.id);
                         setGroupShareLoading(false);
                       }} trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff" />
@@ -3283,7 +3285,7 @@ export default function App() {
                     {groupShareLoading ? <ActivityIndicator size="small" color={C.accent} /> : (
                       <Switch value={!!m.share_accounts} onValueChange={async (v) => {
                         setGroupShareLoading(true);
-                        await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ share_transactions: !!m.share_transactions, share_accounts: v }) });
+                        await apiCall(`/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, { method: 'PATCH', body: JSON.stringify({ share_transactions: !!m.share_transactions, share_accounts: v }) });
                         await fetchGroupDetail(currentGroup.id);
                         setGroupShareLoading(false);
                       }} trackColor={{ false: C.border, true: C.accent }} thumbColor="#fff" />
@@ -3308,7 +3310,7 @@ export default function App() {
                     </View>
                   </View>
                   {m.email !== email && (
-                    <TouchableOpacity onPress={() => Alert.alert('Remove Member', `Remove ${m.email} from this group?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Remove', style: 'destructive', onPress: async () => { await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, { method: 'DELETE' }); fetchGroupDetail(currentGroup.id); } }])}>
+                    <TouchableOpacity onPress={() => Alert.alert('Remove Member', `Remove ${m.email} from this group?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Remove', style: 'destructive', onPress: async () => { await apiCall(`/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, { method: 'DELETE' }); fetchGroupDetail(currentGroup.id); } }])}>
                       <Text style={{ color: C.red, fontSize: 11, fontWeight: '600' }}>Remove</Text>
                     </TouchableOpacity>
                   )}
@@ -3318,7 +3320,7 @@ export default function App() {
               {/* Delete Group */}
               <TouchableOpacity
                 style={{ marginTop: 16, marginBottom: 4, paddingVertical: 12, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: C.red, backgroundColor: 'rgba(239,68,68,0.08)' }}
-                onPress={() => Alert.alert('Delete Group', `Delete "${currentGroup.name}" and all its data? This cannot be undone.`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await fetch(`${API_URL}/api/groups/${currentGroup.id}`, { method: 'DELETE' }); setCurrentGroup(null); fetchGroups(); setGroupSettingsOpen(false); } }])}
+                onPress={() => Alert.alert('Delete Group', `Delete "${currentGroup.name}" and all its data? This cannot be undone.`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await apiCall(`/api/groups/${currentGroup.id}`, { method: 'DELETE' }); setCurrentGroup(null); fetchGroups(); setGroupSettingsOpen(false); } }])}
               >
                 <Text style={{ color: C.red, fontWeight: '700', fontSize: 14 }}>Delete Group</Text>
               </TouchableOpacity>
@@ -3339,7 +3341,7 @@ export default function App() {
                   style={{ backgroundColor: C.accent, borderRadius: 14, paddingHorizontal: 16, justifyContent: 'center' }}
                   onPress={async () => {
                     if (!addMemberEmail.trim()) return;
-                    await fetch(`${API_URL}/api/groups/${currentGroup.id}/members`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: addMemberEmail.trim() }) });
+                    await apiCall(`/api/groups/${currentGroup.id}/members`, { method: 'POST', body: JSON.stringify({ email: addMemberEmail.trim() }) });
                     setAddMemberEmail('');
                     fetchGroupDetail(currentGroup.id);
                   }}
@@ -3476,7 +3478,7 @@ export default function App() {
                   </View>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                     <Text style={{ color: C.textMuted, fontSize: 11 }}>{periodLabel} · {pct >= 100 ? `$${fmtMoney(groupSpent - limit)} over` : `$${fmtMoney(Math.max(0, limit - groupSpent))} left`}</Text>
-                    <TouchableOpacity onPress={() => Alert.alert('Delete Budget', `Delete ${(b.category||'').replace(/_/g,' ')} budget?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await fetch(`${API_URL}/api/groups/${currentGroup.id}/budgets/${b.id}`, { method: 'DELETE' }); fetchGroupDetail(currentGroup.id); } }])}>
+                    <TouchableOpacity onPress={() => Alert.alert('Delete Budget', `Delete ${(b.category||'').replace(/_/g,' ')} budget?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await apiCall(`/api/groups/${currentGroup.id}/budgets/${b.id}`, { method: 'DELETE' }); fetchGroupDetail(currentGroup.id); } }])}>
                       <Text style={{ color: C.red, fontSize: 12 }}>Delete</Text>
                     </TouchableOpacity>
                   </View>
@@ -3571,8 +3573,8 @@ export default function App() {
                   <Switch
                     value={!!m.share_transactions}
                     onValueChange={async (v) => {
-                      await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, {
-                        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                      await apiCall(`/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, {
+                        method: 'PATCH',
                         body: JSON.stringify({ share_transactions: v, share_accounts: !!m.share_accounts }),
                       });
                       fetchGroupDetail(currentGroup.id);
@@ -3595,8 +3597,8 @@ export default function App() {
                         setAcctShareSelectedIds(new Set(accounts.map(a => a.account_id)));
                         setAcctShareModalVisible(true);
                       } else {
-                        await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, {
-                          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                        await apiCall(`/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, {
+                          method: 'PATCH',
                           body: JSON.stringify({ share_transactions: !!m.share_transactions, share_accounts: false }),
                         });
                         fetchGroupDetail(currentGroup.id);
@@ -3631,7 +3633,7 @@ export default function App() {
                 </View>
                 {m.email !== email && (
                   <TouchableOpacity onPress={async () => {
-                    await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, { method: 'DELETE' });
+                    await apiCall(`/api/groups/${currentGroup.id}/members/${encodeURIComponent(m.email)}`, { method: 'DELETE' });
                     fetchGroupDetail(currentGroup.id);
                   }}>
                     <Text style={{ color: C.red, fontSize: 11, fontWeight: '600' }}>Remove</Text>
@@ -3654,7 +3656,7 @@ export default function App() {
                 style={{ backgroundColor: C.accent, borderRadius: 14, paddingHorizontal: 16, justifyContent: 'center' }}
                 onPress={async () => {
                   if (!addMemberEmail.trim()) return;
-                  await fetch(`${API_URL}/api/groups/${currentGroup.id}/members`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: addMemberEmail.trim() }) });
+                  await apiCall(`/api/groups/${currentGroup.id}/members`, { method: 'POST', body: JSON.stringify({ email: addMemberEmail.trim() }) });
                   setAddMemberEmail('');
                   fetchGroupDetail(currentGroup.id);
                 }}
@@ -3823,7 +3825,7 @@ export default function App() {
                     <TouchableOpacity onPress={() => { setEditingBudget(b); setNewBudgetCat(b.category); setNewBudgetLimit(String(b.monthly_limit)); setNewBudgetPeriod(budgetGlobalPeriod); setAddBudgetVisible(true); }}>
                       <Text style={{ color: C.accent, fontSize: 12, fontWeight: '600' }}>Edit</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity onPress={() => Alert.alert('Delete Budget', `Delete ${b.category.replace(/_/g,' ')} budget?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await fetch(`${API_URL}/api/budgets/${b.id}`, { method: 'DELETE' }); fetchBudgets(); } }])}>
+                    <TouchableOpacity onPress={() => Alert.alert('Delete Budget', `Delete ${b.category.replace(/_/g,' ')} budget?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await apiCall(`/api/budgets/${b.id}`, { method: 'DELETE' }); fetchBudgets(); } }])}>
                       <Text style={{ color: C.red, fontSize: 12, fontWeight: '600' }}>Delete</Text>
                     </TouchableOpacity>
                   </View>
@@ -4292,8 +4294,8 @@ export default function App() {
               onPress={async () => {
                 const myMember = groupDetail.members.find(m => m.email === email);
                 if (myMember) {
-                  await fetch(`${API_URL}/api/groups/${currentGroup.id}/members/${encodeURIComponent(myMember.email)}`, {
-                    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                  await apiCall(`/api/groups/${currentGroup.id}/members/${encodeURIComponent(myMember.email)}`, {
+                    method: 'PATCH',
                     body: JSON.stringify({ share_transactions: !!myMember.share_transactions, share_accounts: acctShareSelectedIds.size > 0 }),
                   });
                   fetchGroupDetail(currentGroup.id);
@@ -4447,7 +4449,7 @@ export default function App() {
                 onPress={async () => {
                   setSavingTx(true);
                   try {
-                    await fetch(`${API_URL}/api/transactions/${editingTx.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...editTxFields, amount: parseFloat(editTxFields.amount) }) });
+                    await apiCall(`/api/transactions/${editingTx.id}`, { method: 'PATCH', body: JSON.stringify({ ...editTxFields, amount: parseFloat(editTxFields.amount) }) });
                     // Save category rule if checked
                     if (rememberCategoryRule && editTxFields.merchant_name) {
                       const key = editTxFields.merchant_name.toLowerCase();
@@ -4458,7 +4460,7 @@ export default function App() {
                       const goal = goals.find(g => g.id === contributeToGoalId);
                       if (goal) {
                         const newAmt = (goal.current_amount || 0) + parseFloat(editTxFields.amount || 0);
-                        await fetch(`${API_URL}/api/goals/${contributeToGoalId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current_amount: newAmt, is_completed: goal.target_amount > 0 && newAmt >= goal.target_amount }) });
+                        await apiCall(`/api/goals/${contributeToGoalId}`, { method: 'PATCH', body: JSON.stringify({ current_amount: newAmt, is_completed: goal.target_amount > 0 && newAmt >= goal.target_amount }) });
                         fetchGoals();
                       }
                     }
@@ -4536,10 +4538,9 @@ export default function App() {
                   setSavingReceipt(true);
                   setReceiptScanError('');
                   try {
-                    const res = await fetch(`${API_URL}/api/transactions`, {
-                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    const res = await apiCall(`/api/transactions`, {
+                      method: 'POST',
                       body: JSON.stringify({
-                        user_id: userId,
                         merchant_name: receiptFields.merchant_name,
                         amount: parseFloat(receiptFields.amount),
                         transaction_date: receiptFields.transaction_date || new Date().toISOString().split('T')[0],
@@ -4641,7 +4642,7 @@ export default function App() {
                 onPress={async () => {
                   setSavingGoal(true);
                   try {
-                    await fetch(`${API_URL}/api/goals`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, type: addGoalType, update_mode: addGoalUpdateMode, ...newGoal, target_amount: parseFloat(newGoal.target_amount) || null, current_amount: parseFloat(newGoal.current_amount) || 0 }) });
+                    await apiCall(`/api/goals`, { method: 'POST', body: JSON.stringify({ type: addGoalType, update_mode: addGoalUpdateMode, ...newGoal, target_amount: parseFloat(newGoal.target_amount) || null, current_amount: parseFloat(newGoal.current_amount) || 0 }) });
                     setAddGoalVisible(false);
                     setNewGoal({});
                     fetchGoals();
@@ -4669,7 +4670,7 @@ export default function App() {
               disabled={!newGroupName.trim()}
               onPress={async () => {
                 try {
-                  const res = await fetch(`${API_URL}/api/groups`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newGroupName.trim(), userId, email }) });
+                  const res = await apiCall(`/api/groups`, { method: 'POST', body: JSON.stringify({ name: newGroupName.trim(), email }) });
                   const d = await res.json();
                   setCreateGroupVisible(false);
                   setNewGroupName('');
@@ -4791,9 +4792,9 @@ export default function App() {
                       : {};
                     let saveRes;
                     if (editingBudget) {
-                      saveRes = await fetch(`${API_URL}/api/budgets/${editingBudget.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ monthly_limit: parseFloat(newBudgetLimit), period: newBudgetPeriod, ...paycycleData }) });
+                      saveRes = await apiCall(`/api/budgets/${editingBudget.id}`, { method: 'PATCH', body: JSON.stringify({ monthly_limit: parseFloat(newBudgetLimit), period: newBudgetPeriod, ...paycycleData }) });
                     } else {
-                      saveRes = await fetch(`${API_URL}/api/budgets`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, category: newBudgetCat.trim(), monthly_limit: parseFloat(newBudgetLimit), period: newBudgetPeriod, ...paycycleData }) });
+                      saveRes = await apiCall(`/api/budgets`, { method: 'POST', body: JSON.stringify({ category: newBudgetCat.trim(), monthly_limit: parseFloat(newBudgetLimit), period: newBudgetPeriod, ...paycycleData }) });
                     }
                     if (!saveRes.ok) {
                       const errData = await saveRes.json().catch(() => ({}));
@@ -4832,7 +4833,7 @@ export default function App() {
               disabled={!newGroupGoal.title?.trim()}
               onPress={async () => {
                 try {
-                  await fetch(`${API_URL}/api/groups/${currentGroup.id}/goals`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...newGroupGoal, target_amount: parseFloat(newGroupGoal.target_amount) || null, created_by: userId }) });
+                  await apiCall(`/api/groups/${currentGroup.id}/goals`, { method: 'POST', body: JSON.stringify({ ...newGroupGoal, target_amount: parseFloat(newGroupGoal.target_amount) || null, created_by: userId }) });
                   setAddGroupGoalVisible(false);
                   setNewGroupGoal({});
                   fetchGroupDetail(currentGroup.id);
@@ -4875,7 +4876,7 @@ export default function App() {
               disabled={!newGroupBudgetCat || !newGroupBudgetLimit}
               onPress={async () => {
                 try {
-                  await fetch(`${API_URL}/api/groups/${currentGroup.id}/budgets`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category: newGroupBudgetCat, monthly_limit: parseFloat(newGroupBudgetLimit), period: newGroupBudgetPeriod, created_by: email }) });
+                  await apiCall(`/api/groups/${currentGroup.id}/budgets`, { method: 'POST', body: JSON.stringify({ category: newGroupBudgetCat, monthly_limit: parseFloat(newGroupBudgetLimit), period: newGroupBudgetPeriod, created_by: email }) });
                   setAddGroupBudgetVisible(false);
                   fetchGroupDetail(currentGroup.id);
                 } catch {}
@@ -5239,9 +5240,9 @@ export default function App() {
                 disabled={!newRecurring.name.trim()}
                 onPress={async () => {
                   try {
-                    await fetch(`${API_URL}/api/recurring`, {
-                      method: 'POST', headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ user_id: userId, ...newRecurring, amount: parseFloat(newRecurring.amount) || 0 }),
+                    await apiCall(`/api/recurring`, {
+                      method: 'POST',
+                      body: JSON.stringify({ ...newRecurring, amount: parseFloat(newRecurring.amount) || 0 }),
                     });
                     setAddRecurringVisible(false);
                     fetchRecurring();
@@ -5356,7 +5357,7 @@ export default function App() {
                     <TouchableOpacity style={[s.btn, { flex: 1, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border }]}
                       onPress={() => {
                         setPostSyncGoalId(null);
-                        if (tx.id) fetch(`${API_URL}/api/transactions/${tx.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reviewed: true }) });
+                        if (tx.id) apiCall(`/api/transactions/${tx.id}`, { method: 'PATCH', body: JSON.stringify({ reviewed: true }) });
                         const next = postSyncIdx + 1;
                         if (next >= postSyncTxs.length) { setPostSyncVisible(false); }
                         else { setPostSyncIdx(next); setPostSyncCat(getEffectiveCategory(postSyncTxs[next])); }
@@ -5372,12 +5373,12 @@ export default function App() {
                           saveCategoryRules(updated);
                           patchBody.category = postSyncCat;
                         }
-                        if (tx.id) await fetch(`${API_URL}/api/transactions/${tx.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patchBody) });
+                        if (tx.id) await apiCall(`/api/transactions/${tx.id}`, { method: 'PATCH', body: JSON.stringify(patchBody) });
                         if (postSyncGoalId) {
                           const goal = goals.find(g => g.id === postSyncGoalId);
                           if (goal) {
                             const newAmt = parseFloat(goal.current_amount || 0) + parseFloat(tx.amount || 0);
-                            await fetch(`${API_URL}/api/goals/${goal.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current_amount: newAmt }) });
+                            await apiCall(`/api/goals/${goal.id}`, { method: 'PATCH', body: JSON.stringify({ current_amount: newAmt }) });
                             fetchGoals();
                           }
                         }

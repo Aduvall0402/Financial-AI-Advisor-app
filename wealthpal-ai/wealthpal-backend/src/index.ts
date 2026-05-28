@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-import express, { Express, Request, Response } from "express";
+import express, { Express, Request, Response, NextFunction } from "express";
 import cors from "cors";
 import multer from "multer";
 import fs from "fs";
@@ -18,6 +18,39 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 app.use(cors());
+
+// ============================================
+// AUTH MIDDLEWARE
+// ============================================
+
+// Verifies the Supabase JWT and attaches user to req.authUser
+async function requireAuth(req: Request, res: Response, next: NextFunction) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Authentication required" });
+  }
+  const token = authHeader.slice(7);
+  try {
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (error || !user) {
+      return res.status(401).json({ error: "Invalid or expired session. Please sign in again." });
+    }
+    (req as any).authUser = user;
+    next();
+  } catch {
+    return res.status(401).json({ error: "Authentication failed" });
+  }
+}
+
+// Ensures the authenticated user matches the :userId param (or body.userId)
+function selfOnly(req: Request, res: Response, next: NextFunction) {
+  const authUser = (req as any).authUser;
+  const requestedId = req.params.userId || req.params.uid;
+  if (requestedId && authUser.id !== requestedId) {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  next();
+}
 
 // ============================================
 // HEALTH CHECK
@@ -95,9 +128,9 @@ app.post("/api/auth/login", async (req: Request, res: Response) => {
 // PLAID ROUTES
 // ============================================
 
-app.post("/api/plaid/create-link-token", async (req: Request, res: Response) => {
+app.post("/api/plaid/create-link-token", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { userId } = req.body;
+    const userId = (req as any).authUser.id;
     if (!userId) {
       return res.status(400).json({ error: "User ID required" });
     }
@@ -110,9 +143,10 @@ app.post("/api/plaid/create-link-token", async (req: Request, res: Response) => 
   }
 });
 
-app.post("/api/plaid/exchange-token", async (req: Request, res: Response) => {
+app.post("/api/plaid/exchange-token", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { publicToken, userId } = req.body;
+    const { publicToken } = req.body;
+    const userId = (req as any).authUser.id;
     if (!publicToken || !userId) {
       return res.status(400).json({ error: "Public token and user ID required" });
     }
@@ -142,7 +176,7 @@ app.post("/api/plaid/exchange-token", async (req: Request, res: Response) => {
   }
 });
 
-app.get("/api/plaid/accounts/:userId", async (req: Request, res: Response) => {
+app.get("/api/plaid/accounts/:userId", requireAuth, selfOnly, async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
     const { data, error } = await supabase
@@ -184,7 +218,7 @@ app.get("/api/plaid/accounts/:userId", async (req: Request, res: Response) => {
 // TRANSACTION ROUTES
 // ============================================
 
-app.get("/api/transactions/:userId", async (req: Request, res: Response) => {
+app.get("/api/transactions/:userId", requireAuth, selfOnly, async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
     const { data, error } = await supabase
@@ -200,7 +234,7 @@ app.get("/api/transactions/:userId", async (req: Request, res: Response) => {
   }
 });
 
-app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) => {
+app.post("/api/transactions/sync/:userId", requireAuth, selfOnly, async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
     const { data: accountData, error: accountError } = await supabase
@@ -279,9 +313,10 @@ app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) =
   }
 });
 
-app.post("/api/transactions", async (req: Request, res: Response) => {
+app.post("/api/transactions", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { user_id, merchant_name, amount, transaction_date, category, description, source } = req.body;
+    const user_id = (req as any).authUser.id;
+    const { merchant_name, amount, transaction_date, category, description, source } = req.body;
     if (!user_id || !merchant_name || amount == null) {
       return res.status(400).json({ error: "Missing required fields" });
     }
@@ -306,9 +341,10 @@ app.post("/api/transactions", async (req: Request, res: Response) => {
   }
 });
 
-app.patch("/api/transactions/:txId", async (req: Request, res: Response) => {
+app.patch("/api/transactions/:txId", requireAuth, async (req: Request, res: Response) => {
   try {
     const { txId } = req.params;
+    const userId = (req as any).authUser.id;
     const { merchant_name, amount, category, transaction_date, description, reviewed } = req.body;
     const updateFields: any = { updated_at: new Date().toISOString() };
     if (merchant_name !== undefined) updateFields.merchant_name = merchant_name;
@@ -320,7 +356,8 @@ app.patch("/api/transactions/:txId", async (req: Request, res: Response) => {
     const { error } = await supabase
       .from("transactions")
       .update(updateFields)
-      .eq("id", txId);
+      .eq("id", txId)
+      .eq("user_id", userId);
     if (error) throw error;
     res.json({ message: "Transaction updated" });
   } catch (error: any) {
@@ -361,7 +398,7 @@ app.post("/api/transactions/sync", async (req: Request, res: Response) => {
 // AI ROUTES
 // ============================================
 
-app.get("/api/ai/financial-summary/:userId", async (req: Request, res: Response) => {
+app.get("/api/ai/financial-summary/:userId", requireAuth, selfOnly, async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
     const { data: transactions, error: txError } = await supabase
@@ -387,9 +424,10 @@ app.get("/api/ai/financial-summary/:userId", async (req: Request, res: Response)
   }
 });
 
-app.post("/api/ai/chat", async (req: Request, res: Response) => {
+app.post("/api/ai/chat", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { userId, message, history } = req.body;
+    const userId = (req as any).authUser.id;
+    const { message, history } = req.body;
     if (!userId || !message) {
       return res.status(400).json({ error: "User ID and message required" });
     }
@@ -555,7 +593,7 @@ app.post("/api/ai/chat", async (req: Request, res: Response) => {
 // NOTIFICATION SUMMARY ROUTE
 // ============================================
 
-app.get("/api/ai/notification-summary/:userId", async (req: Request, res: Response) => {
+app.get("/api/ai/notification-summary/:userId", requireAuth, selfOnly, async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
     const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
@@ -584,7 +622,7 @@ app.get("/api/ai/notification-summary/:userId", async (req: Request, res: Respon
 // SUBSCRIPTION ROUTE
 // ============================================
 
-app.get("/api/users/:userId/subscription", async (req: Request, res: Response) => {
+app.get("/api/users/:userId/subscription", requireAuth, selfOnly, async (req: Request, res: Response) => {
   try {
     const { data } = await supabase.from("users").select("is_subscribed").eq("id", req.params.userId).single();
     res.json({ is_subscribed: data?.is_subscribed === true });
@@ -595,9 +633,9 @@ app.get("/api/users/:userId/subscription", async (req: Request, res: Response) =
 // PROFILE ROUTES
 // ============================================
 
-app.put("/api/auth/profile/:userId", async (req: Request, res: Response) => {
+app.put("/api/auth/profile/:userId", requireAuth, selfOnly, async (req: Request, res: Response) => {
   try {
-    const { userId } = req.params;
+    const userId = (req as any).authUser.id;
     const { firstName, lastName, email } = req.body;
     if (!userId || !firstName) {
       return res.status(400).json({ error: "User ID and first name required" });
@@ -616,7 +654,7 @@ app.put("/api/auth/profile/:userId", async (req: Request, res: Response) => {
 // GOALS ROUTES
 // ============================================
 
-app.get("/api/goals/:userId", async (req: Request, res: Response) => {
+app.get("/api/goals/:userId", requireAuth, selfOnly, async (req: Request, res: Response) => {
   try {
     const { data, error } = await supabase.from("goals").select("*").eq("user_id", req.params.userId).order("created_at", { ascending: false });
     if (error) throw error;
@@ -624,27 +662,30 @@ app.get("/api/goals/:userId", async (req: Request, res: Response) => {
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
-app.post("/api/goals", async (req: Request, res: Response) => {
+app.post("/api/goals", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { user_id, type, title, target_amount, current_amount, category, deadline, notes } = req.body;
+    const user_id = (req as any).authUser.id;
+    const { type, title, target_amount, current_amount, category, deadline, notes } = req.body;
     const { data, error } = await supabase.from("goals").insert([{ user_id, type, title, target_amount, current_amount: current_amount || 0, category, deadline, notes }]).select();
     if (error) throw error;
     res.json({ goal: data[0] });
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
-app.patch("/api/goals/:goalId", async (req: Request, res: Response) => {
+app.patch("/api/goals/:goalId", requireAuth, async (req: Request, res: Response) => {
   try {
     const fields = req.body;
-    const { error } = await supabase.from("goals").update({ ...fields, updated_at: new Date().toISOString() }).eq("id", req.params.goalId);
+    const userId = (req as any).authUser.id;
+    const { error } = await supabase.from("goals").update({ ...fields, updated_at: new Date().toISOString() }).eq("id", req.params.goalId).eq("user_id", userId);
     if (error) throw error;
     res.json({ message: "Goal updated" });
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
-app.delete("/api/goals/:goalId", async (req: Request, res: Response) => {
+app.delete("/api/goals/:goalId", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { error } = await supabase.from("goals").delete().eq("id", req.params.goalId);
+    const userId = (req as any).authUser.id;
+    const { error } = await supabase.from("goals").delete().eq("id", req.params.goalId).eq("user_id", userId);
     if (error) throw error;
     res.json({ message: "Goal deleted" });
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
@@ -654,7 +695,7 @@ app.delete("/api/goals/:goalId", async (req: Request, res: Response) => {
 // GROUPS ROUTES
 // ============================================
 
-app.get("/api/groups/:userId", async (req: Request, res: Response) => {
+app.get("/api/groups/:userId", requireAuth, selfOnly, async (req: Request, res: Response) => {
   try {
     const { data, error } = await supabase.from("group_members").select("group_id, role, share_transactions, share_accounts, groups(id, name, created_by, created_at)").eq("user_id", req.params.userId);
     if (error) throw error;
@@ -662,9 +703,10 @@ app.get("/api/groups/:userId", async (req: Request, res: Response) => {
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
-app.post("/api/groups", async (req: Request, res: Response) => {
+app.post("/api/groups", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { name, userId } = req.body;
+    const userId = (req as any).authUser.id;
+    const { name } = req.body;
     const { data, error } = await supabase.from("groups").insert([{ name, created_by: userId }]).select();
     if (error) throw error;
     const group = data[0];
@@ -673,7 +715,7 @@ app.post("/api/groups", async (req: Request, res: Response) => {
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
-app.get("/api/groups/:groupId/detail", async (req: Request, res: Response) => {
+app.get("/api/groups/:groupId/detail", requireAuth, async (req: Request, res: Response) => {
   try {
     const [membersRes, goalsRes] = await Promise.all([
       supabase.from("group_members").select("*").eq("group_id", req.params.groupId),
@@ -695,7 +737,7 @@ app.get("/api/groups/:groupId/detail", async (req: Request, res: Response) => {
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
-app.post("/api/groups/:groupId/members", async (req: Request, res: Response) => {
+app.post("/api/groups/:groupId/members", requireAuth, async (req: Request, res: Response) => {
   try {
     const { email, share_transactions, share_accounts } = req.body;
     const { data: user } = await supabase.from("users").select("id").eq("email", email).single();
@@ -705,7 +747,7 @@ app.post("/api/groups/:groupId/members", async (req: Request, res: Response) => 
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
-app.patch("/api/groups/:groupId/members/:email", async (req: Request, res: Response) => {
+app.patch("/api/groups/:groupId/members/:email", requireAuth, async (req: Request, res: Response) => {
   try {
     const { share_transactions, share_accounts } = req.body;
     const { error } = await supabase.from("group_members").update({ share_transactions, share_accounts }).eq("group_id", req.params.groupId).eq("email", req.params.email);
@@ -714,14 +756,14 @@ app.patch("/api/groups/:groupId/members/:email", async (req: Request, res: Respo
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
-app.delete("/api/groups/:groupId/members/:email", async (req: Request, res: Response) => {
+app.delete("/api/groups/:groupId/members/:email", requireAuth, async (req: Request, res: Response) => {
   try {
     await supabase.from("group_members").delete().eq("group_id", req.params.groupId).eq("email", req.params.email);
     res.json({ message: "Member removed" });
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
-app.get("/api/groups/:groupId/shared-transactions", async (req: Request, res: Response) => {
+app.get("/api/groups/:groupId/shared-transactions", requireAuth, async (req: Request, res: Response) => {
   try {
     const { data: members, error: membersError } = await supabase
       .from("group_members")
@@ -751,7 +793,7 @@ app.get("/api/groups/:groupId/shared-transactions", async (req: Request, res: Re
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
-app.post("/api/groups/:groupId/goals", async (req: Request, res: Response) => {
+app.post("/api/groups/:groupId/goals", requireAuth, async (req: Request, res: Response) => {
   try {
     const { title, target_amount, deadline, created_by } = req.body;
     const { data, error } = await supabase.from("group_goals").insert([{ group_id: req.params.groupId, title, target_amount, current_amount: 0, deadline, created_by }]).select();
@@ -760,7 +802,7 @@ app.post("/api/groups/:groupId/goals", async (req: Request, res: Response) => {
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
-app.patch("/api/groups/:groupId/goals/:goalId", async (req: Request, res: Response) => {
+app.patch("/api/groups/:groupId/goals/:goalId", requireAuth, async (req: Request, res: Response) => {
   try {
     const { error } = await supabase.from("group_goals").update(req.body).eq("id", req.params.goalId);
     if (error) throw error;
@@ -768,7 +810,7 @@ app.patch("/api/groups/:groupId/goals/:goalId", async (req: Request, res: Respon
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
-app.delete("/api/groups/:groupId", async (req: Request, res: Response) => {
+app.delete("/api/groups/:groupId", requireAuth, async (req: Request, res: Response) => {
   try {
     await supabase.from("group_members").delete().eq("group_id", req.params.groupId);
     await supabase.from("group_goals").delete().eq("group_id", req.params.groupId);
@@ -783,7 +825,7 @@ app.delete("/api/groups/:groupId", async (req: Request, res: Response) => {
 // GROUP BUDGET ROUTES
 // ============================================
 
-app.get("/api/groups/:groupId/budgets", async (req: Request, res: Response) => {
+app.get("/api/groups/:groupId/budgets", requireAuth, async (req: Request, res: Response) => {
   try {
     const { data, error } = await supabase.from("group_budgets").select("*").eq("group_id", req.params.groupId).order("category");
     if (error) throw error;
@@ -791,7 +833,7 @@ app.get("/api/groups/:groupId/budgets", async (req: Request, res: Response) => {
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
-app.post("/api/groups/:groupId/budgets", async (req: Request, res: Response) => {
+app.post("/api/groups/:groupId/budgets", requireAuth, async (req: Request, res: Response) => {
   try {
     const { category, monthly_limit, period, created_by } = req.body;
     const { data, error } = await supabase.from("group_budgets").insert([{ group_id: req.params.groupId, category, monthly_limit, period: period || "monthly", created_by }]).select();
@@ -800,7 +842,7 @@ app.post("/api/groups/:groupId/budgets", async (req: Request, res: Response) => 
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
-app.delete("/api/groups/:groupId/budgets/:budgetId", async (req: Request, res: Response) => {
+app.delete("/api/groups/:groupId/budgets/:budgetId", requireAuth, async (req: Request, res: Response) => {
   try {
     const { error } = await supabase.from("group_budgets").delete().eq("id", req.params.budgetId);
     if (error) throw error;
@@ -812,7 +854,7 @@ app.delete("/api/groups/:groupId/budgets/:budgetId", async (req: Request, res: R
 // BUDGET ROUTES
 // ============================================
 
-app.get("/api/budgets/:userId", async (req: Request, res: Response) => {
+app.get("/api/budgets/:userId", requireAuth, selfOnly, async (req: Request, res: Response) => {
   try {
     const { data, error } = await supabase.from("budgets").select("*").eq("user_id", req.params.userId).order("category");
     if (error) throw error;
@@ -820,10 +862,11 @@ app.get("/api/budgets/:userId", async (req: Request, res: Response) => {
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
-app.post("/api/budgets", async (req: Request, res: Response) => {
+app.post("/api/budgets", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { user_id, category, monthly_limit, period, paycycle_start, paycycle_freq } = req.body;
-    if (!user_id || !category || !monthly_limit) return res.status(400).json({ error: "user_id, category, and monthly_limit required" });
+    const user_id = (req as any).authUser.id;
+    const { category, monthly_limit, period, paycycle_start, paycycle_freq } = req.body;
+    if (!category || !monthly_limit) return res.status(400).json({ error: "category and monthly_limit required" });
     const { data, error } = await supabase
       .from("budgets")
       .insert([{ user_id, category, monthly_limit, period: period || "monthly", paycycle_start: paycycle_start || null, paycycle_freq: paycycle_freq || null }])
@@ -833,22 +876,24 @@ app.post("/api/budgets", async (req: Request, res: Response) => {
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
-app.patch("/api/budgets/:budgetId", async (req: Request, res: Response) => {
+app.patch("/api/budgets/:budgetId", requireAuth, async (req: Request, res: Response) => {
   try {
+    const userId = (req as any).authUser.id;
     const { monthly_limit, period, paycycle_start, paycycle_freq } = req.body;
     const updates: any = { monthly_limit };
     if (period) updates.period = period;
     if (paycycle_start !== undefined) updates.paycycle_start = paycycle_start;
     if (paycycle_freq !== undefined) updates.paycycle_freq = paycycle_freq;
-    const { error } = await supabase.from("budgets").update(updates).eq("id", req.params.budgetId);
+    const { error } = await supabase.from("budgets").update(updates).eq("id", req.params.budgetId).eq("user_id", userId);
     if (error) throw error;
     res.json({ message: "Budget updated" });
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
-app.delete("/api/budgets/:budgetId", async (req: Request, res: Response) => {
+app.delete("/api/budgets/:budgetId", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { error } = await supabase.from("budgets").delete().eq("id", req.params.budgetId);
+    const userId = (req as any).authUser.id;
+    const { error } = await supabase.from("budgets").delete().eq("id", req.params.budgetId).eq("user_id", userId);
     if (error) throw error;
     res.json({ message: "Budget deleted" });
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
@@ -857,7 +902,7 @@ app.delete("/api/budgets/:budgetId", async (req: Request, res: Response) => {
 // ============================================
 // VOICE TRANSCRIPTION (Whisper)
 // ============================================
-app.post("/api/ai/transcribe", upload.single("audio"), async (req: Request, res: Response) => {
+app.post("/api/ai/transcribe", requireAuth, upload.single("audio"), async (req: Request, res: Response) => {
   if (!req.file) return res.status(400).json({ error: "No audio file uploaded" });
   try {
     const fileStream = fs.createReadStream(req.file.path);
@@ -874,7 +919,7 @@ app.post("/api/ai/transcribe", upload.single("audio"), async (req: Request, res:
 // ============================================
 // RECEIPT SCAN (OpenAI Vision)
 // ============================================
-app.post("/api/ai/scan-receipt", async (req: Request, res: Response) => {
+app.post("/api/ai/scan-receipt", requireAuth, async (req: Request, res: Response) => {
   try {
     const { imageBase64 } = req.body;
     if (!imageBase64) return res.status(400).json({ error: "imageBase64 required" });
@@ -906,7 +951,7 @@ app.post("/api/ai/scan-receipt", async (req: Request, res: Response) => {
 // ============================================
 // RECURRING TRANSACTIONS ROUTES
 // ============================================
-app.get("/api/recurring/:userId", async (req: Request, res: Response) => {
+app.get("/api/recurring/:userId", requireAuth, selfOnly, async (req: Request, res: Response) => {
   try {
     const { data, error } = await supabase
       .from("recurring_transactions")
@@ -918,9 +963,10 @@ app.get("/api/recurring/:userId", async (req: Request, res: Response) => {
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
-app.post("/api/recurring", async (req: Request, res: Response) => {
+app.post("/api/recurring", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { user_id, name, amount, category, frequency, day_of_month, interval_days, start_date } = req.body;
+    const user_id = (req as any).authUser.id;
+    const { name, amount, category, frequency, day_of_month, interval_days, start_date } = req.body;
     const { data, error } = await supabase
       .from("recurring_transactions")
       .insert([{ user_id, name, amount, category: category || "OTHER", frequency: frequency || "monthly", day_of_month: day_of_month || 1, interval_days: interval_days || 30, start_date }])
@@ -930,20 +976,23 @@ app.post("/api/recurring", async (req: Request, res: Response) => {
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
-app.patch("/api/recurring/:id", async (req: Request, res: Response) => {
+app.patch("/api/recurring/:id", requireAuth, async (req: Request, res: Response) => {
   try {
+    const userId = (req as any).authUser.id;
     const { error } = await supabase
       .from("recurring_transactions")
       .update({ ...req.body, updated_at: new Date().toISOString() })
-      .eq("id", req.params.id);
+      .eq("id", req.params.id)
+      .eq("user_id", userId);
     if (error) throw error;
     res.json({ message: "Updated" });
   } catch (e: any) { res.status(500).json({ error: e?.message }); }
 });
 
-app.delete("/api/recurring/:id", async (req: Request, res: Response) => {
+app.delete("/api/recurring/:id", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { error } = await supabase.from("recurring_transactions").delete().eq("id", req.params.id);
+    const userId = (req as any).authUser.id;
+    const { error } = await supabase.from("recurring_transactions").delete().eq("id", req.params.id).eq("user_id", userId);
     if (error) throw error;
     res.json({ message: "Deleted" });
   } catch (e: any) { res.status(500).json({ error: e?.message }); }

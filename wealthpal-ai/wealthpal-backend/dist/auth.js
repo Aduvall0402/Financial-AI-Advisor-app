@@ -8,8 +8,8 @@ exports.getUserProfile = getUserProfile;
 const supabase_js_1 = require("@supabase/supabase-js");
 const supabase_1 = require("./supabase");
 // Anon client for auth flows that send emails (signUp, OTP)
-const SUPABASE_URL = "https://nlizziqpifjnzzlsytwk.supabase.co";
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5saXp6aXFwaWZqbnp6bHN5dHdrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4MzI5NzMsImV4cCI6MjA5NDQwODk3M30.NHMWvhBX4lqqpXasmiSy6G3tGUVWdb91TzEVR1oGAZw";
+const SUPABASE_URL = process.env.SUPABASE_URL || "https://nlizziqpifjnzzlsytwk.supabase.co";
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const supabaseAnon = (0, supabase_js_1.createClient)(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
 });
