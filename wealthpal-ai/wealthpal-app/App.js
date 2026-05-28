@@ -2494,17 +2494,11 @@ export default function App() {
           <View style={s.section}>
             <Text style={[s.sectionTitle, { marginBottom: 4 }]}>Spending by Category</Text>
             <Text style={{ color: C.textMuted, fontSize: 11, marginBottom: 14 }}>
-              {chartType !== 'pie' ? 'Bar = % of budget limit · tap to filter chart' : 'Switch to line or bar chart to filter by category'}
+              {chartType !== 'pie' ? 'Tap a category to filter the chart' : 'Switch to line chart to filter by category'}
             </Text>
             {catData.map(([cat, amt], i) => {
-              const budgetForCat = budgets.find(b => b.category === cat);
-              const budgetLimit = budgetForCat ? parseFloat(budgetForCat.monthly_limit || 0) : 0;
               const pctOfTotal = total > 0 ? Math.round((amt / total) * 100) : 0;
-              const pctOfBudget = budgetLimit > 0 ? Math.min(100, Math.floor((amt / budgetLimit) * 100)) : null;
-              const barPct = pctOfBudget !== null ? pctOfBudget : pctOfTotal;
-              const barColor = pctOfBudget !== null
-                ? (amt >= budgetLimit ? C.red : pctOfBudget >= 75 ? '#1EDFD5' : CAT_COLORS[i % CAT_COLORS.length])
-                : CAT_COLORS[i % CAT_COLORS.length];
+              const barColor = CAT_COLORS[i % CAT_COLORS.length];
               const catTxCount = filteredTx.filter(tx => getEffectiveCategory(tx) === cat).length;
               const isSelected = selectedCategory === cat;
               return (
@@ -2521,15 +2515,13 @@ export default function App() {
                       <Text style={s.catAmt}>${fmtMoney(amt)}</Text>
                     </View>
                     <View style={s.barBg}>
-                      <View style={[s.bar, { width: `${barPct}%`, backgroundColor: barColor }]} />
+                      <View style={[s.bar, { width: `${pctOfTotal}%`, backgroundColor: barColor }]} />
                     </View>
                     <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 4 }}>
-                      {catTxCount} transaction{catTxCount !== 1 ? 's' : ''} · {pctOfBudget !== null
-                        ? `${pctOfBudget}% of $${fmtMoney(budgetLimit)} budget`
-                        : `${pctOfTotal}% of total · no budget set`}
+                      {catTxCount} transaction{catTxCount !== 1 ? 's' : ''}
                     </Text>
                   </View>
-                  <Text style={[s.pct, { color: barColor }]}>{pctOfBudget !== null ? `${pctOfBudget}%` : `${pctOfTotal}%`}</Text>
+                  <Text style={[s.pct, { color: barColor }]}>{pctOfTotal}%</Text>
                 </TouchableOpacity>
               );
             })}
