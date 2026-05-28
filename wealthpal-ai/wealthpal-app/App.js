@@ -214,6 +214,7 @@ export default function App() {
   const [userId, setUserId] = useState(null);
   const userIdRef = useRef(null);
   const txListRef = useRef(null);
+  const accountsListRef = useRef(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [stayLoggedIn, setStayLoggedIn] = useState(true);
@@ -1004,7 +1005,11 @@ export default function App() {
         else { setSyncError(''); setPlaidStatus(`Synced ${data.synced} transaction${data.synced !== 1 ? 's' : ''}`); setTimeout(() => setPlaidStatus(''), 4000); }
         const txRes = await apiCall(`/api/transactions/${userIdRef.current}`);
         const txData = txRes.ok ? await txRes.json() : {};
-        const fresh = (txData.transactions || []).filter(tx => !isIncomeTx(tx) && !tx.reviewed);
+        // Only show recent unreviewed txs — prevents new account full-history flood
+        const reviewCutoff = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
+        const fresh = (txData.transactions || []).filter(tx =>
+          !isIncomeTx(tx) && !tx.reviewed && (tx.transaction_date || '') >= reviewCutoff
+        );
         if (fresh.length > 0) {
           setPostSyncTxs(fresh);
           setPostSyncIdx(0);
@@ -1653,16 +1658,16 @@ export default function App() {
     const DOW_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
     if (insightsRange === '7d') {
-      const labels = [], data = [], incomeData = [];
+      const labels = [], tooltipLabels = [], data = [], incomeData = [];
       for (let i = 6; i >= 0; i--) {
         const d = new Date(now); d.setDate(d.getDate() - i);
         const key = dayKey(d);
-        // "Mon 28" — day abbreviation + date, clean single line
-        labels.push(`${DOW_SHORT[d.getDay()]} ${d.getDate()}`);
+        labels.push(DOW_SHORT[d.getDay()]); // show day name on axis
+        tooltipLabels.push(`${DOW_SHORT[d.getDay()]} ${d.getMonth()+1}/${d.getDate()}`); // full in tooltip
         data.push(txs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
         incomeData.push(incomeTxs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
       }
-      return { labels, data, incomeData, scrollable: true };
+      return { labels, tooltipLabels, data, incomeData, scrollable: true };
     }
 
     if (insightsRange === '30d') {
@@ -1922,14 +1927,18 @@ export default function App() {
         ) : (
           <>
             <FlatList
+              ref={accountsListRef}
               horizontal
               pagingEnabled
               showsHorizontalScrollIndicator={false}
               data={accounts}
               keyExtractor={item => item.account_id}
               style={{ marginHorizontal: -16, marginTop: 8, marginBottom: 12 }}
-              snapToAlignment="start"
               decelerationRate="fast"
+              removeClippedSubviews
+              maxToRenderPerBatch={3}
+              windowSize={3}
+              getItemLayout={(_, index) => ({ length: SW, offset: SW * index, index })}
               onMomentumScrollEnd={e => {
                 const idx = Math.round(e.nativeEvent.contentOffset.x / SW);
                 setSelectedAccount(accounts[Math.min(idx, accounts.length - 1)]);
@@ -1951,10 +1960,19 @@ export default function App() {
                 </View>
               )}
             />
-            {/* Page dots */}
+            {/* Page dots — tappable to jump to account */}
             <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 6, marginBottom: 12, marginTop: -6 }}>
-              {accounts.map(acc => (
-                <View key={acc.account_id} style={{ width: selectedAccount?.account_id === acc.account_id ? 16 : 6, height: 6, borderRadius: 3, backgroundColor: selectedAccount?.account_id === acc.account_id ? C.accent : C.border }} />
+              {accounts.map((acc, idx) => (
+                <TouchableOpacity
+                  key={acc.account_id}
+                  onPress={() => {
+                    accountsListRef.current?.scrollToIndex({ index: idx, animated: true });
+                    setSelectedAccount(acc);
+                  }}
+                  hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
+                >
+                  <View style={{ width: selectedAccount?.account_id === acc.account_id ? 16 : 6, height: 6, borderRadius: 3, backgroundColor: selectedAccount?.account_id === acc.account_id ? C.accent : C.border }} />
+                </TouchableOpacity>
               ))}
             </View>
           </>
@@ -2250,7 +2268,7 @@ export default function App() {
   const renderInsights = () => {
     const filteredTx = getFilteredTx();
     const catData = getCatData();
-    const { labels: chartLabels, data: chartRawData, incomeData: chartIncomeData, scrollable: chartScrollable } = getChartData();
+    const { labels: chartLabels, tooltipLabels: chartTooltipLabels, data: chartRawData, incomeData: chartIncomeData, scrollable: chartScrollable } = getChartData();
     const chartData = chartRawData.map(v => Math.max(0.01, v));
     const total = filteredTx.reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
     const avg = filteredTx.length ? total / filteredTx.length : 0;
@@ -2395,13 +2413,13 @@ export default function App() {
                     <View style={{ alignItems: 'center', marginBottom: 6 }}>
                       <View style={{ backgroundColor: C.accent + '22', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1, borderColor: C.accent }}>
                         <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700' }}>
-                          {chartLabels[chartTooltip.index]}: ${fmtMoney(chartTooltip.value)}
+                          {(chartTooltipLabels?.[chartTooltip.index] ?? chartLabels[chartTooltip.index])}: ${fmtMoney(chartTooltip.value)}
                         </Text>
                       </View>
                     </View>
                   )}
-                  <View style={{ position: 'relative' }}>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable}>
+                  <View style={{ position: 'relative', overflow: 'hidden' }}>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable} bounces={false} overScrollMode="never">
                       <LineChart
                         data={{ labels: chartLabels, datasets: [
                           { data: chartData, color: () => C.accent },
