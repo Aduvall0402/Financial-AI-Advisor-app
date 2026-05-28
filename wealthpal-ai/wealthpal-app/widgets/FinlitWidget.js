@@ -12,32 +12,34 @@ const AMBER   = '#f59e0b';
 const RED     = '#ef4444';
 const BAR_BG  = '#2a4a6e';
 
-// BudgetCol sits directly in a flex row and takes flex:1 itself.
-// No wrapper — avoids match_parent resolving to the wrong parent.
-function BudgetCol({ label, spent, limit, pct }) {
+// All widths are explicit pixels — no flex/weight for columns or bars.
+// Flex/weight in Android RemoteViews (LinearLayout) leaves layout_width=wrap_content
+// by default, which makes match_parent resolve incorrectly inside weighted parents.
+function BudgetCol({ label, spent, limit, pct, colW }) {
   const safePct  = isNaN(pct) || !isFinite(pct) ? 0 : pct;
-  const filled   = Math.min(98, Math.max(2, Math.round(safePct)));
-  const empty    = 100 - filled;
   const over     = safePct >= 100;
   const barColor = over ? RED : safePct >= 80 ? AMBER : ACCENT;
+  const fillW    = Math.max(2, Math.min(colW - 2, Math.round(safePct / 100 * colW)));
+  const emptyW   = colW - fillW;
 
   return (
-    <FlexWidget style={{ flex: 1, flexDirection: 'column' }}>
+    <FlexWidget style={{ width: colW, flexDirection: 'column' }}>
       <TextWidget
         text={label}
-        style={{ color: MUTED, fontSize: 8, height: 11 }}
+        style={{ color: MUTED, fontSize: 8, height: 12 }}
         maxLines={1}
         truncate="END"
       />
       <TextWidget
         text={`$${Math.round(spent)}/$${Math.round(limit)}`}
-        style={{ color: over ? RED : TEXT, fontSize: 10, fontWeight: '700', height: 16, marginBottom: 4 }}
+        style={{ color: over ? RED : TEXT, fontSize: 10, fontWeight: '700', height: 17, marginBottom: 4 }}
         maxLines={1}
         truncate="END"
       />
-      <FlexWidget style={{ height: 5, width: 'match_parent', backgroundColor: BAR_BG, borderRadius: 3, overflow: 'hidden', flexDirection: 'row' }}>
-        <FlexWidget style={{ flex: filled, height: 5, backgroundColor: barColor }} />
-        <FlexWidget style={{ flex: empty,  height: 5 }} />
+      {/* Bar: explicit pixel widths — guaranteed identical across all rows */}
+      <FlexWidget style={{ height: 5, width: colW, backgroundColor: BAR_BG, borderRadius: 3, flexDirection: 'row' }}>
+        <FlexWidget style={{ width: fillW, height: 5, backgroundColor: barColor, borderRadius: 3 }} />
+        <FlexWidget style={{ width: emptyW, height: 5 }} />
       </FlexWidget>
     </FlexWidget>
   );
@@ -55,24 +57,30 @@ export function FinlitWidget({ width, height, budgetData, statsData }) {
     periodLabel      = 'This Pay Period',
   } = stats;
 
+  // Calculate exact column width: widget width minus 2×padding (16 each) minus spacer (16)
+  const PADDING   = 16;
+  const SPACER    = 16;
+  const colW      = Math.floor((width - PADDING * 2 - SPACER) / 2);
+
   const pairs = [];
   for (let i = 0; i < budgets.length; i += 2) {
     pairs.push(budgets.slice(i, i + 2));
   }
 
   const noData = budgets.length === 0 && yesterdaySpent === 0;
+  const contentW = width - PADDING * 2;
 
   return (
     <FlexWidget style={{
       height: 'match_parent', width: 'match_parent',
-      backgroundColor: BG, borderRadius: 22, padding: 16,
+      backgroundColor: BG, borderRadius: 22, padding: PADDING,
       flexDirection: 'column',
     }}>
 
       {/* ── Header ── */}
       <FlexWidget style={{
         flexDirection: 'row', alignItems: 'center',
-        justifyContent: 'space-between', width: 'match_parent', marginBottom: 10,
+        justifyContent: 'space-between', width: contentW, marginBottom: 10,
       }}>
         <FlexWidget style={{ flexDirection: 'column' }}>
           <ImageWidget
@@ -96,11 +104,11 @@ export function FinlitWidget({ width, height, budgetData, statsData }) {
       </FlexWidget>
 
       {/* ── Divider ── */}
-      <FlexWidget style={{ height: 1, width: 'match_parent', backgroundColor: BORDER, marginBottom: 10 }} />
+      <FlexWidget style={{ height: 1, width: contentW, backgroundColor: BORDER, marginBottom: 10 }} />
 
       {/* ── Stats card ── */}
       <FlexWidget style={{
-        flexDirection: 'row', width: 'match_parent',
+        flexDirection: 'row', width: contentW,
         backgroundColor: SURFACE, borderRadius: 14,
         borderWidth: 1, borderColor: BORDER,
         paddingVertical: 10, paddingHorizontal: 8,
@@ -124,19 +132,19 @@ export function FinlitWidget({ width, height, budgetData, statsData }) {
       </FlexWidget>
 
       {/* ── Divider ── */}
-      <FlexWidget style={{ height: 1, width: 'match_parent', backgroundColor: BORDER, marginBottom: 8 }} />
+      <FlexWidget style={{ height: 1, width: contentW, backgroundColor: BORDER, marginBottom: 8 }} />
 
       {/* ── Budget section header ── */}
       <FlexWidget style={{
         flexDirection: 'row', justifyContent: 'space-between',
-        alignItems: 'center', width: 'match_parent', marginBottom: 8,
+        alignItems: 'center', width: contentW, marginBottom: 8,
       }}>
         <TextWidget text="Budgets" style={{ color: TEXT, fontSize: 11, fontWeight: '700' }} />
         <TextWidget text={periodLabel} style={{ color: MUTED, fontSize: 8 }} />
       </FlexWidget>
 
-      {/* ── Budget rows: BudgetCol placed directly in the row with flex:1 ── */}
-      <FlexWidget style={{ flex: 1, width: 'match_parent' }}>
+      {/* ── Budget rows: explicit colW on each BudgetCol ── */}
+      <FlexWidget style={{ flex: 1, width: contentW }}>
         {noData ? (
           <TextWidget
             text="Open Finlit and sync your bank to load data."
@@ -151,24 +159,25 @@ export function FinlitWidget({ width, height, budgetData, statsData }) {
           />
         ) : (
           pairs.map((pair, pi) => (
-            <FlexWidget key={pi} style={{ flexDirection: 'row', width: 'match_parent', marginBottom: 11 }}>
+            <FlexWidget key={pi} style={{ flexDirection: 'row', width: contentW, marginBottom: 11 }}>
               <BudgetCol
                 label={pair[0].label}
                 spent={pair[0].spent}
                 limit={pair[0].limit}
                 pct={pair[0].pct}
+                colW={colW}
               />
-              {/* Fixed-width spacer so both columns are mathematically equal */}
-              <FlexWidget style={{ width: 20 }} />
+              <FlexWidget style={{ width: SPACER }} />
               {pair[1] ? (
                 <BudgetCol
                   label={pair[1].label}
                   spent={pair[1].spent}
                   limit={pair[1].limit}
                   pct={pair[1].pct}
+                  colW={colW}
                 />
               ) : (
-                <FlexWidget style={{ flex: 1 }} />
+                <FlexWidget style={{ width: colW }} />
               )}
             </FlexWidget>
           ))

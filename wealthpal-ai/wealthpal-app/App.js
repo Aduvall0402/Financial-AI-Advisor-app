@@ -2415,15 +2415,16 @@ export default function App() {
               };
               return (
                 <View>
-                  {chartTooltip && (
-                    <View style={{ alignItems: 'center', marginBottom: 6 }}>
+                  {/* Fixed-height placeholder so tooltip never resizes the chart card */}
+                  <View style={{ height: 30, alignItems: 'center', justifyContent: 'center', marginBottom: 4 }}>
+                    {chartTooltip && (
                       <View style={{ backgroundColor: C.accent + '22', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1, borderColor: C.accent }}>
                         <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700' }}>
                           {(chartTooltipLabels?.[chartTooltip.index] ?? chartLabels[chartTooltip.index])}: ${fmtMoney(chartTooltip.value)}
                         </Text>
                       </View>
-                    </View>
-                  )}
+                    )}
+                  </View>
                   <View
                     style={{ position: 'relative', overflow: 'hidden' }}
                     onTouchStart={e => { chartTouchRef.startX = e.nativeEvent.pageX; chartTouchRef.startY = e.nativeEvent.pageY; }}
@@ -2447,8 +2448,9 @@ export default function App() {
                         ]}}
                         width={chartW} height={chartH} bezier
                         chartConfig={{ ...CHART_CFG, decimalPlaces: 0 }}
-                        formatYLabel={fmtYLabel}
-                        style={{ borderRadius: 10, marginLeft: -16 }} withInnerLines={false}
+                        formatYLabel={chartScrollable ? () => '' : fmtYLabel}
+                        style={{ borderRadius: 10 }} withInnerLines={false}
+                        withHorizontalLabels={!chartScrollable}
                         yAxisLabel="" yAxisSuffix="" segments={4}
                         onDataPointClick={({ value, index }) => {
                           const realVal = value < 0.02 ? 0 : value;
