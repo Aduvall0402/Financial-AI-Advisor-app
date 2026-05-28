@@ -486,6 +486,8 @@ export default function App() {
   const [txSearch, setTxSearch] = useState('');
   const [txSearchActive, setTxSearchActive] = useState(false);
 
+  const [calendarDayDetail, setCalendarDayDetail] = useState(null); // { day, bills }
+
   // Voice input
   const [isRecording, setIsRecording] = useState(false);
   const [transcribingVoice, setTranscribingVoice] = useState(false);
@@ -2011,12 +2013,10 @@ export default function App() {
           <View style={s.statCard}>
             <Text style={s.statLabel}>30-Day Spend</Text>
             <Text style={s.statVal}>{fmtCurrency(monthlySpend)}</Text>
-            <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 4 }}>Last 30 days</Text>
           </View>
           <View style={s.statCard}>
             <Text style={s.statLabel}>7-Day Spend</Text>
             <Text style={s.statVal}>{fmtCurrency(weekSpend)}</Text>
-            <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 4 }}>Last 7 days</Text>
           </View>
         </View>
 
@@ -2109,23 +2109,28 @@ export default function App() {
                     const hasBill = bills.length > 0;
                     const dayTotal = bills.reduce((s, b) => s + parseFloat(b.amount || 0), 0);
                     return (
-                      <View key={dow} style={{ flex: 1, alignItems: 'center', paddingVertical: 2 }}>
+                      <TouchableOpacity
+                        key={dow}
+                        style={{ flex: 1, alignItems: 'center', paddingVertical: 2 }}
+                        onPress={hasBill ? () => setCalendarDayDetail({ day: cellDay, bills }) : undefined}
+                        activeOpacity={hasBill ? 0.7 : 1}
+                      >
                         <View style={{
                           width: 32, minHeight: 42, borderRadius: 10, alignItems: 'center', justifyContent: 'flex-start',
                           paddingTop: 5, paddingBottom: 4,
-                          backgroundColor: isToday ? BILL_BLUE : hasBill && !isPast ? BILL_BLUE + '20' : 'transparent',
+                          backgroundColor: isToday ? BILL_BLUE : hasBill && !isPast ? BILL_BLUE + '44' : hasBill && isPast ? C.border : 'transparent',
                         }}>
                           <Text style={{
-                            color: isToday ? '#fff' : hasBill && !isPast ? BILL_BLUE : isPast ? C.textMuted : C.textSub,
-                            fontSize: 12, fontWeight: isToday || (hasBill && !isPast) ? '700' : '400',
+                            color: isToday ? '#fff' : hasBill ? BILL_BLUE : isPast ? C.textMuted : C.textSub,
+                            fontSize: 12, fontWeight: isToday || hasBill ? '700' : '400',
                           }}>{cellDay}</Text>
-                          {hasBill && !isPast && (
-                            <Text style={{ color: isToday ? '#ffffff' : BILL_BLUE, fontSize: 7, fontWeight: '700', marginTop: 2 }} numberOfLines={1}>
+                          {hasBill && (
+                            <Text style={{ color: isToday ? '#ffffff' : BILL_BLUE, fontSize: 7, fontWeight: '700', marginTop: 2, opacity: isPast ? 0.5 : 1 }} numberOfLines={1}>
                               ${dayTotal < 10 ? dayTotal.toFixed(0) : Math.round(dayTotal)}
                             </Text>
                           )}
                         </View>
-                      </View>
+                      </TouchableOpacity>
                     );
                   })}
                 </View>
@@ -2398,12 +2403,13 @@ export default function App() {
               const yStep = (lm - floorVal) / 4;
               const yLabels = [lm, lm-yStep, lm-2*yStep, lm-3*yStep, floorVal];
               const yAxisW = 46; const rightPad = 32;
-              const handleLineTouch = (evt) => {
+              const chartTouchRef = { startX: 0, startY: 0, scrollX: 0 };
+              const selectNearestPoint = (touchX) => {
                 if (!chartData.length) return;
-                const x = evt.nativeEvent.locationX;
+                const contentX = touchX + chartTouchRef.scrollX;
                 const n = chartData.length;
                 const dataW = chartW - yAxisW - rightPad;
-                const idx = Math.min(n - 1, Math.max(0, Math.round((x - yAxisW) / dataW * (n - 1))));
+                const idx = Math.min(n - 1, Math.max(0, Math.round((contentX - yAxisW) / dataW * (n - 1))));
                 const realVal = chartData[idx] < 0.02 ? 0 : chartData[idx];
                 setChartTooltip(prev => prev?.index === idx ? null : { value: realVal, index: idx });
               };
@@ -2418,8 +2424,21 @@ export default function App() {
                       </View>
                     </View>
                   )}
-                  <View style={{ position: 'relative', overflow: 'hidden' }}>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable} bounces={false} overScrollMode="never">
+                  <View
+                    style={{ position: 'relative', overflow: 'hidden' }}
+                    onTouchStart={e => { chartTouchRef.startX = e.nativeEvent.pageX; chartTouchRef.startY = e.nativeEvent.pageY; }}
+                    onTouchEnd={e => {
+                      const dx = Math.abs(e.nativeEvent.pageX - chartTouchRef.startX);
+                      const dy = Math.abs(e.nativeEvent.pageY - chartTouchRef.startY);
+                      if (dx < 12 && dy < 12) selectNearestPoint(e.nativeEvent.locationX);
+                    }}
+                  >
+                    <ScrollView
+                      horizontal showsHorizontalScrollIndicator={false} scrollEnabled={chartScrollable}
+                      bounces={false} overScrollMode="never"
+                      scrollEventThrottle={32}
+                      onScroll={e => { chartTouchRef.scrollX = e.nativeEvent.contentOffset.x; }}
+                    >
                       <LineChart
                         data={{ labels: chartLabels, datasets: [
                           { data: chartData, color: () => C.accent },
@@ -2528,20 +2547,6 @@ export default function App() {
           </View>
         )}
 
-        {catData && catData[0] && (
-          <View style={[s.highlightCard, { borderColor: CAT_COLORS[0], backgroundColor: C.surface }]}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-              <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: CAT_COLORS[0], justifyContent: 'center', alignItems: 'center' }}>
-                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>1</Text>
-              </View>
-              <View>
-                <Text style={s.highlightLabel}>Biggest Spending Category</Text>
-                <Text style={s.highlightValue}>{catData[0][0].replace(/_/g,' ')}</Text>
-              </View>
-            </View>
-            <Text style={s.highlightSub}>${fmtMoney(catData[0][1])} spent · {Math.round((catData[0][1] / total) * 100)}% of total · {filteredTx.filter(tx => tx.category === catData[0][0]).length} transactions</Text>
-          </View>
-        )}
 
         <View style={{ height: 24 }} />
       </ScrollView>
@@ -4339,6 +4344,39 @@ export default function App() {
       </View>
 
       {drawerOpen && renderDrawer()}
+
+      {/* Calendar day detail modal */}
+      <Modal visible={!!calendarDayDetail} animationType="fade" transparent onRequestClose={() => setCalendarDayDetail(null)}>
+        <View style={s.modalOverlay}>
+          <View style={s.modalCard}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
+              <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: BRAND_BLUE + '22', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
+                <Text style={{ color: BRAND_BLUE, fontSize: 20, fontWeight: '800' }}>{calendarDayDetail?.day}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={s.modalTitle}>Recurring Payments</Text>
+                <Text style={{ color: C.textMuted, fontSize: 12 }}>
+                  {MONTHS_SHORT[new Date().getMonth()]} {calendarDayDetail?.day}
+                </Text>
+              </View>
+            </View>
+            {calendarDayDetail?.bills?.map((r, i) => (
+              <View key={i} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderTopWidth: 1, borderTopColor: C.border }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: C.text, fontSize: 14, fontWeight: '600' }}>{r.name}</Text>
+                  <Text style={{ color: C.textMuted, fontSize: 11, marginTop: 2 }}>
+                    {r.frequency === 'monthly' ? 'Monthly' : r.frequency === 'weekly' ? 'Weekly' : 'Biweekly'} · {r.category?.replace(/_/g, ' ') || 'Other'}
+                  </Text>
+                </View>
+                <Text style={{ color: BRAND_BLUE, fontSize: 15, fontWeight: '700' }}>-${fmtMoney(r.amount)}</Text>
+              </View>
+            ))}
+            <TouchableOpacity style={[s.btn, { marginTop: 16 }]} onPress={() => setCalendarDayDetail(null)}>
+              <Text style={s.btnText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* Budget → Transactions themed prompt */}
       <Modal visible={!!budgetNavPrompt} animationType="fade" transparent onRequestClose={() => setBudgetNavPrompt(null)}>
