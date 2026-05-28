@@ -1661,30 +1661,45 @@ export default function App() {
 
     const DOW_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
+    // Budget limit for the chart's budget line
+    // Use full monthly budget; scale to 7 days for 7d view
+    const monthlyBudgetTotal = budgets.reduce((s, b) => {
+      if (selectedCategory && b.category !== selectedCategory) return s;
+      return s + parseFloat(b.monthly_limit || 0);
+    }, 0);
+
     if (insightsRange === '7d') {
-      const labels = [], tooltipLabels = [], data = [], incomeData = [];
+      const labels = [], tooltipLabels = [], data = [], rawDailyData = [], incomeData = [];
+      let running = 0;
       for (let i = 6; i >= 0; i--) {
         const d = new Date(now); d.setDate(d.getDate() - i);
         const key = dayKey(d);
-        labels.push(DOW_SHORT[d.getDay()]); // show day name on axis
-        tooltipLabels.push(`${DOW_SHORT[d.getDay()]} ${d.getMonth()+1}/${d.getDate()}`); // full in tooltip
-        data.push(txs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
+        const dayAmt = txs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+        running += dayAmt;
+        labels.push(DOW_SHORT[d.getDay()]);
+        tooltipLabels.push(`${DOW_SHORT[d.getDay()]} ${d.getMonth()+1}/${d.getDate()}`);
+        data.push(running); // cumulative
+        rawDailyData.push(dayAmt); // individual day for tooltip
         incomeData.push(incomeTxs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
       }
-      return { labels, tooltipLabels, data, incomeData, scrollable: true };
+      const budgetLine = monthlyBudgetTotal > 0 ? Math.round(monthlyBudgetTotal / 30 * 7) : 0;
+      return { labels, tooltipLabels, data, rawDailyData, incomeData, scrollable: true, budgetLine };
     }
 
     if (insightsRange === '30d') {
-      const labels = [], data = [], incomeData = [];
+      const labels = [], data = [], rawDailyData = [], incomeData = [];
+      let running = 0;
       for (let i = 29; i >= 0; i--) {
         const d = new Date(now); d.setDate(d.getDate() - i);
         const key = dayKey(d);
-        // Just the date number for 30d — less crowded, tooltip shows full detail
+        const dayAmt = txs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+        running += dayAmt;
         labels.push(`${d.getMonth()+1}/${d.getDate()}`);
-        data.push(txs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
+        data.push(running);
+        rawDailyData.push(dayAmt);
         incomeData.push(incomeTxs.filter(tx => tx.transaction_date === key).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0));
       }
-      return { labels, data, incomeData, scrollable: true };
+      return { labels, data, rawDailyData, incomeData, scrollable: true, budgetLine: monthlyBudgetTotal };
     }
 
     if (insightsRange === '3m' || insightsRange === '6m') {
@@ -2275,7 +2290,7 @@ export default function App() {
   const renderInsights = () => {
     const filteredTx = getFilteredTx();
     const catData = getCatData();
-    const { labels: chartLabels, tooltipLabels: chartTooltipLabels, data: chartRawData, incomeData: chartIncomeData, scrollable: chartScrollable } = getChartData();
+    const { labels: chartLabels, tooltipLabels: chartTooltipLabels, data: chartRawData, rawDailyData: chartRawDailyData, incomeData: chartIncomeData, scrollable: chartScrollable, budgetLine: chartBudgetLine = 0 } = getChartData();
     const chartData = chartRawData.map(v => Math.max(0.01, v));
     const total = filteredTx.reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
     const avg = filteredTx.length ? total / filteredTx.length : 0;
@@ -2391,15 +2406,21 @@ export default function App() {
           </View>
           <View style={s.chartCard}>
             {chartType !== 'pie' && (
-              <Text style={{ color: C.textMuted, fontSize: 11, marginBottom: 4 }}>
-                Total: ${fmtMoney(chartData.reduce((s, v) => s + (v === 0.01 ? 0 : v), 0))}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                <Text style={{ color: C.textMuted, fontSize: 11 }}>
+                  {chartScrollable ? 'Running total' : 'Total'}: ${fmtMoney(chartData[chartData.length - 1] < 0.02 ? 0 : chartData[chartData.length - 1])}
+                </Text>
+                {chartBudgetLine > 0 && (
+                  <Text style={{ color: C.red, fontSize: 11, fontWeight: '600' }}>
+                    Budget: ${fmtMoney(chartBudgetLine)}
+                  </Text>
+                )}
+              </View>
             )}
             {chartType === 'line' && (() => {
-              const lm = niceChartMax(chartData);
-              const realVals = chartData.filter(v => v > 0.01);
-              const minVal = realVals.length > 0 ? Math.min(...realVals) : 0;
-              const floorVal = Math.max(0, minVal * 0.7);
+              const rawMax = Math.max(...chartData.filter(v => v > 0.01), chartBudgetLine || 0);
+              const lm = niceChartMax([rawMax]);
+              const floorVal = 0; // running total always starts from 0
               const chartH = 260;
               const chartW = chartScrollable ? Math.max(SW - 64, chartLabels.length * 36) : SW - 64;
               const yStep = (lm - floorVal) / 4;
@@ -2412,8 +2433,8 @@ export default function App() {
                 const n = chartData.length;
                 const dataW = chartW - yAxisW - rightPad;
                 const idx = Math.min(n - 1, Math.max(0, Math.round((contentX - yAxisW) / dataW * (n - 1))));
-                const realVal = chartData[idx] < 0.02 ? 0 : chartData[idx];
-                setChartTooltip(prev => prev?.index === idx ? null : { value: realVal, index: idx });
+                const dailyVal = chartRawDailyData ? (chartRawDailyData[idx] || 0) : (chartData[idx] < 0.02 ? 0 : chartData[idx]);
+                setChartTooltip(prev => prev?.index === idx ? null : { value: dailyVal, index: idx });
               };
               return (
                 <View>
@@ -2446,9 +2467,10 @@ export default function App() {
                     >
                       <LineChart
                         data={{ labels: chartLabels, datasets: [
-                          { data: chartData, color: () => C.accent },
+                          { data: chartData, color: () => C.accent, strokeWidth: 2 },
+                          ...(chartBudgetLine > 0 ? [{ data: chartData.map(() => chartBudgetLine), withDots: false, color: () => C.red, strokeWidth: 1.5 }] : []),
                           { data: chartData.map(() => lm), withDots: false, color: () => 'rgba(0,0,0,0)' },
-                          { data: chartData.map(() => floorVal), withDots: false, color: () => 'rgba(0,0,0,0)' },
+                          { data: chartData.map(() => 0.01), withDots: false, color: () => 'rgba(0,0,0,0)' },
                         ]}}
                         width={chartW} height={chartH} bezier
                         chartConfig={{ ...CHART_CFG, decimalPlaces: 0, ...(chartScrollable ? { paddingLeft: 50 } : {}) }}
@@ -2458,8 +2480,9 @@ export default function App() {
                         withHorizontalLabels={!chartScrollable}
                         yAxisLabel="" yAxisSuffix="" segments={4}
                         onDataPointClick={({ value, index }) => {
-                          const realVal = value < 0.02 ? 0 : value;
-                          setChartTooltip(prev => prev?.index === index ? null : { value: realVal, index });
+                          // Show daily spend in tooltip, not cumulative
+                          const dailyVal = chartRawDailyData ? (chartRawDailyData[index] || 0) : (value < 0.02 ? 0 : value);
+                          setChartTooltip(prev => prev?.index === index ? null : { value: dailyVal, index });
                         }}
                       />
                     </ScrollView>
@@ -2524,7 +2547,13 @@ export default function App() {
             </Text>
             {catData.map(([cat, amt], i) => {
               const pctOfTotal = total > 0 ? Math.round((amt / total) * 100) : 0;
-              const barColor = CAT_COLORS[i % CAT_COLORS.length];
+              const budgetForCat = budgets.find(b => b.category === cat);
+              const budgetLimit = budgetForCat ? parseFloat(budgetForCat.monthly_limit || 0) : 0;
+              const pctOfBudget = budgetLimit > 0 ? Math.min(100, Math.floor((amt / budgetLimit) * 100)) : null;
+              const barPct = pctOfBudget !== null ? pctOfBudget : pctOfTotal;
+              const barColor = pctOfBudget !== null
+                ? (amt >= budgetLimit ? C.red : pctOfBudget >= 75 ? '#1EDFD5' : CAT_COLORS[i % CAT_COLORS.length])
+                : CAT_COLORS[i % CAT_COLORS.length];
               const catTxCount = filteredTx.filter(tx => getEffectiveCategory(tx) === cat).length;
               const isSelected = selectedCategory === cat;
               return (
@@ -2541,13 +2570,13 @@ export default function App() {
                       <Text style={s.catAmt}>${fmtMoney(amt)}</Text>
                     </View>
                     <View style={s.barBg}>
-                      <View style={[s.bar, { width: `${pctOfTotal}%`, backgroundColor: barColor }]} />
+                      <View style={[s.bar, { width: `${barPct}%`, backgroundColor: barColor }]} />
                     </View>
                     <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 4 }}>
-                      {catTxCount} transaction{catTxCount !== 1 ? 's' : ''}
+                      {catTxCount} transaction{catTxCount !== 1 ? 's' : ''}{pctOfBudget !== null ? ` · ${pctOfBudget}% of $${fmtMoney(budgetLimit)} budget` : ` · ${pctOfTotal}% of total`}
                     </Text>
                   </View>
-                  <Text style={[s.pct, { color: barColor }]}>{pctOfTotal}%</Text>
+                  <Text style={[s.pct, { color: barColor }]}>{pctOfBudget !== null ? `${pctOfBudget}%` : `${pctOfTotal}%`}</Text>
                 </TouchableOpacity>
               );
             })}
