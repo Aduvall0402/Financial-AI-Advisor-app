@@ -1003,9 +1003,8 @@ export default function App() {
         setSyncError(data.error || 'Sync failed');
         setPlaidError(data.error || 'Sync failed');
       } else {
-        if (data.total === 0) setSyncError('Plaid returned 0 transactions. Try reconnecting your bank.');
-        else if (data.synced === 0 && data.total > 0) setSyncError(`Failed to save transactions (0/${data.total} saved).`);
-        else { setSyncError(''); setPlaidStatus(`Synced ${data.synced} transaction${data.synced !== 1 ? 's' : ''}`); setTimeout(() => setPlaidStatus(''), 4000); }
+        if (data.synced === 0 && data.total > 0) setSyncError(`Failed to save transactions (0/${data.total} saved).`);
+        else { setSyncError(''); setPlaidStatus(data.synced > 0 ? `Synced ${data.synced} new transaction${data.synced !== 1 ? 's' : ''}` : 'Up to date'); setTimeout(() => setPlaidStatus(''), 4000); }
         const txRes = await apiCall(`/api/transactions/${userIdRef.current}`);
         const txData = txRes.ok ? await txRes.json() : {};
         const allTxs = txData.transactions || [];
