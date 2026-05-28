@@ -973,15 +973,35 @@ export default function App() {
           await AsyncStorage.setItem('widgetBudgetData', JSON.stringify(widgetBudgets));
 
           // Overall stats for the period
+          const todayStr = now.toISOString().split('T')[0];
+          const yest = new Date(now); yest.setDate(yest.getDate() - 1);
+          const yesterdayStr = yest.toISOString().split('T')[0];
           const periodTxs = allTxs.filter(tx => !isIncomeTx(tx) && (tx.transaction_date || '') >= periodStart);
           const totalSpent = periodTxs.reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+          const todaySpent = allTxs.filter(tx => !isIncomeTx(tx) && (tx.transaction_date || '') === todayStr).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+          const yesterdaySpent = allTxs.filter(tx => !isIncomeTx(tx) && (tx.transaction_date || '') === yesterdayStr).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
           const budgetTotal = widgetBudgets.reduce((s, b) => s + b.limit, 0);
           const budgetLeft = Math.max(0, budgetTotal - widgetBudgets.reduce((s, b) => s + b.spent, 0));
           const txCount = periodTxs.length;
+          const yesterdayTxCount = allTxs.filter(tx => !isIncomeTx(tx) && (tx.transaction_date || '') === yesterdayStr).length;
 
           await AsyncStorage.setItem('widgetStatsData', JSON.stringify({
-            totalSpent, budgetLeft, budgetTotal, txCount, periodLabel, periodRange,
+            totalSpent, budgetLeft, budgetTotal, txCount, yesterdayTxCount,
+            todaySpent, yesterdaySpent, periodLabel, periodRange,
           }));
+
+          // Recent transactions for widget (most recent 15, spending only)
+          const recentTxs = allTxs
+            .filter(tx => !isIncomeTx(tx))
+            .sort((a, b) => (b.transaction_date || '').localeCompare(a.transaction_date || ''))
+            .slice(0, 15)
+            .map(tx => ({
+              date: tx.transaction_date || '',
+              merchant: tx.merchant_name || tx.description || 'Unknown',
+              amount: parseFloat(tx.amount || 0),
+              category: getEffectiveCategory(tx) || 'OTHER',
+            }));
+          await AsyncStorage.setItem('widgetRecentTx', JSON.stringify(recentTxs));
         } catch (_) { /* widget update is non-critical */ }
       }
     } catch (e) { setSyncError('Network error — could not reach server'); setPlaidError('Network error'); }
