@@ -116,6 +116,11 @@ const PLAID_CATEGORIES = [
   { key: 'IGNORED', label: 'Ignored', icon: '/' },
 ];
 
+// Categories that make sense as discretionary budgets (excludes fixed/recurring costs)
+const BUDGET_CATEGORIES = PLAID_CATEGORIES.filter(c =>
+  !['RENT_AND_UTILITIES', 'LOAN_PAYMENTS', 'BANK_FEES', 'IGNORED'].includes(c.key)
+);
+
 const GROCERY_KEYWORDS = ['walmart','kroger','safeway','whole foods','trader joe','aldi','costco','publix','albertsons','wegmans','heb ','stop & shop','grocery','supermarket','food mart','fresh market','sprouts','meijer','winn-dixie','food lion','ingles','harris teeter','market basket','food 4 less','smart & final','stater bros','giant food','acme','shoprite','food city'];
 const DINING_KEYWORDS = ['restaurant','cafe','coffee','starbucks','mcdonald','burger','pizza','sushi','taco','subway','chipotle','diner','grill','bistro','kitchen','eatery','donut','bakery','sandwich','deli','bar ','tavern','pub ','bbq','wings','noodle','ramen','pho','thai','chinese','mexican','steakhouse','chick-fil','dunkin','panera','five guys','shake shack','domino','papa john','kfc','popeye','wendy'];
 
@@ -1649,9 +1654,15 @@ export default function App() {
   };
 
   const getChartData = () => {
-    const txs = selectedCategory
+    // When budgets exist and no specific category is selected, only count
+    // spending in budgeted categories so the line is comparable to the budget limit
+    const budgetedCats = budgets.length > 0 ? new Set(budgets.map(b => b.category)) : null;
+    const rawTxs = selectedCategory
       ? getFilteredTx().filter(tx => getEffectiveCategory(tx) === selectedCategory)
       : getFilteredTx();
+    const txs = (!selectedCategory && budgetedCats)
+      ? rawTxs.filter(tx => budgetedCats.has(getEffectiveCategory(tx)))
+      : rawTxs;
     const incomeTxs = transactions.filter(tx => isIncomeTx(tx));
     const now = new Date();
     const dayKey = (d) => {
@@ -2406,16 +2417,28 @@ export default function App() {
           </View>
           <View style={s.chartCard}>
             {chartType !== 'pie' && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                <Text style={{ color: C.textMuted, fontSize: 11 }}>
-                  {chartScrollable ? 'Running total' : 'Total'}: ${fmtMoney(chartData[chartData.length - 1] < 0.02 ? 0 : chartData[chartData.length - 1])}
-                </Text>
-                {chartBudgetLine > 0 && (
-                  <Text style={{ color: C.red, fontSize: 11, fontWeight: '600' }}>
-                    Budget: ${fmtMoney(chartBudgetLine)}
+              <>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+                  <Text style={{ color: C.textMuted, fontSize: 11 }}>
+                    {chartScrollable ? 'Budgeted spending' : 'Total'}: ${fmtMoney(chartData[chartData.length - 1] < 0.02 ? 0 : chartData[chartData.length - 1])}
+                  </Text>
+                  {chartBudgetLine > 0 && (
+                    <Text style={{ color: C.red, fontSize: 11, fontWeight: '600' }}>
+                      ── Budget: ${fmtMoney(chartBudgetLine)}
+                    </Text>
+                  )}
+                </View>
+                {budgets.length === 0 && chartScrollable && (
+                  <Text style={{ color: C.amber, fontSize: 10, marginBottom: 4 }}>
+                    💡 Set up budgets to see your spending vs target limit
                   </Text>
                 )}
-              </View>
+                {budgets.length > 0 && chartScrollable && !selectedCategory && (
+                  <Text style={{ color: C.textMuted, fontSize: 10, marginBottom: 4 }}>
+                    Only showing spending in your budgeted categories
+                  </Text>
+                )}
+              </>
             )}
             {chartType === 'line' && (() => {
               const rawMax = Math.max(...chartData.filter(v => v > 0.01), chartBudgetLine || 0);
@@ -2525,16 +2548,18 @@ export default function App() {
               );
             })()}
             {chartType === 'pie' && catData && (
-              <PieChart
-                data={catData.map(([cat, amt], i) => ({
-                  name: (PLAID_CATEGORIES.find(p => p.key === cat)?.label || cat.replace(/_/g, ' ')).slice(0, 14),
-                  population: Math.round(amt * 100) / 100,
-                  color: CAT_COLORS[i % CAT_COLORS.length],
-                  legendFontColor: C.textSub, legendFontSize: 11,
-                }))}
-                width={SW - 64} height={232} chartConfig={CHART_CFG} accessor="population"
-                backgroundColor="transparent" paddingLeft="8" absolute={false}
-              />
+              <View style={{ overflow: 'visible' }}>
+                <PieChart
+                  data={catData.map(([cat, amt], i) => ({
+                    name: (PLAID_CATEGORIES.find(p => p.key === cat)?.label || cat.replace(/_/g, ' ')).slice(0, 16),
+                    population: Math.round(amt * 100) / 100,
+                    color: CAT_COLORS[i % CAT_COLORS.length],
+                    legendFontColor: C.textSub, legendFontSize: 12,
+                  }))}
+                  width={SW - 48} height={280} chartConfig={CHART_CFG} accessor="population"
+                  backgroundColor="transparent" paddingLeft="12" absolute={false}
+                />
+              </View>
             )}
           </View>
         </View>
@@ -4887,7 +4912,7 @@ export default function App() {
                 <>
                   <Text style={s.label}>Category</Text>
                   <ScrollView style={{ maxHeight: 200, marginBottom: 10 }} showsVerticalScrollIndicator={true} nestedScrollEnabled={true}>
-                    {[...PLAID_CATEGORIES, ...customCategories.map(c => ({ key: c, label: c, icon: '★', custom: true }))].map(cat => (
+                    {[...BUDGET_CATEGORIES, ...customCategories.map(c => ({ key: c, label: c, icon: '★', custom: true }))].map(cat => (
                       <View key={cat.key} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
                         <TouchableOpacity
                           onPress={() => setNewBudgetCat(cat.key)}
