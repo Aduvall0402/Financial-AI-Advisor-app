@@ -212,14 +212,6 @@ app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) =
       return res.status(404).json({ error: "No connected account found" });
     }
 
-    // Load existing plaid_transaction_ids for this user to skip re-inserting
-    const { data: existingRows } = await supabase
-      .from("transactions")
-      .select("plaid_transaction_id")
-      .eq("user_id", userId)
-      .not("plaid_transaction_id", "is", null);
-    const existingIds = new Set((existingRows || []).map((r: any) => r.plaid_transaction_id));
-
     let synced = 0;
     let failed = 0;
     let totalTx = 0;
@@ -233,11 +225,10 @@ app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) =
         );
         totalTx += transactions.length;
         for (const tx of transactions) {
-          // Skip transactions already in the database (prevents duplicates)
-          if (existingIds.has(tx.transaction_id)) continue;
+          // Upsert — DB unique constraint on (user_id, plaid_transaction_id) blocks duplicates
           const { error } = await supabase
             .from("transactions")
-            .insert([{
+            .upsert([{
               user_id: userId,
               account_id: acct.id,
               plaid_transaction_id: tx.transaction_id,
@@ -251,16 +242,15 @@ app.post("/api/transactions/sync/:userId", async (req: Request, res: Response) =
               transaction_date: tx.date,
               posted_date: tx.authorized_date || null,
               description: tx.name,
-            }]);
+            }], { onConflict: "user_id,plaid_transaction_id", ignoreDuplicates: true });
           if (error) {
             failed++;
-            if (failed <= 3) console.error("Insert error for tx", tx.transaction_id, JSON.stringify(error));
+            if (failed <= 3) console.error("Upsert error for tx", tx.transaction_id, JSON.stringify(error));
           } else {
             synced++;
-            existingIds.add(tx.transaction_id);
           }
         }
-        // Save the cursor so next sync only fetches new transactions
+        // Save cursor so next sync only fetches new transactions from Plaid
         if (nextCursor) {
           await supabase.from("accounts").update({ plaid_sync_cursor: nextCursor }).eq("id", acct.id);
         }
