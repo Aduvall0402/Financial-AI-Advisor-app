@@ -6,44 +6,58 @@ import { FinlitWidget } from './widgets/FinlitWidget';
 const API_URL = 'https://financial-ai-advisor-app-production.up.railway.app';
 
 const PROMPTS = {
-  BUDGET: 'How is my budget doing this pay period? Give a concise 1-2 sentence answer.',
-  SPENDING: 'Give me a brief summary of my recent spending in 1-2 sentences.',
-  TIP: 'Give me one short financial tip or insight about my finances in 1-2 sentences.',
+  BUDGET: 'How is my budget doing this pay period? Give a concise 2-sentence answer with specific numbers if possible.',
+  SPENDING: 'Give me a brief 2-sentence summary of my recent spending, highlighting the top category.',
 };
+
+function fmtTime() {
+  const d = new Date();
+  const h = d.getHours();
+  const m = String(d.getMinutes()).padStart(2, '0');
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  return `${h % 12 || 12}:${m} ${ampm}`;
+}
 
 async function widgetTaskHandler({ widgetAction, widgetInfo, renderWidget, clickAction }) {
   const userId = await AsyncStorage.getItem('widgetUserId');
   const lastResponse = await AsyncStorage.getItem('widgetLastResponse') || '';
+  const lastUpdated = await AsyncStorage.getItem('widgetLastUpdated') || '';
+  const lastPrompt = await AsyncStorage.getItem('widgetLastPrompt') || '';
 
-  if (!userId) {
+  const renderDefault = (response, prompt) =>
     renderWidget(
       <FinlitWidget
         width={widgetInfo.width}
         height={widgetInfo.height}
-        response="Sign in to the Finlit app to unlock AI answers."
-        activePrompt=""
+        response={response}
+        activePrompt={prompt}
         isLoading={false}
+        lastUpdated={lastUpdated}
       />
     );
+
+  if (!userId) {
+    renderDefault('Open Finlit and sign in to see your AI financial snapshot here.', '');
     return;
   }
 
-  if (widgetAction === 'WIDGET_CLICK' && PROMPTS[clickAction]) {
-    // Show loading state immediately
+  const isPromptClick = widgetAction === 'WIDGET_CLICK' && PROMPTS[clickAction];
+
+  if (isPromptClick) {
+    // Show loading
     renderWidget(
       <FinlitWidget
         width={widgetInfo.width}
         height={widgetInfo.height}
-        response="Thinking..."
+        response=""
         activePrompt={clickAction}
         isLoading={true}
+        lastUpdated={lastUpdated}
       />
     );
 
     try {
-      const d = new Date();
-      const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-
+      const today = new Date().toISOString().split('T')[0];
       const res = await fetch(`${API_URL}/api/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -54,14 +68,17 @@ async function widgetTaskHandler({ widgetAction, widgetInfo, renderWidget, click
       let response;
 
       if (res.status === 429) {
-        response = 'Daily AI limit reached. Open the app to upgrade to Premium for unlimited access.';
+        response = 'AI limit reached. Open Finlit to upgrade for unlimited access.';
       } else if (!res.ok) {
-        response = 'Something went wrong. Try again in a moment.';
+        response = 'Could not get a response. Try again in a moment.';
       } else {
         response = data.response || 'No response received.';
       }
 
+      const timeStr = fmtTime();
       await AsyncStorage.setItem('widgetLastResponse', response);
+      await AsyncStorage.setItem('widgetLastUpdated', timeStr);
+      await AsyncStorage.setItem('widgetLastPrompt', clickAction);
 
       renderWidget(
         <FinlitWidget
@@ -70,33 +87,19 @@ async function widgetTaskHandler({ widgetAction, widgetInfo, renderWidget, click
           response={response}
           activePrompt={clickAction}
           isLoading={false}
+          lastUpdated={timeStr}
         />
       );
     } catch {
-      const errMsg = 'No internet connection. Try again when online.';
-      renderWidget(
-        <FinlitWidget
-          width={widgetInfo.width}
-          height={widgetInfo.height}
-          response={errMsg}
-          activePrompt={clickAction}
-          isLoading={false}
-        />
-      );
+      renderDefault('No connection. Check your internet and try again.', clickAction);
     }
     return;
   }
 
-  // Default render (added, updated, resized)
-  const displayText = lastResponse || 'Tap a question below for an instant AI answer — no app needed.';
-  renderWidget(
-    <FinlitWidget
-      width={widgetInfo.width}
-      height={widgetInfo.height}
-      response={displayText}
-      activePrompt=""
-      isLoading={false}
-    />
+  // Default: show last response or placeholder
+  renderDefault(
+    lastResponse || 'Tap Budget or Spending for an instant AI answer.',
+    lastPrompt,
   );
 }
 

@@ -695,6 +695,10 @@ export default function App() {
       const path = parsed.path || parsed.hostname || '';
       if (path === 'chat' || url.includes('finlit://chat')) {
         setActiveTab('chat');
+      } else if (path === 'voice' || url.includes('finlit://voice')) {
+        setActiveTab('chat');
+        // Small delay to let the chat tab mount before triggering voice
+        setTimeout(() => startRecording(), 600);
       }
     };
     Linking.getInitialURL().then(handleURL);
