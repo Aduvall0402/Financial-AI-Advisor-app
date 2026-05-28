@@ -433,6 +433,8 @@ export default function App() {
   const [insightsCatDropdownVisible, setInsightsCatDropdownVisible] = useState(false);
   const [insightsInfoVisible, setInsightsInfoVisible] = useState(false);
   const [insightsChartTooltip, setInsightsChartTooltip] = useState(null);
+  const [aiCoachingTip, setAiCoachingTip] = useState('');
+  const [aiCoachingLoading, setAiCoachingLoading] = useState(false);
 
   // More tab sub-section + group share loading — MUST be declared here (before any early returns)
   const [moreSection, setMoreSection] = useState(null);
@@ -551,6 +553,34 @@ export default function App() {
       setRecurringTxs(d.recurring || []);
     } catch {}
   }, []);
+
+  // AI coaching tip — generated once per budget period, cached in AsyncStorage
+  useEffect(() => {
+    if (!userIdRef.current || !transactions.length || activeTab !== 'insights') return;
+    const periodKey = `aiCoach_${getPeriodStart('paycycle')}`;
+    AsyncStorage.getItem(periodKey).then(cached => {
+      if (cached) { setAiCoachingTip(cached); return; }
+      // Build a data-rich prompt for personalized advice
+      setAiCoachingLoading(true);
+      const cutoff = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
+      const spendTxs = transactions.filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= cutoff);
+      const totalSpend = spendTxs.reduce((s,tx)=>s+parseFloat(tx.amount||0),0);
+      const catMap = {};
+      spendTxs.forEach(tx => { const c = getEffectiveCategory(tx)||'Other'; catMap[c]=(catMap[c]||0)+parseFloat(tx.amount||0); });
+      const topCats = Object.entries(catMap).sort(([,a],[,b])=>b-a).slice(0,4).map(([c,a])=>`${PLAID_CATEGORIES.find(p=>p.key===c)?.label||c}: $${a.toFixed(0)}`).join(', ');
+      const budgetSummary = budgets.map(b => {
+        const bStart = getPeriodStart('paycycle', b.paycycle_start, b.paycycle_freq);
+        const spent = transactions.filter(tx=>!isIncomeTx(tx)&&(tx.transaction_date||'')>=bStart&&getEffectiveCategory(tx)===b.category).reduce((s,tx)=>s+parseFloat(tx.amount||0),0);
+        return `${PLAID_CATEGORIES.find(p=>p.key===b.category)?.label||b.category}: $${spent.toFixed(0)}/$${parseFloat(b.monthly_limit).toFixed(0)}`;
+      }).join(', ');
+      const prompt = `My spending last 30 days: $${totalSpend.toFixed(0)} total. Top categories: ${topCats}. ${budgets.length > 0 ? `Budget status: ${budgetSummary}.` : 'No budgets set yet.'} Based on this, give me 2 specific, actionable tips to improve my finances this next pay period. Be direct, mention specific dollar amounts or category names. Keep it under 60 words total.`;
+      apiCall('/api/ai/chat', { method: 'POST', body: JSON.stringify({ message: prompt, history: [] }) })
+        .then(r => r.json()).then(data => {
+          const tip = data.response || '';
+          if (tip) { setAiCoachingTip(tip); AsyncStorage.setItem(periodKey, tip); }
+        }).catch(() => {}).finally(() => setAiCoachingLoading(false));
+    });
+  }, [activeTab, transactions.length, budgets.length]);
 
   // Payday auto-detection from income transaction history
   useEffect(() => {
@@ -2333,17 +2363,28 @@ export default function App() {
     const totalPrev = spendingTxsPrev.reduce((s, tx) => s + parseFloat(tx.amount||0), 0);
     const dailyAvg = totalCurr / rangeDays;
 
-    // 1. Budget Adherence (0-35)
+    // 1. Budget Adherence (0-35) — per-category average, not all-or-nothing
     let budgetAdherenceScore = 20;
     let budgetAdherencePct = null;
     if (budgets.length > 0 && totalBudget > 0) {
-      const ratio = periodBudgetedSpend / totalBudget;
-      budgetAdherencePct = Math.round(ratio * 100);
-      if (ratio <= 0.75) budgetAdherenceScore = 35;
-      else if (ratio <= 0.90) budgetAdherenceScore = 30;
-      else if (ratio <= 1.00) budgetAdherenceScore = 22;
-      else if (ratio <= 1.15) budgetAdherenceScore = 12;
-      else budgetAdherenceScore = 0;
+      // Score each category independently then average
+      const catScores = budgets.map(b => {
+        const bStart = getPeriodStart('paycycle', b.paycycle_start, b.paycycle_freq);
+        const catSpent = transactions
+          .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= bStart && getEffectiveCategory(tx) === b.category)
+          .reduce((s, tx) => s + parseFloat(tx.amount||0), 0);
+        const lim = parseFloat(b.monthly_limit || 0);
+        if (lim <= 0) return 1.0;
+        const r = catSpent / lim;
+        if (r <= 0.75) return 1.00;
+        if (r <= 0.90) return 0.85;
+        if (r <= 1.00) return 0.65;
+        if (r <= 1.20) return Math.max(0, 0.65 - (r - 1.00) * 3.25); // linear 0.65→0
+        return 0;
+      });
+      const avgScore = catScores.reduce((a, b) => a + b, 0) / catScores.length;
+      budgetAdherenceScore = Math.round(avgScore * 35);
+      budgetAdherencePct = Math.round((periodBudgetedSpend / totalBudget) * 100);
     }
 
     // 2. Spending Trend (0-25)
@@ -2558,6 +2599,31 @@ export default function App() {
           </View>
         )}
 
+        {/* ── AI Personalized Coaching ── */}
+        {(aiCoachingTip || aiCoachingLoading) && (
+          <View style={{ backgroundColor: C.accent + '12', borderRadius: 14, padding: 14, marginBottom: 14, borderWidth: 1, borderColor: C.accent + '44' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <Text style={{ fontSize: 16 }}>✦</Text>
+              <Text style={{ color: C.accent, fontSize: 11, fontWeight: '800', letterSpacing: 0.5, flex: 1 }}>FINLIT AI · THIS PERIOD</Text>
+              <TouchableOpacity onPress={async () => {
+                const periodKey = `aiCoach_${getPeriodStart('paycycle')}`;
+                await AsyncStorage.removeItem(periodKey);
+                setAiCoachingTip('');
+              }}>
+                <Text style={{ color: C.textMuted, fontSize: 11 }}>Refresh</Text>
+              </TouchableOpacity>
+            </View>
+            {aiCoachingLoading ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <ActivityIndicator size="small" color={C.accent} />
+                <Text style={{ color: C.textSub, fontSize: 13 }}>Generating personalized tips…</Text>
+              </View>
+            ) : (
+              <Text style={{ color: C.text, fontSize: 13, lineHeight: 20 }}>{aiCoachingTip}</Text>
+            )}
+          </View>
+        )}
+
         {/* ── Spending pace chart ── */}
         {actualPace.length > 1 && (
           <View style={{ backgroundColor: C.surface, borderRadius: 18, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: C.border }}>
@@ -2634,7 +2700,11 @@ export default function App() {
                 ? (amt >= budgetLimit ? C.red : pctOfBudget >= 75 ? '#1EDFD5' : CAT_COLORS[i % CAT_COLORS.length])
                 : CAT_COLORS[i % CAT_COLORS.length];
               return (
-                <View key={cat} style={s.insightCard}>
+                <TouchableOpacity key={cat} style={s.insightCard} activeOpacity={0.75}
+                  onPress={() => {
+                    setTxFilterCategories(new Set([cat]));
+                    setActiveTab('transactions');
+                  }}>
                   <View style={[s.insightDot, { backgroundColor: barColor, width: 12, height: 12, borderRadius: 6 }]} />
                   <View style={{ flex: 1 }}>
                     <View style={s.catInfo}>
@@ -2646,10 +2716,11 @@ export default function App() {
                     </View>
                     <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 4 }}>
                       {pctOfBudget != null ? `${pctOfBudget}% of $${fmtMoney(budgetLimit)} budget` : `${Math.round((amt/totalCurr)*100)}% of total`}
+                      <Text style={{ color: C.accent }}> · tap to view →</Text>
                     </Text>
                   </View>
                   <Text style={[s.pct, { color: barColor }]}>{pctOfBudget != null ? `${pctOfBudget}%` : `${Math.round((amt/totalCurr)*100)}%`}</Text>
-                </View>
+                </TouchableOpacity>
               );
             })}
           </View>
@@ -3264,33 +3335,30 @@ export default function App() {
               <TouchableOpacity
                 key={b.id}
                 activeOpacity={0.8}
-                style={{ backgroundColor: C.surface, borderRadius: 14, marginBottom: 10, padding: 14 }}
-                onPress={() => {
-                  const periodStart = getPeriodStart('paycycle', b.paycycle_start, b.paycycle_freq);
-                  setBudgetNavPrompt({ catLabel, category: b.category, periodStart });
-                }}
+                style={{ backgroundColor: C.surface, borderRadius: 14, marginBottom: 10, padding: 14, borderWidth: 1, borderColor: C.border }}
+                onPress={() => { setEditingBudget(b); setNewBudgetCat(b.category); setNewBudgetLimit(String(b.monthly_limit)); setNewBudgetPeriod(budgetGlobalPeriod); setNewBudgetPaycycleStart(b.paycycle_start || ''); setNewBudgetPaycycleFreq(b.paycycle_freq || 'biweekly'); setAddBudgetVisible(true); }}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
                   <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: barColor, marginRight: 10 }} />
-                  <Text style={{ color: C.text, fontSize: 14, fontWeight: '600', flex: 1 }}>{catLabel}</Text>
-                  <Text style={{ color: C.textSub, fontSize: 12, marginRight: 10 }}>${fmtMoney(spent)} / ${fmtMoney(limit)}</Text>
+                  <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', flex: 1 }}>{catLabel}</Text>
+                  <Text style={{ color: C.textSub, fontSize: 12, marginRight: 8 }}>${fmtMoney(spent)} / ${fmtMoney(limit)}</Text>
                   <Text style={{ color: barColor, fontSize: 13, fontWeight: '800', minWidth: 36, textAlign: 'right' }}>{pct}%</Text>
                 </View>
-                <View style={{ height: 4, backgroundColor: C.border, borderRadius: 2, overflow: 'hidden', marginBottom: 8 }}>
-                  <View style={{ height: 4, width: `${pct}%`, backgroundColor: barColor, borderRadius: 2 }} />
+                <View style={{ height: 6, backgroundColor: C.border, borderRadius: 3, overflow: 'hidden', marginBottom: 8 }}>
+                  <View style={{ height: 6, width: `${pct}%`, backgroundColor: barColor, borderRadius: 3 }} />
                 </View>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={{ color: C.textMuted, fontSize: 11 }}>
-                    {pct >= 100 ? `$${fmtMoney(spent - limit)} over` : `$${fmtMoney(remaining)} left`}
-                    <Text style={{ color: C.accent }}>{' · tap to view'}</Text>
+                  <Text style={{ color: pct >= 100 ? C.red : C.textMuted, fontSize: 11, fontWeight: pct >= 100 ? '700' : '400' }}>
+                    {pct >= 100 ? `$${fmtMoney(spent - limit)} over budget` : `$${fmtMoney(remaining)} remaining`}
                   </Text>
-                  <View style={{ flexDirection: 'row', gap: 14 }}>
-                    <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); setEditingBudget(b); setNewBudgetCat(b.category); setNewBudgetLimit(String(b.monthly_limit)); setNewBudgetPeriod(budgetGlobalPeriod); setNewBudgetPaycycleStart(b.paycycle_start || ''); setNewBudgetPaycycleFreq(b.paycycle_freq || 'biweekly'); setAddBudgetVisible(true); }}>
-                      <Text style={{ color: C.accent, fontSize: 12, fontWeight: '600' }}>Edit</Text>
+                  <View style={{ flexDirection: 'row', gap: 16, alignItems: 'center' }}>
+                    <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); const periodStart = getPeriodStart('paycycle', b.paycycle_start, b.paycycle_freq); setBudgetNavPrompt({ catLabel, category: b.category, periodStart }); }}>
+                      <Text style={{ color: C.accent, fontSize: 12, fontWeight: '600' }}>Transactions</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); Alert.alert('Delete Budget', `Delete ${b.category.replace(/_/g,' ')} budget?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await apiCall(`/api/budgets/${b.id}`, { method: 'DELETE' }); fetchBudgets(); } }]); }}>
+                    <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); Alert.alert('Delete Budget', `Delete ${catLabel} budget?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { await apiCall(`/api/budgets/${b.id}`, { method: 'DELETE' }); fetchBudgets(); } }]); }}>
                       <Text style={{ color: C.red, fontSize: 12, fontWeight: '600' }}>Delete</Text>
                     </TouchableOpacity>
+                    <Text style={{ color: C.textMuted, fontSize: 11 }}>✎ tap to edit</Text>
                   </View>
                 </View>
               </TouchableOpacity>
