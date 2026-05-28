@@ -44,10 +44,10 @@ function dayLabel(dateStr) {
 
 function StatCard({ label, value, valueColor, sub, subColor }) {
   return (
-    <FlexWidget style={{ flex: 1, backgroundColor: SURFACE, borderRadius: 12, padding: 10, borderWidth: 1, borderColor: BORDER }}>
-      <TextWidget text={label} style={{ color: MUTED, fontSize: 9, marginBottom: 4 }} />
-      <TextWidget text={value} style={{ color: valueColor || TEXT, fontSize: 15, fontWeight: '700' }} />
-      {sub ? <TextWidget text={sub} style={{ color: subColor || MUTED, fontSize: 9, marginTop: 3 }} /> : null}
+    <FlexWidget style={{ flex: 1, backgroundColor: SURFACE, borderRadius: 14, padding: 12, borderWidth: 1, borderColor: BORDER }}>
+      <TextWidget text={label} style={{ color: MUTED, fontSize: 10, marginBottom: 6 }} />
+      <TextWidget text={value} style={{ color: valueColor || TEXT, fontSize: 16, fontWeight: '700' }} />
+      {sub ? <TextWidget text={sub} style={{ color: subColor || MUTED, fontSize: 10, marginTop: 4 }} /> : null}
     </FlexWidget>
   );
 }
@@ -55,16 +55,16 @@ function StatCard({ label, value, valueColor, sub, subColor }) {
 function TxRow({ merchant, amount, category }) {
   const color   = CAT_COLORS[category]   || MUTED;
   const initial = CAT_INITIALS[category] || '?';
-  const name    = merchant.length > 22 ? merchant.slice(0, 21) + '…' : merchant;
+  const name    = merchant.length > 24 ? merchant.slice(0, 23) + '…' : merchant;
   return (
-    <FlexWidget style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: 'match_parent', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: BORDER }}>
+    <FlexWidget style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: 'match_parent', paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: BORDER }}>
       <FlexWidget style={{ flexDirection: 'row', alignItems: 'center' }}>
-        <FlexWidget style={{ width: 28, height: 28, backgroundColor: color + '28', borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginRight: 10 }}>
-          <TextWidget text={initial} style={{ color, fontSize: 11, fontWeight: '700' }} />
+        <FlexWidget style={{ width: 32, height: 32, backgroundColor: color + '28', borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
+          <TextWidget text={initial} style={{ color, fontSize: 12, fontWeight: '700' }} />
         </FlexWidget>
-        <TextWidget text={name} style={{ color: TEXT, fontSize: 12 }} />
+        <TextWidget text={name} style={{ color: TEXT, fontSize: 13 }} />
       </FlexWidget>
-      <TextWidget text={`-$${amount.toFixed(2)}`} style={{ color: TEXT, fontSize: 12, fontWeight: '600' }} />
+      <TextWidget text={`-$${amount.toFixed(2)}`} style={{ color: TEXT, fontSize: 13, fontWeight: '600' }} />
     </FlexWidget>
   );
 }
@@ -98,38 +98,38 @@ export function FinlitWidget({ width, height, budgetData, statsData, recentTxDat
 
   // Always full layout — let Android handle small sizes via clipping
   return (
-    <FlexWidget style={{ height: 'match_parent', width: 'match_parent', backgroundColor: BG, borderRadius: 20, padding: 16, flexDirection: 'column' }}>
+    <FlexWidget style={{ height: 'match_parent', width: 'match_parent', backgroundColor: BG, borderRadius: 22, padding: 20, flexDirection: 'column' }}>
 
       {/* ── Header ── */}
-      <FlexWidget style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: 'match_parent', marginBottom: 10 }}>
+      <FlexWidget style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: 'match_parent', marginBottom: 16 }}>
         <FlexWidget style={{ flexDirection: 'column' }}>
           <ImageWidget image={require('../assets/finlit-logo.png')} imageWidth={88} imageHeight={40} />
-          {periodRange ? <TextWidget text={periodRange} style={{ color: MUTED, fontSize: 10, marginTop: 2 }} /> : null}
+          {periodRange ? <TextWidget text={periodRange} style={{ color: MUTED, fontSize: 10, marginTop: 4 }} /> : null}
         </FlexWidget>
         <FlexWidget
-          style={{ backgroundColor: SURFACE, borderRadius: 20, paddingVertical: 6, paddingHorizontal: 14, borderWidth: 1, borderColor: BORDER }}
+          style={{ backgroundColor: SURFACE, borderRadius: 20, paddingVertical: 7, paddingHorizontal: 16, borderWidth: 1, borderColor: BORDER }}
           clickAction="OPEN_URI"
           clickActionData={{ uri: 'finlit://scan' }}
         >
-          <TextWidget text="Scan Receipt" style={{ color: ACCENT, fontSize: 10, fontWeight: '600' }} />
+          <TextWidget text="Scan Receipt" style={{ color: ACCENT, fontSize: 11, fontWeight: '600' }} />
         </FlexWidget>
       </FlexWidget>
 
       {/* ── Stat cards ── */}
-      <FlexWidget style={{ flexDirection: 'row', width: 'match_parent', gap: 7, marginBottom: 12 }}>
+      <FlexWidget style={{ flexDirection: 'row', width: 'match_parent', gap: 8, marginBottom: 16 }}>
         <StatCard label="Total Spent" value={`$${totalSpent.toFixed(0)}`} sub={spentSub} subColor={spentSubColor} />
         <StatCard label="Budget Left" value={`$${budgetLeft.toFixed(0)}`} valueColor={budgetLeft > 0 ? GREEN : RED} sub={`of $${budgetTotal.toFixed(0)}`} />
         <StatCard label="Transactions" value={`${txCount}`} sub={txSub} />
       </FlexWidget>
 
       {/* ── Divider ── */}
-      <FlexWidget style={{ height: 1, width: 'match_parent', backgroundColor: BORDER, marginBottom: 10 }} />
+      <FlexWidget style={{ height: 1, width: 'match_parent', backgroundColor: BORDER, marginBottom: 14 }} />
 
       {/* ── Transaction section header ── */}
-      <FlexWidget style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: 'match_parent', marginBottom: 8 }}>
-        <TextWidget text={noData ? 'Recent Transactions' : sectionLabel} style={{ color: TEXT, fontSize: 12, fontWeight: '700' }} />
+      <FlexWidget style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: 'match_parent', marginBottom: 10 }}>
+        <TextWidget text={noData ? 'Recent Transactions' : sectionLabel} style={{ color: TEXT, fontSize: 13, fontWeight: '700' }} />
         {!noData && txs.length > 0 ? (
-          <TextWidget text={`$${dayTotal.toFixed(2)} total`} style={{ color: MUTED, fontSize: 10 }} />
+          <TextWidget text={`$${dayTotal.toFixed(2)} total`} style={{ color: MUTED, fontSize: 11 }} />
         ) : null}
       </FlexWidget>
 

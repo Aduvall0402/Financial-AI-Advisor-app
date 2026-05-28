@@ -210,6 +210,7 @@ export default function App() {
   const userIdRef = useRef(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [stayLoggedIn, setStayLoggedIn] = useState(true);
 
   // App state
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -619,6 +620,7 @@ export default function App() {
       'displayName',
       'notifOverall', 'notifDaily', 'notifWeekly', 'notifMonthly', 'notifBudget',
       'currency', 'autoSyncHour', 'autoSyncEnabled', 'lastSyncTime',
+      'savedUserId', 'savedToken', 'savedEmail',
     ]).then(pairs => {
       const m = Object.fromEntries(pairs.map(([k, v]) => [k, v]));
       if (m.displayName) setDisplayName(m.displayName);
@@ -631,6 +633,29 @@ export default function App() {
       if (m.autoSyncHour) setAutoSyncHour(parseInt(m.autoSyncHour));
       if (m.autoSyncEnabled) setAutoSyncEnabled(m.autoSyncEnabled === 'true');
       if (m.lastSyncTime) setLastSyncTime(parseInt(m.lastSyncTime));
+      // Restore session if "Stay logged in" was used
+      if (m.savedUserId && m.savedToken) {
+        setUserId(m.savedUserId); userIdRef.current = m.savedUserId;
+        setAuthToken(m.savedToken); authTokenRef.current = m.savedToken;
+        if (m.savedEmail) setEmail(m.savedEmail);
+        AsyncStorage.setItem('widgetUserId', m.savedUserId);
+        setScreen('dashboard');
+        setDashboardLoading(true);
+        const uid = m.savedUserId;
+        Promise.all([
+          fetch(`${API_URL}/api/ai/financial-summary/${uid}`).then(r => r.ok ? r.json() : null).catch(() => null),
+          fetchAccounts(uid),
+          fetchTransactions(uid),
+          fetchGoals(uid),
+          fetchGroups(uid),
+          fetchBudgets(uid),
+          fetch(`${API_URL}/api/users/${uid}/subscription`).then(r => r.json()).then(d => setIsSubscribed(d.is_subscribed === true)).catch(() => {}),
+        ]).then(([summary]) => {
+          if (summary) setDashboardData(summary);
+          setDashboardLoading(false);
+        }).catch(() => setDashboardLoading(false));
+        fetchRecurring();
+      }
     });
   }, []);
 
@@ -745,6 +770,13 @@ export default function App() {
       const firstName = data.first_name || data.session.user.user_metadata?.full_name?.split(' ')[0] || email.split('@')[0];
       setUserId(uid); userIdRef.current = uid;
       AsyncStorage.setItem('widgetUserId', uid);
+      if (stayLoggedIn) {
+        AsyncStorage.setItem('savedUserId', uid);
+        if (token) AsyncStorage.setItem('savedToken', token);
+        AsyncStorage.setItem('savedEmail', email);
+      } else {
+        AsyncStorage.multiRemove(['savedUserId', 'savedToken', 'savedEmail']);
+      }
       setDisplayName(firstName);
       AsyncStorage.setItem('displayName', firstName);
       setPassword('');
@@ -865,6 +897,7 @@ export default function App() {
       AsyncStorage.removeItem('displayName');
       AsyncStorage.removeItem('widgetUserId');
       AsyncStorage.removeItem('widgetLastResponse');
+      AsyncStorage.multiRemove(['savedUserId', 'savedToken', 'savedEmail']);
       setTransactions([]); setAccounts([]); setSelectedAccount(null);
       setLinkedAccount(null); setAccountsError(false); setDashboardData(null);
       setChatMessages([{ id: '0', role: 'assistant', text: "Hi! I'm your Finlit assistant. Ask me anything about your finances!" }]);
@@ -1380,6 +1413,84 @@ export default function App() {
     fetchGoals();
   };
 
+  // Refresh widget data from current state (called after login + after sync)
+  const refreshWidgetData = useCallback(async (txList, budgetList) => {
+    if (!userIdRef.current) return;
+    try {
+      const now = new Date();
+      const todayStr = now.toISOString().split('T')[0];
+      const yest = new Date(now); yest.setDate(yest.getDate() - 1);
+      const yesterdayStr = yest.toISOString().split('T')[0];
+      const fmtDate = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+      const periodStart = (() => {
+        if (userPayday?.nextDate) {
+          const freqDays = userPayday.frequency === 'weekly' ? 7 : userPayday.frequency === 'biweekly' ? 14 : 30;
+          const msPerCycle = freqDays * 86400000;
+          const anchor = new Date(userPayday.nextDate + 'T00:00:00');
+          while (anchor > now) anchor.setTime(anchor.getTime() - msPerCycle);
+          return anchor.toISOString().split('T')[0];
+        }
+        return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+      })();
+      const freqDays = userPayday?.frequency === 'weekly' ? 7 : userPayday?.frequency === 'biweekly' ? 14 : 30;
+      const periodLabel = userPayday
+        ? userPayday.frequency === 'weekly' ? 'This Week' : userPayday.frequency === 'biweekly' ? 'This Pay Period' : 'This Month'
+        : 'This Month';
+      const periodEnd = new Date(new Date(periodStart + 'T00:00:00').getTime() + (freqDays - 1) * 86400000);
+      const periodRange = `${fmtDate(new Date(periodStart + 'T00:00:00'))} – ${fmtDate(periodEnd)}`;
+
+      const spendingTxs = txList.filter(tx => !isIncomeTx(tx));
+      const periodTxs = spendingTxs.filter(tx => (tx.transaction_date || '') >= periodStart);
+      const totalSpent = periodTxs.reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+      const todaySpent = spendingTxs.filter(tx => tx.transaction_date === todayStr).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+      const yesterdaySpent = spendingTxs.filter(tx => tx.transaction_date === yesterdayStr).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+      const txCount = periodTxs.length;
+      const yesterdayTxCount = spendingTxs.filter(tx => tx.transaction_date === yesterdayStr).length;
+
+      const widgetBudgets = budgetList.map(b => {
+        const bStart = (() => {
+          if (b.period === 'weekly') { const d = new Date(now); d.setDate(d.getDate() - 6); return d.toISOString().split('T')[0]; }
+          if (b.period === 'biweekly') { const d = new Date(now); d.setDate(d.getDate() - 13); return d.toISOString().split('T')[0]; }
+          return periodStart;
+        })();
+        const spent = spendingTxs
+          .filter(tx => (tx.transaction_date || '') >= bStart && getEffectiveCategory(tx) === b.category)
+          .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+        const limit = parseFloat(b.monthly_limit || 0);
+        const catLabel = PLAID_CATEGORIES.find(c => c.key === b.category)?.label || b.category;
+        return { label: catLabel, category: b.category, spent, limit, pct: limit > 0 ? (spent / limit) * 100 : 0 };
+      });
+
+      const budgetTotal = widgetBudgets.reduce((s, b) => s + b.limit, 0);
+      const budgetLeft = Math.max(0, budgetTotal - widgetBudgets.reduce((s, b) => s + b.spent, 0));
+
+      const sorted = spendingTxs.sort((a, b) => (b.transaction_date || '').localeCompare(a.transaction_date || ''));
+      const mostRecentDate = sorted[0]?.transaction_date || '';
+      const dayTxs = mostRecentDate
+        ? sorted.filter(tx => tx.transaction_date === mostRecentDate).map(tx => ({
+            date: tx.transaction_date,
+            merchant: tx.merchant_name || tx.description || 'Unknown',
+            amount: parseFloat(tx.amount || 0),
+            category: getEffectiveCategory(tx) || 'OTHER',
+          }))
+        : [];
+
+      await AsyncStorage.multiSet([
+        ['widgetBudgetData', JSON.stringify(widgetBudgets)],
+        ['widgetStatsData', JSON.stringify({ totalSpent, budgetLeft, budgetTotal, txCount, yesterdayTxCount, todaySpent, yesterdaySpent, periodLabel, periodRange })],
+        ['widgetRecentTx', JSON.stringify(dayTxs)],
+      ]);
+    } catch (_) {}
+  }, [userPayday, isIncomeTx, getEffectiveCategory]);
+
+  // Auto-refresh widget whenever transactions or budgets change (covers login restore)
+  useEffect(() => {
+    if (transactions.length > 0 && userIdRef.current) {
+      refreshWidgetData(transactions, budgets);
+    }
+  }, [transactions, budgets]);
+
   const getPeriodStart = (period, paycycleStart, paycycleFreq) => {
     const now = new Date();
     if (period === 'weekly') { const d = new Date(now); d.setDate(d.getDate() - 6); return d.toISOString().split('T')[0]; }
@@ -1589,6 +1700,22 @@ export default function App() {
           <TextInput style={s.input} placeholder="you@example.com" placeholderTextColor={C.textMuted} value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" editable={!loading} />
           <Text style={s.label}>Password</Text>
           <TextInput style={s.input} placeholder="••••••••" placeholderTextColor={C.textMuted} value={password} onChangeText={setPassword} secureTextEntry editable={!loading} />
+          <TouchableOpacity
+            style={{ flexDirection: 'row', alignItems: 'center', marginTop: 14, marginBottom: 2 }}
+            onPress={() => setStayLoggedIn(v => !v)}
+            activeOpacity={0.7}
+          >
+            <View style={{
+              width: 22, height: 22, borderRadius: 6, borderWidth: 2,
+              borderColor: stayLoggedIn ? C.accent : C.textMuted,
+              backgroundColor: stayLoggedIn ? C.accent : 'transparent',
+              justifyContent: 'center', alignItems: 'center', marginRight: 10,
+            }}>
+              {stayLoggedIn && <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700', lineHeight: 18 }}>✓</Text>}
+            </View>
+            <Text style={{ color: C.textSub, fontSize: 14 }}>Stay logged in</Text>
+            <Text style={{ color: C.textMuted, fontSize: 12, marginLeft: 6 }}>(required for widget)</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={[s.btn, { marginTop: 10 }, loading && s.btnOff]} onPress={handleLogin} disabled={loading}>
             {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Sign In</Text>}
           </TouchableOpacity>
