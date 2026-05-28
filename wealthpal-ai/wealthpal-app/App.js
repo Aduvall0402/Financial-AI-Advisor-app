@@ -622,8 +622,8 @@ export default function App() {
       'displayName',
       'notifOverall', 'notifDaily', 'notifWeekly', 'notifMonthly', 'notifBudget',
       'currency', 'autoSyncHour', 'autoSyncEnabled', 'lastSyncTime',
-      'savedUserId', 'savedToken', 'savedEmail',
-    ]).then(pairs => {
+      'savedUserId', 'savedToken', 'savedRefreshToken', 'savedEmail',
+    ]).then(async pairs => {
       const m = Object.fromEntries(pairs.map(([k, v]) => [k, v]));
       if (m.displayName) setDisplayName(m.displayName);
       if (m.notifOverall !== null) setNotifOverall(m.notifOverall === 'true');
@@ -636,10 +636,36 @@ export default function App() {
       if (m.autoSyncEnabled) setAutoSyncEnabled(m.autoSyncEnabled === 'true');
       if (m.lastSyncTime) setLastSyncTime(parseInt(m.lastSyncTime));
       // Restore session if "Stay logged in" was used
-      if (m.savedUserId && m.savedToken) {
-        setUserId(m.savedUserId); userIdRef.current = m.savedUserId;
-        setAuthToken(m.savedToken); authTokenRef.current = m.savedToken;
+      if (m.savedUserId && (m.savedToken || m.savedRefreshToken)) {
         if (m.savedEmail) setEmail(m.savedEmail);
+        let activeToken = m.savedToken;
+        // Always refresh the access token using the refresh token to avoid expired-JWT 401s
+        if (m.savedRefreshToken) {
+          try {
+            const rr = await fetch(`${API_URL}/api/auth/refresh`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ refreshToken: m.savedRefreshToken }),
+            });
+            if (rr.ok) {
+              const rd = await rr.json();
+              activeToken = rd.session?.access_token || activeToken;
+              const newRefresh = rd.session?.refresh_token;
+              if (activeToken) AsyncStorage.setItem('savedToken', activeToken);
+              if (newRefresh) AsyncStorage.setItem('savedRefreshToken', newRefresh);
+            } else {
+              // Refresh failed — session truly expired, force re-login
+              AsyncStorage.multiRemove(['savedUserId', 'savedToken', 'savedRefreshToken', 'savedEmail']);
+              return;
+            }
+          } catch { /* network error — use existing token and let 401 handling deal with it */ }
+        }
+        if (!activeToken) {
+          AsyncStorage.multiRemove(['savedUserId', 'savedToken', 'savedRefreshToken', 'savedEmail']);
+          return;
+        }
+        setAuthToken(activeToken); authTokenRef.current = activeToken;
+        AsyncStorage.setItem('widgetAuthToken', activeToken);
+        setUserId(m.savedUserId); userIdRef.current = m.savedUserId;
         AsyncStorage.setItem('widgetUserId', m.savedUserId);
         setScreen('dashboard');
         setDashboardLoading(true);
@@ -768,6 +794,7 @@ export default function App() {
       if (!res.ok) { setError(data.error || 'Login failed'); return; }
       const uid = data.session.user.id;
       const token = data.session.access_token;
+      const refreshToken = data.session.refresh_token;
       if (token) { setAuthToken(token); authTokenRef.current = token; AsyncStorage.setItem('widgetAuthToken', token); }
       const firstName = data.first_name || data.session.user.user_metadata?.full_name?.split(' ')[0] || email.split('@')[0];
       setUserId(uid); userIdRef.current = uid;
@@ -775,9 +802,10 @@ export default function App() {
       if (stayLoggedIn) {
         AsyncStorage.setItem('savedUserId', uid);
         if (token) AsyncStorage.setItem('savedToken', token);
+        if (refreshToken) AsyncStorage.setItem('savedRefreshToken', refreshToken);
         AsyncStorage.setItem('savedEmail', email);
       } else {
-        AsyncStorage.multiRemove(['savedUserId', 'savedToken', 'savedEmail']);
+        AsyncStorage.multiRemove(['savedUserId', 'savedToken', 'savedRefreshToken', 'savedEmail']);
       }
       setDisplayName(firstName);
       AsyncStorage.setItem('displayName', firstName);
@@ -824,7 +852,9 @@ export default function App() {
       }
       const uid = data.user.id;
       const token = data.session?.access_token;
+      const refreshToken = data.session?.refresh_token;
       if (token) { setAuthToken(token); authTokenRef.current = token; AsyncStorage.setItem('widgetAuthToken', token); }
+      if (refreshToken) AsyncStorage.setItem('savedRefreshToken', refreshToken);
       setUserId(uid); userIdRef.current = uid;
       AsyncStorage.setItem('widgetUserId', uid);
       setDisplayName(firstName.trim());
@@ -900,6 +930,7 @@ export default function App() {
       AsyncStorage.removeItem('widgetUserId');
       AsyncStorage.removeItem('widgetAuthToken');
       AsyncStorage.removeItem('widgetLastResponse');
+      AsyncStorage.removeItem('savedRefreshToken');
       AsyncStorage.multiRemove(['savedUserId', 'savedToken', 'savedEmail']);
       setTransactions([]); setAccounts([]); setSelectedAccount(null);
       setLinkedAccount(null); setAccountsError(false); setDashboardData(null);

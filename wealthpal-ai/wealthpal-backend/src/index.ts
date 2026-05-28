@@ -124,6 +124,20 @@ app.post("/api/auth/login", async (req: Request, res: Response) => {
   }
 });
 
+app.post("/api/auth/refresh", async (req: Request, res: Response) => {
+  try {
+    const { refreshToken } = req.body;
+    if (!refreshToken) return res.status(400).json({ error: "Refresh token required" });
+    const { data, error } = await supabase.auth.refreshSession({ refresh_token: refreshToken });
+    if (error || !data.session) {
+      return res.status(401).json({ error: "Session expired. Please sign in again." });
+    }
+    res.json({ session: data.session });
+  } catch {
+    res.status(500).json({ error: "Failed to refresh session" });
+  }
+});
+
 // ============================================
 // PLAID ROUTES
 // ============================================
