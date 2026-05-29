@@ -639,12 +639,11 @@ export default function App() {
       return [{ label: 'This Month', startStr: localDateStr(new Date(now.getFullYear(), now.getMonth(), 1)), offset: 0 }];
     }
     const freqD = userPayday.frequency === 'weekly' ? 7 : userPayday.frequency === 'biweekly' ? 14 : 30;
-    const msPerCycle = freqD * 86400000;
-    const anchor = new Date(userPayday.nextDate + 'T00:00:00');
-    while (anchor > now) anchor.setTime(anchor.getTime() - msPerCycle);
+    const anchor = new Date(userPayday.nextDate + 'T00:00:00'); anchor.setHours(0, 0, 0, 0);
+    while (anchor > now) { anchor.setDate(anchor.getDate() - freqD); anchor.setHours(0, 0, 0, 0); }
     const opts = [];
     for (let i = 0; i < 6; i++) {
-      const start = new Date(anchor.getTime() - i * msPerCycle);
+      const start = new Date(anchor); start.setDate(start.getDate() - i * freqD); start.setHours(0, 0, 0, 0);
       opts.push({ label: i === 0 ? 'This Pay Period' : `Pay period starting ${fmtPD(start)}`, startStr: localDateStr(start), offset: i });
     }
     return opts;
@@ -1544,9 +1543,8 @@ export default function App() {
       const periodStart = (() => {
         if (userPayday?.nextDate) {
           const freqDays = userPayday.frequency === 'weekly' ? 7 : userPayday.frequency === 'biweekly' ? 14 : 30;
-          const msPerCycle = freqDays * 86400000;
-          const anchor = new Date(userPayday.nextDate + 'T00:00:00');
-          while (anchor > now) anchor.setTime(anchor.getTime() - msPerCycle);
+          const anchor = new Date(userPayday.nextDate + 'T00:00:00'); anchor.setHours(0, 0, 0, 0);
+          while (anchor > now) { anchor.setDate(anchor.getDate() - freqDays); anchor.setHours(0, 0, 0, 0); }
           return localDate(anchor);
         }
         return localDate(new Date(now.getFullYear(), now.getMonth(), 1));
@@ -1555,7 +1553,7 @@ export default function App() {
       const periodLabel = userPayday
         ? userPayday.frequency === 'weekly' ? 'This Week' : userPayday.frequency === 'biweekly' ? 'This Pay Period' : 'This Month'
         : 'This Month';
-      const periodEnd = new Date(new Date(periodStart + 'T00:00:00').getTime() + (freqDays - 1) * 86400000);
+      const periodEnd = new Date(periodStart + 'T00:00:00'); periodEnd.setDate(periodEnd.getDate() + freqDays - 1); periodEnd.setHours(0,0,0,0);
       const periodRange = `${fmtDate(new Date(periodStart + 'T00:00:00'))} – ${fmtDate(periodEnd)}`;
 
       const spendingTxs = txList.filter(tx => !isIncomeTx(tx));
@@ -1618,43 +1616,40 @@ export default function App() {
 
   const getPeriodStart = (period, paycycleStart, paycycleFreq) => {
     const now = new Date();
-    if (period === 'weekly') { const d = new Date(now); d.setDate(d.getDate() - 6); return d.toISOString().split('T')[0]; }
-    if (period === 'biweekly') { const d = new Date(now); d.setDate(d.getDate() - 13); return d.toISOString().split('T')[0]; }
+    const localFmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    if (period === 'weekly') { const d = new Date(now); d.setDate(d.getDate() - 6); d.setHours(0,0,0,0); return localFmt(d); }
+    if (period === 'biweekly') { const d = new Date(now); d.setDate(d.getDate() - 13); d.setHours(0,0,0,0); return localFmt(d); }
     if (period === 'paycycle') {
       // 1) User-set payday takes priority
       if (userPayday && userPayday.nextDate) {
         const freqDays = userPayday.frequency === 'weekly' ? 7 : userPayday.frequency === 'biweekly' ? 14 : 30;
-        const msPerCycle = freqDays * 86400000;
-        // Walk backward from nextDate to find the most recent payday <= now
-        const anchor = new Date(userPayday.nextDate + 'T00:00:00');
-        while (anchor > now) anchor.setTime(anchor.getTime() - msPerCycle);
-        return anchor.toISOString().split('T')[0];
+        const anchor = new Date(userPayday.nextDate + 'T00:00:00'); anchor.setHours(0, 0, 0, 0);
+        while (anchor > now) { anchor.setDate(anchor.getDate() - freqDays); anchor.setHours(0, 0, 0, 0); }
+        return localFmt(anchor);
       }
       // 2) Budget-level paycycle_start override
       if (paycycleStart) {
         const freqDays = paycycleFreq === 'weekly' ? 7 : paycycleFreq === 'biweekly' ? 14 : 30;
-        const anchor = new Date(paycycleStart);
-        const msPerCycle = freqDays * 86400000;
-        const elapsed = now.getTime() - anchor.getTime();
-        const cycleOffset = elapsed % msPerCycle;
-        const cycleStart = new Date(now.getTime() - cycleOffset);
-        return cycleStart.toISOString().split('T')[0];
+        const anchor = new Date(paycycleStart + 'T00:00:00'); anchor.setHours(0, 0, 0, 0);
+        while (anchor > now) { anchor.setDate(anchor.getDate() - freqDays); anchor.setHours(0, 0, 0, 0); }
+        return localFmt(anchor);
       }
       // 3) Auto-detected pay cycle from income transactions
       if (paydayInfo) {
-        const nextPayday = new Date(paydayInfo.nextDate + 'T00:00:00');
-        const cycleStart = new Date(nextPayday.getTime() - paydayInfo.frequencyDays * 86400000);
-        return cycleStart.toISOString().split('T')[0];
+        const nextPayday = new Date(paydayInfo.nextDate + 'T00:00:00'); nextPayday.setHours(0,0,0,0);
+        const cycleStart = new Date(nextPayday); cycleStart.setDate(cycleStart.getDate() - paydayInfo.frequencyDays); cycleStart.setHours(0,0,0,0);
+        return localFmt(cycleStart);
       }
     }
-    return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]; // monthly
+    return localFmt(new Date(now.getFullYear(), now.getMonth(), 1)); // monthly
   };
 
   const getPeriodEnd = (startDateStr, freq) => {
     const freqDays = freq === 'weekly' ? 7 : freq === 'biweekly' ? 14 : 30;
-    const start = new Date(startDateStr + 'T00:00:00');
-    const end = new Date(start.getTime() + (freqDays - 1) * 86400000);
-    return end.toISOString().split('T')[0];
+    const end = new Date(startDateStr + 'T00:00:00');
+    end.setDate(end.getDate() + freqDays - 1);
+    end.setHours(0, 0, 0, 0);
+    return `${end.getFullYear()}-${String(end.getMonth()+1).padStart(2,'0')}-${String(end.getDate()).padStart(2,'0')}`;
   };
 
   const fmtPeriodRange = (startStr, freq) => {
@@ -2383,7 +2378,7 @@ export default function App() {
     const totalPrev = spendingTxsPrev.reduce((s, tx) => s + parseFloat(tx.amount||0), 0);
     const dailyAvg = totalCurr / rangeDays;
 
-    // 1. Budget Adherence (0-60) — per-category average, not all-or-nothing
+    // 1. Budget Adherence (0-60) — full points under budget, lose points only for overspending
     let budgetAdherenceScore = 32;
     let budgetAdherencePct = null;
     if (budgets.length > 0 && totalBudget > 0) {
@@ -2395,10 +2390,8 @@ export default function App() {
         const lim = parseFloat(b.monthly_limit || 0);
         if (lim <= 0) return 1.0;
         const r = catSpent / lim;
-        if (r <= 0.75) return 1.00;
-        if (r <= 0.90) return 0.85;
-        if (r <= 1.00) return 0.65;
-        if (r <= 1.20) return Math.max(0, 0.65 - (r - 1.00) * 3.25);
+        if (r <= 1.00) return 1.00;
+        if (r <= 1.20) return Math.max(0, 1.0 - (r - 1.0) * 5.0);
         return 0;
       });
       const avgScore = catScores.reduce((a, b) => a + b, 0) / catScores.length;
@@ -2406,18 +2399,25 @@ export default function App() {
       budgetAdherencePct = Math.round((periodBudgetedSpend / totalBudget) * 100);
     }
 
-    // 2. Spending Trend (0-40)
-    let trendScore = 28;
-    let trendPct = null;
-    if (totalPrev > 0 && totalCurr > 0) {
-      const change = (totalCurr - totalPrev) / totalPrev;
-      trendPct = Math.round(change * 100);
-      if (change <= -0.10) trendScore = 40;
-      else if (change <= 0.02) trendScore = 32;
-      else if (change <= 0.10) trendScore = 24;
-      else if (change <= 0.25) trendScore = 12;
-      else trendScore = 3;
+    // 2. Budget Streak (0-40) — consecutive completed periods under budget
+    let streakScore = 0;
+    let streakCount = 0;
+    if (budgets.length > 0 && totalBudget > 0 && payPeriodOptions.length > 1) {
+      // Check past completed periods (skip index 0 = current in-progress)
+      for (let i = 1; i < payPeriodOptions.length; i++) {
+        const opt = payPeriodOptions[i];
+        const pStart = opt.startStr;
+        const pEndDate = new Date(pStart + 'T00:00:00'); pEndDate.setDate(pEndDate.getDate() + freqDays); pEndDate.setHours(0, 0, 0, 0);
+        const pEnd = `${pEndDate.getFullYear()}-${String(pEndDate.getMonth()+1).padStart(2,'0')}-${String(pEndDate.getDate()).padStart(2,'0')}`;
+        const periodSpend = transactions
+          .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= pStart && (tx.transaction_date||'') < pEnd)
+          .reduce((s, tx) => s + parseFloat(tx.amount||0), 0);
+        if (periodSpend <= totalBudget) streakCount++;
+        else break;
+      }
+      streakScore = streakCount === 0 ? 0 : streakCount === 1 ? 20 : streakCount === 2 ? 30 : 40;
     }
+    const trendScore = streakScore; // kept as trendScore for component refs below
 
     const healthScore = Math.min(100, Math.max(0, budgetAdherenceScore + trendScore));
     const scoreColor = healthScore >= 85 ? C.green : healthScore >= 70 ? C.accent : healthScore >= 50 ? C.amber : C.red;
@@ -2438,7 +2438,7 @@ export default function App() {
     // ── Coaching tips ──────────────────────────────────
     const components = [
       { key: 'budget', label: 'Budget', score: budgetAdherenceScore, max: 60 },
-      { key: 'trend',  label: 'Trend',  score: trendScore, max: 40 },
+      { key: 'streak', label: 'Streak',  score: trendScore, max: 40 },
     ];
     const getTip = (key) => {
       if (key === 'budget') {
@@ -2449,13 +2449,14 @@ export default function App() {
         }).filter(b => b.over > 0).sort((a,b)=>b.over-a.over)[0];
         return overBudget
           ? { title: `Overspending on ${overBudget.label}`, body: `You're $${fmtMoney(overBudget.over)} over your ${overBudget.label} budget this period. Cutting back here has the most impact on your score.` }
-          : { title: 'Stay under budget', body: `You've used ${budgetAdherencePct}% of your budget. Keep spending below 90% to score full points here.` };
+          : { title: 'On track this period', body: `You've used ${budgetAdherencePct}% of your budget. Stay under 100% to keep full points.` };
       }
-      if (key === 'trend') {
-        if (trendPct === null) return { title: 'Not enough history', body: 'Sync a few weeks of transactions so we can compare this period to last period.' };
-        return trendPct > 0
-          ? { title: `Spending up ${trendPct}% vs last period`, body: `Your spending rose by $${fmtMoney(Math.abs(totalCurr - totalPrev))}. Try to match or beat last period's total of $${fmtMoney(totalPrev)}.` }
-          : { title: 'Spending is trending down', body: 'Great work! Keep it up to maintain a high trend score.' };
+      if (key === 'streak') {
+        if (!budgets.length) return { title: 'Set up budgets', body: 'Budget Streak requires budgets to track. Go to the Budget tab to create some.' };
+        if (payPeriodOptions.length <= 1) return { title: 'Not enough history', body: 'Sync a few pay periods of transactions so we can track your streak.' };
+        return streakCount === 0
+          ? { title: 'Start your streak', body: 'Stay under your total budget for a full pay period to start building your streak.' }
+          : { title: `${streakCount}-period streak`, body: `You've stayed under budget for ${streakCount} consecutive period${streakCount > 1 ? 's' : ''}. Keep it going to reach the full 40 points.` };
       }
       return { title: '', body: '' };
     };
@@ -2496,9 +2497,9 @@ export default function App() {
       setInsightsChartTooltip(prev => prev?.index === idx ? null : { index: idx, actual: actualPace[idx], daily: rawDaily[idx], pace: budgetPace[idx] });
     };
 
-    // ── Category data (budgeted cats only) ─────────────
+    // ── Category data (budgeted cats, current pay period) ──
     const catSpend = {};
-    spendingTxsCurr.forEach(tx => {
+    transactions.filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= periodStart).forEach(tx => {
       const cat = getEffectiveCategory(tx);
       if (cat && budgetedCats.has(cat)) catSpend[cat] = (catSpend[cat]||0) + parseFloat(tx.amount||0);
     });
@@ -2544,7 +2545,7 @@ export default function App() {
             <View style={{ flex: 1, marginLeft: 16, gap: 10 }}>
               {[
                 { label: 'Budget', score: budgetAdherenceScore, max: 60, hint: budgetAdherencePct != null ? `${budgetAdherencePct}% of limit` : 'No budgets set' },
-                { label: 'Trend', score: trendScore, max: 40, hint: trendPct != null ? `${trendPct > 0 ? '+' : ''}${trendPct}% vs prior` : 'Not enough history' },
+                { label: 'Streak', score: trendScore, max: 40, hint: budgets.length === 0 ? 'No budgets set' : streakCount === 0 ? 'No streak yet' : `${streakCount} period${streakCount > 1 ? 's' : ''} under budget` },
               ].map(({ label, score, max, hint }) => {
                 const pct = Math.round((score / max) * 100);
                 const col = pct >= 80 ? C.green : pct >= 55 ? C.accent : pct >= 35 ? C.amber : C.red;
@@ -4566,8 +4567,8 @@ export default function App() {
               Your Financial Health Score (0–100) is made up of two components:
             </Text>
             {[
-              { label: 'Budget Adherence', max: 60, color: C.green, desc: 'Compares your spending in budgeted categories to your budget limits for the current pay period. Under 75% of your limit = full points. Over your limit = 0 points.' },
-              { label: 'Spending Trend', max: 40, color: C.accent, desc: 'Compares your total spending this period to the previous same-length period. Spending less than before = full points. Spending 25%+ more = near 0.' },
+              { label: 'Budget Adherence', max: 60, color: C.green, desc: 'Tracks your spending vs. budget limits for each category this pay period. Stay at or under your limit = full points. Going over reduces your score proportionally.' },
+              { label: 'Budget Streak', max: 40, color: C.accent, desc: 'Counts consecutive completed pay periods where your total spending stayed under your total budget. 1 period = 20 pts, 2 = 30 pts, 3+ = full 40 pts. One over-budget period resets the streak.' },
             ].map(({ label, max, color, desc }) => (
               <View key={label} style={{ marginBottom: 16, padding: 12, backgroundColor: C.bg, borderRadius: 12, borderWidth: 1, borderColor: C.border }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
