@@ -2440,7 +2440,14 @@ export default function App() {
       }
       trendPeriodsTotal = adherences.length;
       trendPeriodsUnder = adherences.filter(a => a >= 1.0).length;
-      trendScore = trendPeriodsTotal === 0 ? 0 : Math.round((adherences.reduce((a, b) => a + b, 0) / trendPeriodsTotal) * 30);
+      if (trendPeriodsTotal === 0) {
+        trendScore = 0;
+      } else {
+        const maxWindows = Math.floor(42 / freqDays); // 3 for biweekly, 6 for weekly
+        const qualityAvg = adherences.reduce((a, b) => a + b, 0) / trendPeriodsTotal;
+        const quantityFactor = Math.min(1, trendPeriodsTotal / maxWindows);
+        trendScore = Math.round(qualityAvg * quantityFactor * 30);
+      }
     }
 
     const healthScore = Math.min(100, Math.max(0, budgetAdherenceScore + trendScore));
