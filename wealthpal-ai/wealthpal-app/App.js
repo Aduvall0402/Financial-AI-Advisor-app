@@ -416,6 +416,25 @@ export default function App() {
   const [categoryRules, setCategoryRules] = useState({}); // merchant -> category
   const saveCategoryRules = (rules) => { setCategoryRules(rules); AsyncStorage.setItem('categoryRules', JSON.stringify(rules)); };
 
+  // Manual "Add Transaction"
+  const [addTxVisible, setAddTxVisible] = useState(false);
+  const [addTxMerchant, setAddTxMerchant] = useState('');
+  const [addTxAmount, setAddTxAmount] = useState('');
+  const [addTxDate, setAddTxDate] = useState('');
+  const [addTxCategory, setAddTxCategory] = useState('GENERAL_MERCHANDISE');
+  const [addTxSaving, setAddTxSaving] = useState(false);
+
+  // AI Budget Wizard
+  const [aiBudgetWizardVisible, setAiBudgetWizardVisible] = useState(false);
+  const [budgetWizardStep, setBudgetWizardStep] = useState(0);
+  const [budgetWizardIncome, setBudgetWizardIncome] = useState('');
+  const [budgetWizardFixed, setBudgetWizardFixed] = useState([{ name: '', amount: '' }]);
+  const [budgetWizardGoals, setBudgetWizardGoals] = useState('');
+  const [budgetWizardSuggestions, setBudgetWizardSuggestions] = useState([]);
+  const [budgetWizardLoading, setBudgetWizardLoading] = useState(false);
+  const [budgetWizardError, setBudgetWizardError] = useState('');
+  const [budgetWizardSaving, setBudgetWizardSaving] = useState(false);
+
   // Transactions sort
   const [txSortBy, setTxSortBy] = useState('date_desc');
   const [txSortDropdownVisible, setTxSortDropdownVisible] = useState(false);
@@ -567,7 +586,7 @@ export default function App() {
   useEffect(() => {
     if (!userIdRef.current || !transactions.length || activeTab !== 'insights') return;
     // Don't consume free-tier quota silently — only generate if subscribed or quota remains
-    if (!isSubscribed && aiRequestsUsed >= 6) return;
+    if (!isSubscribed && aiRequestsUsed >= 10) return;
     const periodKey = `aiCoach2_${getPeriodStart('paycycle')}`;
     AsyncStorage.getItem(periodKey).then(cached => {
       if (cached) { setAiCoachingTip(cached); return; }
@@ -1394,7 +1413,7 @@ export default function App() {
       });
       const data = await res.json();
       if (res.status === 429 && data.rate_limited) {
-        setChatMessages(p => [...p, { id: (Date.now() + 1).toString(), role: 'assistant', text: 'You have reached the free plan limit (6 AI requests per 12 hours). Upgrade to Finlit Premium for unlimited access.' }]);
+        setChatMessages(p => [...p, { id: (Date.now() + 1).toString(), role: 'assistant', text: 'You have reached the free plan limit (10 AI requests per 12 hours). Upgrade to Finlit Premium for unlimited access.' }]);
         setAiRequestsUsed(6);
       } else if (!res.ok) {
         setChatMessages(p => [...p, { id: (Date.now() + 1).toString(), role: 'assistant', text: `Error: ${data.error || 'Server error. Please try again.'}` }]);
@@ -1558,9 +1577,13 @@ export default function App() {
           .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
       }
       if (Math.abs(total - goal.current_amount) > 0.01) {
+        const nowComplete = goal.target_amount > 0 && total >= goal.target_amount;
+        if (nowComplete && !goal.is_completed) {
+          Alert.alert('🎉 Goal Complete!', `You've reached your "${goal.title}" goal! Incredible work — keep the momentum going.`);
+        }
         await apiCall(`/api/goals/${goal.id}`, {
           method: 'PATCH',
-          body: JSON.stringify({ current_amount: total, is_completed: goal.target_amount > 0 && total >= goal.target_amount }),
+          body: JSON.stringify({ current_amount: total, is_completed: nowComplete }),
         });
       }
     }
@@ -2886,6 +2909,10 @@ export default function App() {
           <>
             <Text style={s.sectionTitle}>Transactions</Text>
             <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+              <TouchableOpacity style={[s.syncBtn, { backgroundColor: C.accent + '22', borderColor: C.accent }]}
+                onPress={() => { const d=new Date(); setAddTxDate(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`); setAddTxMerchant(''); setAddTxAmount(''); setAddTxCategory('GENERAL_MERCHANDISE'); setAddTxVisible(true); }}>
+                <Text style={[s.syncText, { color: C.accent }]}>+ Add</Text>
+              </TouchableOpacity>
               {bulkSelectMode ? (
                 <>
                   <TouchableOpacity style={[s.syncBtn, { backgroundColor: C.accent + '22', borderColor: C.accent }]} onPress={exportCSV}>
@@ -3384,6 +3411,12 @@ export default function App() {
     const periodStart2 = userPayday ? getPeriodStart('paycycle') : null;
     const freqDays2 = userPayday?.frequency === 'weekly' ? 7 : userPayday?.frequency === 'biweekly' ? 14 : 30;
     const periodLabel2 = periodStart2 ? fmtPeriodRange(periodStart2, userPayday?.frequency || 'biweekly') : null;
+    // Previous period dates for category comparison
+    const prevPeriodEnd2 = periodStart2 || null;
+    const prevPeriodStart2 = periodStart2 ? (() => { const d = new Date(periodStart2 + 'T00:00:00'); d.setDate(d.getDate() - freqDays2); d.setHours(0,0,0,0); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })() : null;
+    const getBudgetSpendPrev = (b) => !prevPeriodStart2 ? 0 : transactions
+      .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= prevPeriodStart2 && (tx.transaction_date||'') < prevPeriodEnd2 && getEffectiveCategory(tx) === b.category)
+      .reduce((s, tx) => s + parseFloat(tx.amount||0), 0);
 
     return (
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}
@@ -3431,22 +3464,39 @@ export default function App() {
             </View>
           </View>
         )}
+        {/* AI Budget Builder */}
+        <TouchableOpacity
+          style={{ backgroundColor: C.accent + '15', borderRadius: 16, padding: 16, marginBottom: 14, borderWidth: 1.5, borderColor: C.accent + '66', flexDirection: 'row', alignItems: 'center', gap: 12 }}
+          onPress={() => { setBudgetWizardStep(0); setBudgetWizardIncome(''); setBudgetWizardFixed([{ name: '', amount: '' }]); setBudgetWizardGoals(''); setBudgetWizardSuggestions([]); setBudgetWizardError(''); setAiBudgetWizardVisible(true); }}
+        >
+          <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: C.accent, justifyContent: 'center', alignItems: 'center' }}>
+            <Text style={{ fontSize: 22 }}>✦</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: C.accent, fontSize: 14, fontWeight: '800', marginBottom: 2 }}>Let us make you a budget</Text>
+            <Text style={{ color: C.textSub, fontSize: 12 }}>Tell us your income and expenses — our AI builds your perfect budget in seconds.</Text>
+          </View>
+          <Text style={{ color: C.accent, fontSize: 20 }}>›</Text>
+        </TouchableOpacity>
+
         {budgets.length === 0 ? (
           <View style={[s.connectCard, { alignItems: 'center', paddingVertical: 40 }]}>
             <Icon char="$" color={C.accent} size={52} radius={16} />
             <Text style={[s.emptyTitle, { marginTop: 16 }]}>No budgets yet</Text>
-            <Text style={[s.emptyText, { marginBottom: 20 }]}>Set spending limits by category to track where your money goes.</Text>
+            <Text style={[s.emptyText, { marginBottom: 20 }]}>Use the AI builder above, or tap "+ Add" to set limits manually.</Text>
             <TouchableOpacity style={[s.btn, { alignSelf: 'stretch' }]} onPress={() => { setEditingBudget(null); setNewBudgetCat(''); setNewBudgetLimit(''); setNewBudgetPeriod(budgetGlobalPeriod); setAddBudgetVisible(true); }}>
-              <Text style={s.btnText}>Create First Budget</Text>
+              <Text style={s.btnText}>Add Manually</Text>
             </TouchableOpacity>
           </View>
         ) : (
           budgets.map(b => {
             const spent = getBudgetSpend2(b);
+            const prevSpent = getBudgetSpendPrev(b);
             const limit = parseFloat(b.monthly_limit || 0);
             const pct = limit > 0 ? Math.min(100, Math.floor((spent / limit) * 100)) : 0;
             const barColor = pct >= 100 ? C.red : pct >= 85 ? '#FF6B35' : pct >= 60 ? C.amber : C.green;
             const remaining = Math.max(0, limit - spent);
+            const delta = prevPeriodStart2 ? spent - prevSpent : null;
             const catInfo = PLAID_CATEGORIES.find(c => c.key === b.category);
             const catLabel = catInfo?.label || b.category;
             return (
@@ -3466,9 +3516,16 @@ export default function App() {
                   <View style={{ height: 6, width: `${pct}%`, backgroundColor: barColor, borderRadius: 3 }} />
                 </View>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={{ color: pct >= 100 ? C.red : C.textMuted, fontSize: 11, fontWeight: pct >= 100 ? '700' : '400' }}>
-                    {pct >= 100 ? `$${fmtMoney(spent - limit)} over budget` : `$${fmtMoney(remaining)} remaining`}
-                  </Text>
+                  <View>
+                    <Text style={{ color: pct >= 100 ? C.red : C.textMuted, fontSize: 11, fontWeight: pct >= 100 ? '700' : '400' }}>
+                      {pct >= 100 ? `$${fmtMoney(spent - limit)} over budget` : `$${fmtMoney(remaining)} remaining`}
+                    </Text>
+                    {delta !== null && Math.abs(delta) > 0.5 && (
+                      <Text style={{ color: delta > 0 ? C.red : C.green, fontSize: 10, marginTop: 1 }}>
+                        {delta > 0 ? `↑$${fmtMoney(delta)} vs last period` : `↓$${fmtMoney(Math.abs(delta))} vs last period`}
+                      </Text>
+                    )}
+                  </View>
                   <View style={{ flexDirection: 'row', gap: 16, alignItems: 'center' }}>
                     <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); const periodStart = getPeriodStart('paycycle', b.paycycle_start, b.paycycle_freq); setBudgetNavPrompt({ catLabel, category: b.category, periodStart }); }}>
                       <Text style={{ color: C.accent, fontSize: 12, fontWeight: '600' }}>Transactions</Text>
@@ -4298,7 +4355,7 @@ export default function App() {
       {!isSubscribed && (
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 8, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border }}>
           <Text style={{ color: C.textMuted, fontSize: 12 }}>
-            <Text style={{ color: C.amber }}>★ Free plan</Text> · {Math.max(0, 6 - aiRequestsUsed)}/6 AI requests left (12h window)
+            <Text style={{ color: C.amber }}>★ Free plan</Text> · {Math.max(0, 10 - aiRequestsUsed)}/10 AI requests left (12h window)
           </Text>
           <TouchableOpacity onPress={() => setUpgradeModalVisible(true)}>
             <Text style={{ color: C.accent, fontSize: 12, fontWeight: '700' }}>Upgrade</Text>
@@ -4324,6 +4381,16 @@ export default function App() {
           <ActivityIndicator size="small" color={C.accent} />
           <Text style={{ color: C.textSub, fontSize: 13 }}>Finlit is thinking…</Text>
         </View>
+      )}
+      {chatMessages.length <= 1 && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingHorizontal: 16, paddingBottom: 8 }} contentContainerStyle={{ gap: 8, paddingRight: 16 }}>
+          {['How am I doing this month?', 'Where should I cut spending?', 'Am I saving enough?', "What's my biggest expense?"].map(q => (
+            <TouchableOpacity key={q} onPress={() => setChatInput(q)}
+              style={{ paddingHorizontal: 14, paddingVertical: 7, borderRadius: 16, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border }}>
+              <Text style={{ color: C.textSub, fontSize: 12 }}>{q}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
       )}
       <View style={s.chatBar}>
         <TouchableOpacity
@@ -5806,6 +5873,226 @@ export default function App() {
               <Text style={s.linkText}>Cancel</Text>
             </TouchableOpacity>
           </View>
+        </View>
+      </Modal>
+
+      {/* ── Manual Add Transaction Modal ── */}
+      <Modal visible={addTxVisible} animationType="slide" transparent onRequestClose={() => setAddTxVisible(false)}>
+        <View style={s.modalOverlay}>
+          <View style={s.modalCard}>
+            <Text style={s.modalTitle}>Add Transaction</Text>
+            <Text style={s.label}>Merchant / Description</Text>
+            <TextInput style={[s.input, { marginBottom: 14 }]} placeholder="e.g. Coffee Shop" placeholderTextColor={C.textMuted} value={addTxMerchant} onChangeText={setAddTxMerchant} />
+            <Text style={s.label}>Amount ($)</Text>
+            <TextInput style={[s.input, { marginBottom: 14 }]} placeholder="0.00" placeholderTextColor={C.textMuted} value={addTxAmount} onChangeText={setAddTxAmount} keyboardType="decimal-pad" />
+            <Text style={s.label}>Date</Text>
+            <TextInput style={[s.input, { marginBottom: 14 }]} placeholder="YYYY-MM-DD" placeholderTextColor={C.textMuted} value={addTxDate} onChangeText={setAddTxDate} keyboardType="numeric" maxLength={10} />
+            <Text style={s.label}>Category</Text>
+            <ScrollView style={{ maxHeight: 160, marginBottom: 18 }} showsVerticalScrollIndicator={false}>
+              {PLAID_CATEGORIES.filter(c => !['INCOME','TRANSFER_IN','TRANSFER_OUT','TRANSFER'].includes(c.key)).map(c => (
+                <TouchableOpacity key={c.key} onPress={() => setAddTxCategory(c.key)}
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: C.border }}>
+                  <View style={{ width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: addTxCategory === c.key ? C.accent : C.border, backgroundColor: addTxCategory === c.key ? C.accent : 'transparent', marginRight: 10 }} />
+                  <Text style={{ color: addTxCategory === c.key ? C.accent : C.text, fontSize: 14 }}>{c.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity style={[s.btn, (addTxSaving || !addTxMerchant.trim() || !addTxAmount) && s.btnOff]}
+              disabled={addTxSaving || !addTxMerchant.trim() || !addTxAmount}
+              onPress={async () => {
+                if (isNaN(parseFloat(addTxAmount)) || parseFloat(addTxAmount) <= 0) { Alert.alert('Invalid Amount', 'Enter a valid amount.'); return; }
+                setAddTxSaving(true);
+                try {
+                  await apiCall('/api/transactions', { method: 'POST', body: JSON.stringify({ merchant_name: addTxMerchant.trim(), amount: parseFloat(addTxAmount), transaction_date: addTxDate, category: addTxCategory, source: 'manual' }) });
+                  await fetchTransactions();
+                  setAddTxVisible(false);
+                } catch { Alert.alert('Error', 'Could not save transaction. Try again.'); }
+                finally { setAddTxSaving(false); }
+              }}>
+              {addTxSaving ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Save Transaction</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity style={s.linkRow} onPress={() => setAddTxVisible(false)}>
+              <Text style={s.linkText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── AI Budget Wizard Modal ── */}
+      <Modal visible={aiBudgetWizardVisible} animationType="slide" transparent onRequestClose={() => setAiBudgetWizardVisible(false)}>
+        <View style={s.modalOverlay}>
+          <ScrollView style={{ width: '100%' }} contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end' }} keyboardShouldPersistTaps="handled">
+          <View style={s.modalCard}>
+            {/* Step 0: Welcome */}
+            {budgetWizardStep === 0 && (
+              <>
+                <View style={{ alignItems: 'center', marginBottom: 20 }}>
+                  <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: C.accent, justifyContent: 'center', alignItems: 'center', marginBottom: 14 }}>
+                    <Text style={{ fontSize: 32 }}>✦</Text>
+                  </View>
+                  <Text style={[s.modalTitle, { textAlign: 'center' }]}>Let Us Build Your Budget</Text>
+                  <Text style={{ color: C.textSub, fontSize: 13, textAlign: 'center', lineHeight: 20 }}>Answer a few quick questions and our AI will create a personalized budget based on your income, expenses, and goals — in seconds.</Text>
+                </View>
+                <TouchableOpacity style={s.btn} onPress={() => setBudgetWizardStep(1)}>
+                  <Text style={s.btnText}>Get Started →</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={s.linkRow} onPress={() => setAiBudgetWizardVisible(false)}>
+                  <Text style={s.linkText}>Maybe later</Text>
+                </TouchableOpacity>
+              </>
+            )}
+            {/* Step 1: Income */}
+            {budgetWizardStep === 1 && (
+              <>
+                <Text style={s.modalTitle}>Monthly Income</Text>
+                <Text style={{ color: C.textSub, fontSize: 13, marginBottom: 16 }}>What is your monthly take-home pay after taxes?</Text>
+                <TextInput style={[s.input, { marginBottom: 20, fontSize: 22, textAlign: 'center', fontWeight: '700' }]}
+                  placeholder="$0" placeholderTextColor={C.textMuted} value={budgetWizardIncome}
+                  onChangeText={setBudgetWizardIncome} keyboardType="decimal-pad" autoFocus />
+                <TouchableOpacity style={[s.btn, !budgetWizardIncome && s.btnOff]} disabled={!budgetWizardIncome}
+                  onPress={() => setBudgetWizardStep(2)}>
+                  <Text style={s.btnText}>Next →</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={s.linkRow} onPress={() => setBudgetWizardStep(0)}>
+                  <Text style={s.linkText}>‹ Back</Text>
+                </TouchableOpacity>
+              </>
+            )}
+            {/* Step 2: Fixed Expenses */}
+            {budgetWizardStep === 2 && (
+              <>
+                <Text style={s.modalTitle}>Fixed Expenses</Text>
+                <Text style={{ color: C.textSub, fontSize: 13, marginBottom: 16 }}>Add your fixed monthly costs — rent, car payment, insurance, subscriptions.</Text>
+                {budgetWizardFixed.map((exp, i) => (
+                  <View key={i} style={{ flexDirection: 'row', gap: 8, marginBottom: 10, alignItems: 'center' }}>
+                    <TextInput style={[s.input, { flex: 2, marginBottom: 0 }]} placeholder="Name (e.g. Rent)" placeholderTextColor={C.textMuted}
+                      value={exp.name} onChangeText={v => { const u=[...budgetWizardFixed]; u[i]={...u[i],name:v}; setBudgetWizardFixed(u); }} />
+                    <TextInput style={[s.input, { flex: 1, marginBottom: 0 }]} placeholder="$" placeholderTextColor={C.textMuted}
+                      keyboardType="decimal-pad" value={exp.amount} onChangeText={v => { const u=[...budgetWizardFixed]; u[i]={...u[i],amount:v}; setBudgetWizardFixed(u); }} />
+                    {budgetWizardFixed.length > 1 && (
+                      <TouchableOpacity onPress={() => setBudgetWizardFixed(budgetWizardFixed.filter((_,j)=>j!==i))}>
+                        <Text style={{ color: C.red, fontSize: 18, fontWeight: '700' }}>×</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))}
+                <TouchableOpacity style={{ marginBottom: 18 }} onPress={() => setBudgetWizardFixed([...budgetWizardFixed, { name: '', amount: '' }])}>
+                  <Text style={{ color: C.accent, fontSize: 13, fontWeight: '600' }}>+ Add Expense</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={s.btn} onPress={() => setBudgetWizardStep(3)}>
+                  <Text style={s.btnText}>Next →</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={s.linkRow} onPress={() => setBudgetWizardStep(1)}>
+                  <Text style={s.linkText}>‹ Back</Text>
+                </TouchableOpacity>
+              </>
+            )}
+            {/* Step 3: Goals */}
+            {budgetWizardStep === 3 && (
+              <>
+                <Text style={s.modalTitle}>Financial Goals</Text>
+                <Text style={{ color: C.textSub, fontSize: 13, marginBottom: 16 }}>Anything you're working toward? (optional){'\n'}e.g. "Save $5,000 emergency fund" or "Pay off $3,000 credit card"</Text>
+                <TextInput style={[s.input, { marginBottom: 20, height: 90, textAlignVertical: 'top', paddingTop: 10 }]}
+                  placeholder="Describe your goals..." placeholderTextColor={C.textMuted} multiline
+                  value={budgetWizardGoals} onChangeText={setBudgetWizardGoals} />
+                <TouchableOpacity style={s.btn} onPress={async () => {
+                  setBudgetWizardStep(4); setBudgetWizardLoading(true); setBudgetWizardError('');
+                  try {
+                    const income = parseFloat(budgetWizardIncome) || 0;
+                    const fixedItems = budgetWizardFixed.filter(e => e.name.trim() && parseFloat(e.amount) > 0);
+                    const totalFixed = fixedItems.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+                    const fixedStr = fixedItems.map(e => `${e.name}: $${e.amount}`).join(', ') || 'None';
+                    const cutoff = new Date(Date.now() - 30*86400000).toISOString().split('T')[0];
+                    const catMap = {};
+                    transactions.filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= cutoff)
+                      .forEach(tx => { const c = getEffectiveCategory(tx)||'OTHER'; catMap[c]=(catMap[c]||0)+parseFloat(tx.amount||0); });
+                    const topCats = Object.entries(catMap).sort(([,a],[,b])=>b-a).slice(0,6)
+                      .map(([c,a]) => `${PLAID_CATEGORIES.find(p=>p.key===c)?.label||c}: $${Math.round(a)}`).join(', ');
+                    const prompt = `You are a financial advisor building a personalized monthly budget. Here is the user's financial situation:
+- Monthly take-home income: $${income}
+- Fixed monthly expenses (not included in flexible budget): ${fixedStr} (total: $${totalFixed})
+- Remaining flexible budget: $${Math.max(0, income - totalFixed)}
+- Recent spending (last 30 days): ${topCats || 'No history yet'}
+- Financial goals: ${budgetWizardGoals || 'None specified'}
+
+Create an optimal monthly budget for the flexible $${Math.max(0, income - totalFixed)} using the 50/30/20 framework adapted to their situation. Allocate across flexible spending categories only (not fixed expenses listed above).
+
+Return ONLY a valid JSON array with no markdown, no explanation — just the raw JSON:
+[{"category":"FOOD_AND_DRINK","label":"Food & Dining","amount":300,"reason":"Brief 1-sentence explanation"},{"category":"SHOPPING","label":"Shopping","amount":150,"reason":"..."}]
+
+Use ONLY these category keys: FOOD_AND_DRINK, SHOPPING, ENTERTAINMENT, TRANSPORTATION, HEALTH_AND_FITNESS, PERSONAL_CARE, EDUCATION, TRAVEL, SUBSCRIPTIONS, OTHER
+Include 4-8 categories. Amounts must be whole numbers. Total must not exceed $${Math.max(0, income - totalFixed)}.`;
+                    const res = await apiCall('/api/ai/chat', { method: 'POST', body: JSON.stringify({ message: prompt, history: [] }) });
+                    const data = await res.json();
+                    const raw = data.response || '';
+                    const match = raw.match(/\[[\s\S]*\]/);
+                    if (!match) throw new Error('Could not parse budget suggestions');
+                    const parsed = JSON.parse(match[0]);
+                    if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('Empty suggestions');
+                    setBudgetWizardSuggestions(parsed.map(s => ({ ...s, editAmount: String(s.amount) })));
+                    setBudgetWizardStep(5);
+                  } catch (e) { setBudgetWizardError(e.message || 'Something went wrong. Try again.'); setBudgetWizardStep(3); }
+                  finally { setBudgetWizardLoading(false); }
+                }}>
+                  <Text style={s.btnText}>Generate My Budget ✦</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={s.linkRow} onPress={() => setBudgetWizardStep(2)}>
+                  <Text style={s.linkText}>‹ Back</Text>
+                </TouchableOpacity>
+              </>
+            )}
+            {/* Step 4: Loading */}
+            {budgetWizardStep === 4 && (
+              <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+                <ActivityIndicator size="large" color={C.accent} style={{ marginBottom: 20 }} />
+                <Text style={{ color: C.text, fontSize: 16, fontWeight: '700', marginBottom: 8 }}>Building your budget…</Text>
+                <Text style={{ color: C.textSub, fontSize: 13, textAlign: 'center' }}>Our AI is analyzing your income, expenses, and spending patterns to create your personalized budget.</Text>
+              </View>
+            )}
+            {/* Step 5: Review & Save */}
+            {budgetWizardStep === 5 && (
+              <>
+                <Text style={s.modalTitle}>Your Budget Plan</Text>
+                <Text style={{ color: C.textSub, fontSize: 13, marginBottom: 16 }}>Review and adjust amounts. Tap a number to edit.</Text>
+                {budgetWizardError ? <Text style={{ color: C.red, marginBottom: 12, fontSize: 13 }}>{budgetWizardError}</Text> : null}
+                {budgetWizardSuggestions.map((s_, i) => (
+                  <View key={s_.category} style={{ backgroundColor: C.bg, borderRadius: 12, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: C.border }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', flex: 1 }}>{s_.label}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: C.surface, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, borderWidth: 1, borderColor: C.border }}>
+                        <Text style={{ color: C.textMuted, fontSize: 12, marginRight: 2 }}>$</Text>
+                        <TextInput style={{ color: C.text, fontSize: 14, fontWeight: '700', minWidth: 50, textAlign: 'right' }}
+                          value={s_.editAmount} keyboardType="numeric"
+                          onChangeText={v => { const u=[...budgetWizardSuggestions]; u[i]={...u[i],editAmount:v}; setBudgetWizardSuggestions(u); }} />
+                      </View>
+                    </View>
+                    <Text style={{ color: C.textMuted, fontSize: 11 }}>{s_.reason}</Text>
+                  </View>
+                ))}
+                <TouchableOpacity style={[s.btn, budgetWizardSaving && s.btnOff]} disabled={budgetWizardSaving}
+                  onPress={async () => {
+                    setBudgetWizardSaving(true); setBudgetWizardError('');
+                    try {
+                      for (const sug of budgetWizardSuggestions) {
+                        const amt = parseFloat(sug.editAmount);
+                        if (isNaN(amt) || amt <= 0) continue;
+                        await apiCall('/api/budgets', { method: 'POST', body: JSON.stringify({ category: sug.category, monthly_limit: amt, period: 'paycycle' }) });
+                      }
+                      await fetchBudgets();
+                      setAiBudgetWizardVisible(false);
+                      Alert.alert('Budget Created! 🎉', `${budgetWizardSuggestions.length} budget categories have been set up based on your personalized plan.`);
+                    } catch { setBudgetWizardError('Failed to save some budgets. Try again.'); }
+                    finally { setBudgetWizardSaving(false); }
+                  }}>
+                  {budgetWizardSaving ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Save All Budgets</Text>}
+                </TouchableOpacity>
+                <TouchableOpacity style={s.linkRow} onPress={() => setBudgetWizardStep(3)}>
+                  <Text style={s.linkText}>‹ Back</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+          </ScrollView>
         </View>
       </Modal>
 
