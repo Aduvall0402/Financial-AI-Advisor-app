@@ -426,6 +426,12 @@ export default function App() {
   const [txFilterDateFrom, setTxFilterDateFrom] = useState(null);
   const [dbAccountMap, setDbAccountMap] = useState({}); // db_uuid → display label
   const [accountBankMap, setAccountBankMap] = useState({}); // plaid account_id → institution name
+  const [manualAccounts, setManualAccounts] = useState([]); // free-user manual accounts [{id,name,type,balance}]
+  const [manualAccountModalVisible, setManualAccountModalVisible] = useState(false);
+  const [editingManualAccount, setEditingManualAccount] = useState(null);
+  const [manualAcctName, setManualAcctName] = useState('');
+  const [manualAcctType, setManualAcctType] = useState('checking');
+  const [manualAcctBalance, setManualAcctBalance] = useState('');
 
   // Transactions bulk select
   const [selectedTxIds, setSelectedTxIds] = useState(new Set());
@@ -691,6 +697,7 @@ export default function App() {
     AsyncStorage.getItem('customCategories').then(v => { if (v) { try { setCustomCategories(JSON.parse(v)); } catch {} } });
     AsyncStorage.getItem('categoryRules').then(v => { if (v) { try { setCategoryRules(JSON.parse(v)); } catch {} } });
     AsyncStorage.getItem('userPayday').then(v => { if (v) { try { const p = JSON.parse(v); setUserPayday(p); if (p?.nextDate) setBudgetGlobalPeriod('paycycle'); } catch {} } });
+    AsyncStorage.getItem('manualAccounts').then(v => { if (v) { try { setManualAccounts(JSON.parse(v)); } catch {} } });
     AsyncStorage.getItem('isDarkMode').then(v => { if (v !== null) setIsDarkMode(v !== 'false'); });
     AsyncStorage.getItem('justUpdated').then(v => {
       if (v) { AsyncStorage.removeItem('justUpdated'); setShowUpdateBanner(true); setTimeout(() => setShowUpdateBanner(false), 5000); }
@@ -2079,11 +2086,23 @@ export default function App() {
         {/* Bank reconnect prompt */}
         {accountsError && (
           <View style={s.reconnectCard}>
-            <Text style={s.reconnectTitle}>Bank connection needs refresh</Text>
-            <Text style={s.reconnectText}>Your bank connection has expired or needs to be re-linked.</Text>
-            <TouchableOpacity style={[s.btn, { marginBottom: 0 }]} onPress={openDrawer}>
-              <Text style={s.btnText}>Reconnect Bank</Text>
-            </TouchableOpacity>
+            {isSubscribed ? (
+              <>
+                <Text style={s.reconnectTitle}>Bank connection needs refresh</Text>
+                <Text style={s.reconnectText}>Your bank connection has expired or needs to be re-linked.</Text>
+                <TouchableOpacity style={[s.btn, { marginBottom: 0 }]} onPress={openDrawer}>
+                  <Text style={s.btnText}>Reconnect Bank</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <Text style={s.reconnectTitle}>Bank Sync is a Premium Feature</Text>
+                <Text style={s.reconnectText}>Upgrade to Premium to automatically sync transactions via Plaid. Free users can scan receipts or manually add transactions below.</Text>
+                <TouchableOpacity style={[s.btn, { marginBottom: 8 }]} onPress={() => setUpgradeModalVisible(true)}>
+                  <Text style={s.btnText}>Upgrade to Premium</Text>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         )}
 
@@ -2116,14 +2135,31 @@ export default function App() {
           </View>
         </View>
 
-        {/* Connect bank prompt */}
-        {!linkedAccount && !accountsError && (
+        {/* Connect bank prompt — premium users without linked account */}
+        {!linkedAccount && !accountsError && isSubscribed && (
           <View style={s.connectCard}>
             <Text style={s.connectTitle}>Connect Your Bank</Text>
             <Text style={s.connectText}>Link your bank account to unlock spending insights, transaction history, and personalized AI advice.</Text>
             <TouchableOpacity style={s.btn} onPress={openDrawer}>
               <Text style={s.btnText}>Get Started</Text>
             </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Manual accounts — free users */}
+        {!linkedAccount && !isSubscribed && manualAccounts.length > 0 && (
+          <View style={[s.section, { marginBottom: 0 }]}>
+            {manualAccounts.map(ma => (
+              <TouchableOpacity key={ma.id} style={[s.balanceCard, { marginBottom: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+                onPress={() => { setEditingManualAccount(ma); setManualAcctName(ma.name); setManualAcctType(ma.type); setManualAcctBalance(String(ma.balance)); setManualAccountModalVisible(true); }}>
+                <View>
+                  <Text style={s.balanceLabel}>{ma.name.toUpperCase()}</Text>
+                  <Text style={s.balanceAmt}>{fmtCurrency(ma.balance)}</Text>
+                  <Text style={s.balanceSub}>{ma.type}</Text>
+                </View>
+                <Text style={{ color: C.accent, fontSize: 13 }}>Edit ›</Text>
+              </TouchableOpacity>
+            ))}
           </View>
         )}
 
@@ -2251,15 +2287,11 @@ export default function App() {
         })()}
 
         {/* Recommendations */}
-        {linkedAccount && (
-          <View style={s.section}>
+        <View style={s.section}>
             <Text style={s.sectionTitle}>Recommendations</Text>
-            {transactions.length === 0 && (
-              <TouchableOpacity
-                style={[s.quickCard, { borderColor: C.green }]}
-                onPress={syncTransactions}
-                activeOpacity={0.8}
-              >
+            {/* Premium: sync prompt when no transactions */}
+            {linkedAccount && transactions.length === 0 && (
+              <TouchableOpacity style={[s.quickCard, { borderColor: C.green }]} onPress={syncTransactions} activeOpacity={0.8}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                   <Icon char="↻" color={C.green} size={40} radius={12} />
                   <View style={{ flex: 1 }}>
@@ -2269,6 +2301,31 @@ export default function App() {
                   <Text style={{ color: C.green, fontSize: 20 }}>›</Text>
                 </View>
               </TouchableOpacity>
+            )}
+            {/* Free users: scan receipt + add account */}
+            {!isSubscribed && (
+              <>
+                <TouchableOpacity style={[s.quickCard, { borderColor: C.green }]} onPress={() => Alert.alert('Scan Receipt', 'Choose a source', [{ text: 'Camera', onPress: () => {} }, { text: 'Photo Library', onPress: () => {} }, { text: 'Cancel', style: 'cancel' }])} activeOpacity={0.8}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                    <Icon char="📷" color={C.green} size={40} radius={12} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>Scan a Receipt</Text>
+                      <Text style={{ color: C.textSub, fontSize: 12 }}>Upload transactions by scanning receipts — no bank connection needed.</Text>
+                    </View>
+                    <Text style={{ color: C.green, fontSize: 20 }}>›</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity style={[s.quickCard, { borderColor: C.accent }]} onPress={() => { setEditingManualAccount(null); setManualAcctName(''); setManualAcctType('checking'); setManualAcctBalance(''); setManualAccountModalVisible(true); }} activeOpacity={0.8}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                    <Icon char="🏦" color={C.accent} size={40} radius={12} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>{manualAccounts.length > 0 ? 'Manage Accounts' : 'Add a Bank Account'}</Text>
+                      <Text style={{ color: C.textSub, fontSize: 12 }}>Manually track account balances. Upgrade to Premium to auto-sync transactions.</Text>
+                    </View>
+                    <Text style={{ color: C.accent, fontSize: 20 }}>›</Text>
+                  </View>
+                </TouchableOpacity>
+              </>
             )}
             {goals.length === 0 && (
               <TouchableOpacity
@@ -2356,7 +2413,6 @@ export default function App() {
               </View>
             </TouchableOpacity>
           </View>
-        )}
 
         <View style={{ height: 24 }} />
       </ScrollView>
@@ -5694,6 +5750,56 @@ export default function App() {
               </TouchableOpacity>
             </View>
           </ScrollView>
+        </View>
+      </Modal>
+
+      {/* Manual Account Modal (free users) */}
+      <Modal visible={manualAccountModalVisible} animationType="slide" transparent onRequestClose={() => setManualAccountModalVisible(false)}>
+        <View style={s.modalOverlay}>
+          <View style={s.modalCard}>
+            <Text style={s.modalTitle}>{editingManualAccount ? 'Edit Account' : 'Add Account'}</Text>
+            <Text style={s.label}>Account Name</Text>
+            <TextInput style={[s.input, { marginBottom: 14 }]} placeholder="e.g. Chase Checking" placeholderTextColor={C.textMuted} value={manualAcctName} onChangeText={setManualAcctName} />
+            <Text style={s.label}>Account Type</Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+              {['checking','savings','credit','other'].map(t => (
+                <TouchableOpacity key={t} style={{ flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center', backgroundColor: manualAcctType === t ? C.accent : C.surface, borderWidth: 1, borderColor: manualAcctType === t ? C.accent : C.border }}
+                  onPress={() => setManualAcctType(t)}>
+                  <Text style={{ color: manualAcctType === t ? '#fff' : C.textSub, fontSize: 11, fontWeight: '600', textTransform: 'capitalize' }}>{t}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={s.label}>Current Balance</Text>
+            <TextInput style={[s.input, { marginBottom: 20 }]} placeholder="0.00" placeholderTextColor={C.textMuted} value={manualAcctBalance} onChangeText={setManualAcctBalance} keyboardType="decimal-pad" />
+            <TouchableOpacity style={s.btn} onPress={() => {
+              const bal = parseFloat(manualAcctBalance) || 0;
+              if (!manualAcctName.trim()) { Alert.alert('Name required', 'Enter an account name.'); return; }
+              let updated;
+              if (editingManualAccount) {
+                updated = manualAccounts.map(a => a.id === editingManualAccount.id ? { ...a, name: manualAcctName.trim(), type: manualAcctType, balance: bal } : a);
+              } else {
+                updated = [...manualAccounts, { id: String(Date.now()), name: manualAcctName.trim(), type: manualAcctType, balance: bal }];
+              }
+              setManualAccounts(updated);
+              AsyncStorage.setItem('manualAccounts', JSON.stringify(updated));
+              setManualAccountModalVisible(false);
+            }}>
+              <Text style={s.btnText}>Save Account</Text>
+            </TouchableOpacity>
+            {editingManualAccount && (
+              <TouchableOpacity style={s.linkRow} onPress={() => {
+                const updated = manualAccounts.filter(a => a.id !== editingManualAccount.id);
+                setManualAccounts(updated);
+                AsyncStorage.setItem('manualAccounts', JSON.stringify(updated));
+                setManualAccountModalVisible(false);
+              }}>
+                <Text style={[s.linkText, { color: C.red }]}>Delete Account</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={s.linkRow} onPress={() => setManualAccountModalVisible(false)}>
+              <Text style={s.linkText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </Modal>
 
