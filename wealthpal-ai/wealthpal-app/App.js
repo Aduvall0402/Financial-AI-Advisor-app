@@ -2305,22 +2305,20 @@ export default function App() {
                 </TouchableOpacity>
               ) : null;
             })()}
-            {!userPayday && (
-              <TouchableOpacity
-                style={[s.quickCard, { borderColor: C.accent }]}
-                onPress={() => { setPaydayNextDate(userPayday?.nextDate ?? ''); setPaydayFreq(userPayday?.frequency ?? 'biweekly'); setPaydayModalVisible(true); }}
-                activeOpacity={0.8}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                  <Icon char="📅" color={C.accent} size={40} radius={12} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>Set Your Payday</Text>
-                    <Text style={{ color: C.textSub, fontSize: 12 }}>Tell us when you get paid so paycycle budgets work automatically.</Text>
-                  </View>
-                  <Text style={{ color: C.accent, fontSize: 20 }}>›</Text>
+            <TouchableOpacity
+              style={[s.quickCard, { borderColor: C.accent }]}
+              onPress={() => { setPaydayNextDate(userPayday?.nextDate ?? ''); setPaydayFreq(userPayday?.frequency ?? 'biweekly'); setPaydayModalVisible(true); }}
+              activeOpacity={0.8}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <Icon char="📅" color={C.accent} size={40} radius={12} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>{userPayday ? 'Edit Payday' : 'Set Your Payday'}</Text>
+                  <Text style={{ color: C.textSub, fontSize: 12 }}>{userPayday ? `${userPayday.frequency === 'biweekly' ? 'Every 2 wks' : userPayday.frequency} · next: ${userPayday.nextDate}` : 'Tell us when you get paid so paycycle budgets work automatically.'}</Text>
                 </View>
-              </TouchableOpacity>
-            )}
+                <Text style={{ color: C.accent, fontSize: 20 }}>›</Text>
+              </View>
+            </TouchableOpacity>
             <TouchableOpacity
               style={[s.quickCard, { borderColor: C.accent }]}
               onPress={() => setActiveTab('chat')}
@@ -3307,18 +3305,16 @@ export default function App() {
             <Text style={s.syncText}>+ Add</Text>
           </TouchableOpacity>
         </View>
-        {!userPayday && (
-          <TouchableOpacity
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.surface, borderRadius: 14, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: C.accent + '55' }}
-            onPress={() => { setPaydayNextDate(''); setPaydayFreq('biweekly'); setPaydayModalVisible(true); }}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 3 }}>Set Your Pay Period</Text>
-              <Text style={{ color: C.textSub, fontSize: 12 }}>Budgets track spending relative to your pay cycle. Tap to set your payday.</Text>
-            </View>
-            <Text style={{ color: C.accent, fontSize: 14, fontWeight: '700' }}>Set Up ›</Text>
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.surface, borderRadius: 14, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: C.accent + '55' }}
+          onPress={() => { setPaydayNextDate(userPayday?.nextDate ?? ''); setPaydayFreq(userPayday?.frequency ?? 'biweekly'); setPaydayModalVisible(true); }}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 3 }}>{userPayday ? 'Edit Pay Period' : 'Set Your Pay Period'}</Text>
+            <Text style={{ color: C.textSub, fontSize: 12 }}>{userPayday ? `${userPayday.frequency === 'weekly' ? 'Weekly' : userPayday.frequency === 'biweekly' ? 'Every 2 weeks' : 'Monthly'} · next: ${userPayday.nextDate}` : 'Budgets track spending relative to your pay cycle. Tap to set your payday.'}</Text>
+          </View>
+          <Text style={{ color: C.accent, fontSize: 14, fontWeight: '700' }}>{userPayday ? 'Edit ›' : 'Set Up ›'}</Text>
+        </TouchableOpacity>
         {budgets.length > 0 && totalBudgeted > 0 && (
           <View style={{ backgroundColor: C.surface, borderRadius: 16, padding: 18, marginBottom: 14 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 10 }}>
@@ -4095,18 +4091,16 @@ export default function App() {
             <Text style={s.syncText}>+ Add Budget</Text>
           </TouchableOpacity>
         </View>
-        {!userPayday && (
-          <TouchableOpacity
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.surface, borderRadius: 14, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: C.accent + '55' }}
-            onPress={() => { setPaydayNextDate(''); setPaydayFreq('biweekly'); setPaydayModalVisible(true); }}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 3 }}>Set Your Pay Period</Text>
-              <Text style={{ color: C.textSub, fontSize: 12 }}>Budgets track spending relative to your pay cycle. Tap to set your payday.</Text>
-            </View>
-            <Text style={{ color: C.accent, fontSize: 14, fontWeight: '700' }}>Set Up ›</Text>
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.surface, borderRadius: 14, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: C.accent + '55' }}
+          onPress={() => { setPaydayNextDate(userPayday?.nextDate ?? ''); setPaydayFreq(userPayday?.frequency ?? 'biweekly'); setPaydayModalVisible(true); }}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 3 }}>{userPayday ? 'Edit Pay Period' : 'Set Your Pay Period'}</Text>
+            <Text style={{ color: C.textSub, fontSize: 12 }}>{userPayday ? `${userPayday.frequency === 'weekly' ? 'Weekly' : userPayday.frequency === 'biweekly' ? 'Every 2 weeks' : 'Monthly'} · next: ${userPayday.nextDate}` : 'Budgets track spending relative to your pay cycle. Tap to set your payday.'}</Text>
+          </View>
+          <Text style={{ color: C.accent, fontSize: 14, fontWeight: '700' }}>{userPayday ? 'Edit ›' : 'Set Up ›'}</Text>
+        </TouchableOpacity>
 
         {budgets.length > 0 && (
           <View style={s.statsRow}>
