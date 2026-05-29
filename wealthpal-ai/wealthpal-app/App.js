@@ -2388,14 +2388,19 @@ export default function App() {
     const totalPrev = spendingTxsPrev.reduce((s, tx) => s + parseFloat(tx.amount||0), 0);
     const dailyAvg = totalCurr / rangeDays;
 
-    // 1. Budget Adherence (0-70) — full points at or under budget, linear decay for overspending
+    // ── Selected pay period (drives both chart and categories) ──────────────
+    const selectedPeriodOption = payPeriodOptions[Math.min(insightsPeriodOffset, payPeriodOptions.length - 1)];
+    const selStart = selectedPeriodOption.startStr;
+    const selEndDate = new Date(selStart + 'T00:00:00'); selEndDate.setDate(selEndDate.getDate() + freqDays); selEndDate.setHours(0,0,0,0);
+    const selEnd = _localFmt(selEndDate);
+
+    // 1. Budget Adherence (0-70) — always based on current period (not selected past period)
     let budgetAdherenceScore = 35;
     let budgetAdherencePct = null;
     if (budgets.length > 0 && totalBudget > 0) {
       const catScores = budgets.map(b => {
-        const bStart = getPeriodStart('paycycle', b.paycycle_start, b.paycycle_freq);
         const catSpent = transactions
-          .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= bStart && getEffectiveCategory(tx) === b.category)
+          .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= periodStart && getEffectiveCategory(tx) === b.category)
           .reduce((s, tx) => s + parseFloat(tx.amount||0), 0);
         const lim = parseFloat(b.monthly_limit || 0);
         if (lim <= 0) return 1.0;
@@ -2485,8 +2490,7 @@ export default function App() {
     const weakComponents = [...components].sort((a,b) => (a.score/a.max) - (b.score/b.max)).slice(0, 2).filter(c => (c.score/c.max) < 0.85);
 
     // ── Spending pace chart (pay period) ───────────────
-    const selectedPeriodOption = payPeriodOptions[Math.min(insightsPeriodOffset, payPeriodOptions.length - 1)];
-    const chartPeriodStartDate = new Date(selectedPeriodOption.startStr + 'T00:00:00');
+    const chartPeriodStartDate = new Date(selStart + 'T00:00:00');
     const paceLabels = [], actualPace = [], budgetPace = [], rawDaily = [];
     const periodStartDate = chartPeriodStartDate;
     const todayDate = new Date(); todayDate.setHours(0,0,0,0);
@@ -2519,12 +2523,14 @@ export default function App() {
       setInsightsChartTooltip(prev => prev?.index === idx ? null : { index: idx, actual: actualPace[idx], daily: rawDaily[idx], pace: budgetPace[idx] });
     };
 
-    // ── Category data (all categories, current pay period) ──
+    // ── Category data — follows the selected pay period filter ──
     const catSpend = {};
-    transactions.filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= periodStart).forEach(tx => {
-      const cat = getEffectiveCategory(tx);
-      if (cat) catSpend[cat] = (catSpend[cat]||0) + parseFloat(tx.amount||0);
-    });
+    transactions
+      .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= selStart && (tx.transaction_date||'') < selEnd)
+      .forEach(tx => {
+        const cat = getEffectiveCategory(tx);
+        if (cat) catSpend[cat] = (catSpend[cat]||0) + parseFloat(tx.amount||0);
+      });
     const periodTotal = Object.values(catSpend).reduce((s, v) => s + v, 0);
     const catData = Object.entries(catSpend).sort(([,a],[,b])=>b-a);
 
@@ -2709,7 +2715,7 @@ export default function App() {
         {/* ── Spending by Category ── */}
         {catData.length > 0 && (
           <View style={s.section}>
-            <Text style={[s.sectionTitle, { marginBottom: 14 }]}>Spending by Category</Text>
+            <Text style={[s.sectionTitle, { marginBottom: 14 }]}>Spending by Category · {selectedPeriodOption.label}</Text>
             {catData.map(([cat, amt], i) => {
               const budgetForCat = budgets.find(b => b.category === cat);
               const budgetLimit = budgetForCat ? parseFloat(budgetForCat.monthly_limit || 0) : 0;
