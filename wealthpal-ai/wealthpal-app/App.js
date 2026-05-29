@@ -2548,16 +2548,8 @@ export default function App() {
       <ScrollView style={s.tab} showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshAll} tintColor={C.accent} />}
       >
-        {/* Header row: date range + info button */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-          <TouchableOpacity onPress={() => setInsightsDropdownVisible(true)}
-            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: C.surface, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 13, borderWidth: 1, borderColor: C.border }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Text style={{ fontSize: 15 }}>📅</Text>
-              <Text style={{ color: C.text, fontSize: 14, fontWeight: '600' }}>{RANGE_LABELS[insightsRange]}</Text>
-            </View>
-            <Text style={{ color: C.textSub, fontSize: 18, lineHeight: 20 }}>▾</Text>
-          </TouchableOpacity>
+        {/* Header row: info button */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginBottom: 16 }}>
           <TouchableOpacity onPress={() => setInsightsInfoVisible(true)}
             style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, justifyContent: 'center', alignItems: 'center' }}>
             <Text style={{ color: C.textSub, fontSize: 16, fontWeight: '700' }}>?</Text>
@@ -5292,28 +5284,6 @@ export default function App() {
             <TouchableOpacity style={s.linkRow} onPress={() => setAddGroupBudgetVisible(false)}><Text style={s.linkText}>Cancel</Text></TouchableOpacity>
           </View>
         </View>
-      </Modal>
-
-      {/* Insights Range Dropdown Modal */}
-      <Modal visible={insightsDropdownVisible} animationType="fade" transparent onRequestClose={() => setInsightsDropdownVisible(false)}>
-        <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setInsightsDropdownVisible(false)}>
-          <View style={[s.modalCard, { paddingBottom: 8 }]}>
-            <Text style={s.modalTitle}>Select Date Range</Text>
-            {Object.entries(RANGE_LABELS).map(([key, label]) => (
-              <TouchableOpacity
-                key={key}
-                onPress={() => { setInsightsRange(key); setInsightsDropdownVisible(false); }}
-                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: C.border }}
-              >
-                <Text style={{ color: insightsRange === key ? C.accent : C.text, fontSize: 15, fontWeight: insightsRange === key ? '700' : '400' }}>{label}</Text>
-                {insightsRange === key && <Text style={{ color: C.accent, fontSize: 16 }}>✓</Text>}
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity style={[s.linkRow, { marginTop: 4 }]} onPress={() => setInsightsDropdownVisible(false)}>
-              <Text style={s.linkText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
       </Modal>
 
       {/* Insights Pay Period Dropdown */}
