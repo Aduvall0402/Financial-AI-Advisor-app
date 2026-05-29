@@ -2388,20 +2388,21 @@ export default function App() {
     const selEndDate = new Date(selStart + 'T00:00:00'); selEndDate.setDate(selEndDate.getDate() + freqDays); selEndDate.setHours(0,0,0,0);
     const selEnd = _localFmt(selEndDate);
 
-    // 1. Budget Adherence (0-70) — based on the last COMPLETED pay period
-    // Using the in-progress period gives 70/70 whenever a new period starts with no spend,
-    // which is misleading. The last completed period is the meaningful data point.
+    // Rolling window helpers — score uses pure rolling days, not configured period dates.
+    // This means the score is always accurate regardless of payday settings.
+    const today = new Date(); today.setHours(0,0,0,0);
+    const rollEnd = _localFmt(today); // exclusive upper bound = today midnight
+    const rollStart = new Date(today); rollStart.setDate(today.getDate() - freqDays);
+    const rollStartStr = _localFmt(rollStart);
+    const scoreBasedOnPeriod = rollStartStr; // for display label
+
+    // 1. Budget Adherence (0-70) — last freqDays of spending vs budget limits
     let budgetAdherenceScore = 35;
     let budgetAdherencePct = null;
-    let scoreBasedOnPeriod = periodStart; // for display
-    if (budgets.length > 0 && totalBudget > 0 && payPeriodOptions.length > 1) {
-      const lastStart = payPeriodOptions[1].startStr;
-      const lastEndDate = new Date(lastStart + 'T00:00:00'); lastEndDate.setDate(lastEndDate.getDate() + freqDays); lastEndDate.setHours(0,0,0,0);
-      const lastEnd = _localFmt(lastEndDate);
-      scoreBasedOnPeriod = lastStart;
+    if (budgets.length > 0 && totalBudget > 0) {
       const catScores = budgets.map(b => {
         const catSpent = transactions
-          .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= lastStart && (tx.transaction_date||'') < lastEnd && getEffectiveCategory(tx) === b.category)
+          .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= rollStartStr && (tx.transaction_date||'') < rollEnd && getEffectiveCategory(tx) === b.category)
           .reduce((s, tx) => s + parseFloat(tx.amount||0), 0);
         const lim = parseFloat(b.monthly_limit || 0);
         if (lim <= 0) return 1.0;
@@ -2412,42 +2413,34 @@ export default function App() {
       });
       const avgScore = catScores.reduce((a, b) => a + b, 0) / catScores.length;
       budgetAdherenceScore = Math.round(avgScore * 70);
-      const lastBudgetedSpend = transactions
-        .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= lastStart && (tx.transaction_date||'') < lastEnd && budgetedCats.has(getEffectiveCategory(tx)))
+      const rollingBudgetedSpend = transactions
+        .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= rollStartStr && (tx.transaction_date||'') < rollEnd && budgetedCats.has(getEffectiveCategory(tx)))
         .reduce((s, tx) => s + parseFloat(tx.amount||0), 0);
-      budgetAdherencePct = Math.round((lastBudgetedSpend / totalBudget) * 100);
+      budgetAdherencePct = Math.round((rollingBudgetedSpend / totalBudget) * 100);
     }
 
-    // 2. Budget Trend (0-30) — consistency across past completed pay periods (6-week rolling window)
-    // Each period earns min(1, budget/spent): full credit if under, partial if over
-    // Periods older than 42 days fall off and no longer affect the score
+    // 2. Budget Trend (0-30) — rolling windows going back up to 42 days (3 biweekly periods)
+    // Window 1 = freqDays–2*freqDays ago, Window 2 = 2*freqDays–3*freqDays ago, etc.
     let trendScore = 0;
     let trendPeriodsUnder = 0;
     let trendPeriodsTotal = 0;
     if (budgets.length > 0 && totalBudget > 0) {
-      const dateFmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-      const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 42); cutoff.setHours(0,0,0,0);
-      const cutoffStr = dateFmt(cutoff);
       const adherences = [];
-      for (let i = 1; i < payPeriodOptions.length; i++) {
-        const pStart = payPeriodOptions[i].startStr;
-        if (pStart < cutoffStr) break; // period started more than 6 weeks ago — drop off
-        const pEndDate = new Date(pStart + 'T00:00:00'); pEndDate.setDate(pEndDate.getDate() + freqDays); pEndDate.setHours(0,0,0,0);
-        const pEnd = dateFmt(pEndDate);
+      // Start at w=2: window 1 is the budget adherence window, trend looks at older windows
+      for (let w = 2; w * freqDays <= 42 + freqDays; w++) {
+        const wEnd = new Date(today); wEnd.setDate(today.getDate() - (w - 1) * freqDays);
+        const wStart = new Date(today); wStart.setDate(today.getDate() - w * freqDays);
+        const wEndStr = _localFmt(wEnd);
+        const wStartStr = _localFmt(wStart);
         const spend = transactions
-          .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= pStart && (tx.transaction_date||'') < pEnd && budgetedCats.has(getEffectiveCategory(tx)))
+          .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= wStartStr && (tx.transaction_date||'') < wEndStr && budgetedCats.has(getEffectiveCategory(tx)))
           .reduce((s, tx) => s + parseFloat(tx.amount||0), 0);
-        const adherence = spend > 0 ? Math.min(1, totalBudget / spend) : 1.0;
-        adherences.push(adherence);
+        if (spend === 0) continue; // skip windows with no data
+        adherences.push(Math.min(1, totalBudget / spend));
       }
       trendPeriodsTotal = adherences.length;
       trendPeriodsUnder = adherences.filter(a => a >= 1.0).length;
-      if (trendPeriodsTotal === 0) {
-        trendScore = 0; // no history = no trend points yet
-      } else {
-        const avg = adherences.reduce((a, b) => a + b, 0) / trendPeriodsTotal;
-        trendScore = Math.round(avg * 30);
-      }
+      trendScore = trendPeriodsTotal === 0 ? 0 : Math.round((adherences.reduce((a, b) => a + b, 0) / trendPeriodsTotal) * 30);
     }
 
     const healthScore = Math.min(100, Math.max(0, budgetAdherenceScore + trendScore));
@@ -2475,18 +2468,15 @@ export default function App() {
     const getTip = (key) => {
       if (key === 'budget') {
         if (!budgets.length) return { title: 'Set up budgets', body: 'Budget Adherence is worth 70 points but requires budgets. Go to the Budget tab to create some.' };
-        if (payPeriodOptions.length <= 1) return { title: 'No completed periods yet', body: 'Complete a full pay period so we can evaluate your budget performance.' };
-        const tipEndDate = new Date(scoreBasedOnPeriod + 'T00:00:00'); tipEndDate.setDate(tipEndDate.getDate() + freqDays); tipEndDate.setHours(0,0,0,0);
-        const tipEnd = _localFmt(tipEndDate);
         const overBudgets = budgets.map(b => {
-          const sp = transactions.filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= scoreBasedOnPeriod && (tx.transaction_date||'') < tipEnd && getEffectiveCategory(tx) === b.category).reduce((s,tx)=>s+parseFloat(tx.amount||0),0);
+          const sp = transactions.filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= rollStartStr && (tx.transaction_date||'') < rollEnd && getEffectiveCategory(tx) === b.category).reduce((s,tx)=>s+parseFloat(tx.amount||0),0);
           return { label: PLAID_CATEGORIES.find(c=>c.key===b.category)?.label||b.category, over: sp - parseFloat(b.monthly_limit||0) };
         }).filter(b => b.over > 0).sort((a,b)=>b.over-a.over);
         if (overBudgets.length > 0) {
           const list = overBudgets.map(b => `${b.label} ($${fmtMoney(b.over)} over)`).join(', ');
-          return { title: `${overBudgets.length} budget${overBudgets.length > 1 ? 's' : ''} over last period`, body: `Last period you went over on: ${list}. Cutting back this period will improve your score.` };
+          return { title: `${overBudgets.length} budget${overBudgets.length > 1 ? 's' : ''} over in last ${freqDays} days`, body: `You went over on: ${list}. Cutting back will improve your score.` };
         }
-        return { title: 'Last period on track', body: `You used ${budgetAdherencePct}% of your budget last period. Keep it under 100% to maintain full points.` };
+        return { title: `On track — last ${freqDays} days`, body: `You've used ${budgetAdherencePct}% of your budget in the last ${freqDays} days. Keep it under 100% to maintain full points.` };
       }
       if (key === 'trend') {
         if (!budgets.length) return { title: 'Set up budgets', body: 'Budget Trend requires budgets to track. Go to the Budget tab to create some.' };
