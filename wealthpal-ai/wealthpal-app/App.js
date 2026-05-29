@@ -2425,7 +2425,7 @@ export default function App() {
         const pEndDate = new Date(pStart + 'T00:00:00'); pEndDate.setDate(pEndDate.getDate() + freqDays); pEndDate.setHours(0,0,0,0);
         const pEnd = dateFmt(pEndDate);
         const spend = transactions
-          .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= pStart && (tx.transaction_date||'') < pEnd)
+          .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= pStart && (tx.transaction_date||'') < pEnd && budgetedCats.has(getEffectiveCategory(tx)))
           .reduce((s, tx) => s + parseFloat(tx.amount||0), 0);
         const adherence = spend > 0 ? Math.min(1, totalBudget / spend) : 1.0;
         adherences.push(adherence);
