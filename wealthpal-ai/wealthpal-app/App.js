@@ -562,6 +562,7 @@ export default function App() {
       if (cached) { setAiCoachingTip(cached); return; }
       // Build a data-rich prompt for personalized advice
       setAiCoachingLoading(true);
+      const currentPeriodStart = getPeriodStart('paycycle');
       const cutoff = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
       const spendTxs = transactions.filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= cutoff);
       const totalSpend = spendTxs.reduce((s,tx)=>s+parseFloat(tx.amount||0),0);
@@ -569,11 +570,10 @@ export default function App() {
       spendTxs.forEach(tx => { const c = getEffectiveCategory(tx)||'Other'; catMap[c]=(catMap[c]||0)+parseFloat(tx.amount||0); });
       const topCats = Object.entries(catMap).sort(([,a],[,b])=>b-a).slice(0,4).map(([c,a])=>`${PLAID_CATEGORIES.find(p=>p.key===c)?.label||c}: $${a.toFixed(0)}`).join(', ');
       const budgetSummary = budgets.map(b => {
-        const bStart = getPeriodStart('paycycle', b.paycycle_start, b.paycycle_freq);
-        const spent = transactions.filter(tx=>!isIncomeTx(tx)&&(tx.transaction_date||'')>=bStart&&getEffectiveCategory(tx)===b.category).reduce((s,tx)=>s+parseFloat(tx.amount||0),0);
-        return `${PLAID_CATEGORIES.find(p=>p.key===b.category)?.label||b.category}: $${spent.toFixed(0)}/$${parseFloat(b.monthly_limit).toFixed(0)}`;
+        const spent = transactions.filter(tx=>!isIncomeTx(tx)&&(tx.transaction_date||'')>=currentPeriodStart&&getEffectiveCategory(tx)===b.category).reduce((s,tx)=>s+parseFloat(tx.amount||0),0);
+        return `${PLAID_CATEGORIES.find(p=>p.key===b.category)?.label||b.category}: $${spent.toFixed(0)} spent of $${parseFloat(b.monthly_limit).toFixed(0)} limit`;
       }).join(', ');
-      const prompt = `My spending last 30 days: $${totalSpend.toFixed(0)} total. Top categories: ${topCats}. ${budgets.length > 0 ? `Budget status: ${budgetSummary}.` : 'No budgets set yet.'} Based on this, give me 2 specific, actionable tips to improve my finances this next pay period. Be direct, mention specific dollar amounts or category names. Keep it under 60 words total.`;
+      const prompt = `My spending over the past 30 days: $${totalSpend.toFixed(0)} total. Top categories (past 30 days): ${topCats}. ${budgets.length > 0 ? `Current period budget status: ${budgetSummary}.` : 'No budgets set yet.'} Based on this recent history, give me 2 specific, actionable tips for the upcoming pay period. Be direct and mention specific dollar amounts or categories. Keep it under 60 words total.`;
       apiCall('/api/ai/chat', { method: 'POST', body: JSON.stringify({ message: prompt, history: [] }) })
         .then(r => r.json()).then(data => {
           const tip = data.response || '';
@@ -2363,16 +2363,8 @@ export default function App() {
     const budgetedCats = new Set(budgets.map(b => b.category));
     const totalBudget = budgets.reduce((s, b) => s + parseFloat(b.monthly_limit || 0), 0);
 
-    // If the computed period start has no spending transactions (e.g. nextDate stored as today),
-    // fall back to the previous period so the UI always shows real data.
     const _localFmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    const _rawStart = getPeriodStart('paycycle');
-    const _hasTxsInPeriod = transactions.some(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= _rawStart);
-    const periodStart = (() => {
-      if (_hasTxsInPeriod) return _rawStart;
-      const prev = new Date(_rawStart + 'T00:00:00'); prev.setDate(prev.getDate() - freqDays); prev.setHours(0,0,0,0);
-      return _localFmt(prev);
-    })();
+    const periodStart = getPeriodStart('paycycle');
 
     // Spending in budgeted categories this pay period
     const periodBudgetedSpend = transactions
@@ -2390,9 +2382,7 @@ export default function App() {
 
     // ── Selected pay period (drives both chart and categories) ──────────────
     const selectedPeriodOption = payPeriodOptions[Math.min(insightsPeriodOffset, payPeriodOptions.length - 1)];
-    // For current period (offset 0) use the fallback-corrected periodStart so the category
-    // section never shows empty when nextDate is stored as today.
-    const selStart = insightsPeriodOffset === 0 ? periodStart : selectedPeriodOption.startStr;
+    const selStart = selectedPeriodOption.startStr;
     const selEndDate = new Date(selStart + 'T00:00:00'); selEndDate.setDate(selEndDate.getDate() + freqDays); selEndDate.setHours(0,0,0,0);
     const selEnd = _localFmt(selEndDate);
 
@@ -2717,6 +2707,14 @@ export default function App() {
         )}
 
         {/* ── Spending by Category ── */}
+        {catData.length === 0 && insightsPeriodOffset === 0 && (
+          <View style={[s.section, { alignItems: 'center', paddingVertical: 24 }]}>
+            <Text style={{ color: C.textSub, fontSize: 14, fontWeight: '600', marginBottom: 6 }}>No transactions this period yet</Text>
+            <Text style={{ color: C.textMuted, fontSize: 12, textAlign: 'center' }}>
+              {'If your pay period looks wrong, go to Settings → Set Your Payday and check the "Current period preview" — adjusting the date by 1 day usually fixes it.'}
+            </Text>
+          </View>
+        )}
         {catData.length > 0 && (
           <View style={s.section}>
             <Text style={[s.sectionTitle, { marginBottom: 14 }]}>Spending by Category · {selectedPeriodOption.label}</Text>
