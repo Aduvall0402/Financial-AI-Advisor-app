@@ -2525,7 +2525,7 @@ export default function App() {
       .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= selStart && (tx.transaction_date||'') < selEnd)
       .forEach(tx => {
         const cat = getEffectiveCategory(tx);
-        if (cat) catSpend[cat] = (catSpend[cat]||0) + parseFloat(tx.amount||0);
+        if (cat && budgetedCats.has(cat)) catSpend[cat] = (catSpend[cat]||0) + parseFloat(tx.amount||0);
       });
     const periodTotal = Object.values(catSpend).reduce((s, v) => s + v, 0);
     const catData = Object.entries(catSpend).sort(([,a],[,b])=>b-a);
