@@ -1034,7 +1034,8 @@ export default function App() {
     setLoadingAccounts(true); setAccountsError(false);
     try {
       const res = await apiCall(`/api/plaid/accounts/${id}`);
-      if (!res.ok) { setAccountsError(true); return; }
+      // Only flag as error for premium users — free users with no bank return 404 which is expected
+      if (!res.ok) { if (isSubscribed) setAccountsError(true); return; }
       const data = await res.json();
       if (data.accounts?.length > 0) {
         // Deduplicate by account_id — multiple Plaid items can return same account
@@ -2147,7 +2148,7 @@ export default function App() {
         )}
 
         {/* Manual accounts — free users */}
-        {!linkedAccount && !isSubscribed && manualAccounts.length > 0 && (
+        {!linkedAccount && !isSubscribed && (
           <View style={[s.section, { marginBottom: 0 }]}>
             {manualAccounts.map(ma => (
               <TouchableOpacity key={ma.id} style={[s.balanceCard, { marginBottom: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
@@ -2160,6 +2161,13 @@ export default function App() {
                 <Text style={{ color: C.accent, fontSize: 13 }}>Edit ›</Text>
               </TouchableOpacity>
             ))}
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: C.border, borderStyle: 'dashed' }}
+              onPress={() => { setEditingManualAccount(null); setManualAcctName(''); setManualAcctType('checking'); setManualAcctBalance(''); setManualAccountModalVisible(true); }}
+            >
+              <Text style={{ color: C.accent, fontSize: 18, fontWeight: '300' }}>+</Text>
+              <Text style={{ color: C.accent, fontSize: 14, fontWeight: '600' }}>Add Account</Text>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -2302,30 +2310,18 @@ export default function App() {
                 </View>
               </TouchableOpacity>
             )}
-            {/* Free users: scan receipt + add account */}
+            {/* Free users: scan receipt */}
             {!isSubscribed && (
-              <>
-                <TouchableOpacity style={[s.quickCard, { borderColor: C.green }]} onPress={() => Alert.alert('Scan Receipt', 'Choose a source', [{ text: 'Camera', onPress: () => {} }, { text: 'Photo Library', onPress: () => {} }, { text: 'Cancel', style: 'cancel' }])} activeOpacity={0.8}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                    <Icon char="📷" color={C.green} size={40} radius={12} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>Scan a Receipt</Text>
-                      <Text style={{ color: C.textSub, fontSize: 12 }}>Upload transactions by scanning receipts — no bank connection needed.</Text>
-                    </View>
-                    <Text style={{ color: C.green, fontSize: 20 }}>›</Text>
+              <TouchableOpacity style={[s.quickCard, { borderColor: C.green }]} onPress={() => Alert.alert('Scan Receipt', 'Choose a source', [{ text: 'Camera', onPress: () => {} }, { text: 'Photo Library', onPress: () => {} }, { text: 'Cancel', style: 'cancel' }])} activeOpacity={0.8}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                  <Icon char="📷" color={C.green} size={40} radius={12} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>Scan a Receipt</Text>
+                    <Text style={{ color: C.textSub, fontSize: 12 }}>Upload transactions by scanning receipts — no bank connection needed.</Text>
                   </View>
-                </TouchableOpacity>
-                <TouchableOpacity style={[s.quickCard, { borderColor: C.accent }]} onPress={() => { setEditingManualAccount(null); setManualAcctName(''); setManualAcctType('checking'); setManualAcctBalance(''); setManualAccountModalVisible(true); }} activeOpacity={0.8}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                    <Icon char="🏦" color={C.accent} size={40} radius={12} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>{manualAccounts.length > 0 ? 'Manage Accounts' : 'Add a Bank Account'}</Text>
-                      <Text style={{ color: C.textSub, fontSize: 12 }}>Manually track account balances. Upgrade to Premium to auto-sync transactions.</Text>
-                    </View>
-                    <Text style={{ color: C.accent, fontSize: 20 }}>›</Text>
-                  </View>
-                </TouchableOpacity>
-              </>
+                  <Text style={{ color: C.green, fontSize: 20 }}>›</Text>
+                </View>
+              </TouchableOpacity>
             )}
             {goals.length === 0 && (
               <TouchableOpacity
