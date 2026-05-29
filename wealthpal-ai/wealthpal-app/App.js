@@ -2378,8 +2378,8 @@ export default function App() {
     const totalPrev = spendingTxsPrev.reduce((s, tx) => s + parseFloat(tx.amount||0), 0);
     const dailyAvg = totalCurr / rangeDays;
 
-    // 1. Budget Adherence (0-60) — full points under budget, lose points only for overspending
-    let budgetAdherenceScore = 32;
+    // 1. Budget Adherence (0-70) — full points at or under budget, linear decay for overspending
+    let budgetAdherenceScore = 35;
     let budgetAdherencePct = null;
     if (budgets.length > 0 && totalBudget > 0) {
       const catScores = budgets.map(b => {
@@ -2395,29 +2395,37 @@ export default function App() {
         return 0;
       });
       const avgScore = catScores.reduce((a, b) => a + b, 0) / catScores.length;
-      budgetAdherenceScore = Math.round(avgScore * 60);
+      budgetAdherenceScore = Math.round(avgScore * 70);
       budgetAdherencePct = Math.round((periodBudgetedSpend / totalBudget) * 100);
     }
 
-    // 2. Budget Streak (0-40) — consecutive completed periods under budget
-    let streakScore = 0;
-    let streakCount = 0;
-    if (budgets.length > 0 && totalBudget > 0 && payPeriodOptions.length > 1) {
-      // Check past completed periods (skip index 0 = current in-progress)
+    // 2. Budget Trend (0-30) — consistency across past completed pay periods
+    // Each period earns min(1, budget/spent): full credit if under, partial if over
+    let trendScore = 0;
+    let trendPeriodsUnder = 0;
+    let trendPeriodsTotal = 0;
+    if (budgets.length > 0 && totalBudget > 0) {
+      const dateFmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      const adherences = [];
       for (let i = 1; i < payPeriodOptions.length; i++) {
-        const opt = payPeriodOptions[i];
-        const pStart = opt.startStr;
-        const pEndDate = new Date(pStart + 'T00:00:00'); pEndDate.setDate(pEndDate.getDate() + freqDays); pEndDate.setHours(0, 0, 0, 0);
-        const pEnd = `${pEndDate.getFullYear()}-${String(pEndDate.getMonth()+1).padStart(2,'0')}-${String(pEndDate.getDate()).padStart(2,'0')}`;
-        const periodSpend = transactions
+        const pStart = payPeriodOptions[i].startStr;
+        const pEndDate = new Date(pStart + 'T00:00:00'); pEndDate.setDate(pEndDate.getDate() + freqDays); pEndDate.setHours(0,0,0,0);
+        const pEnd = dateFmt(pEndDate);
+        const spend = transactions
           .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= pStart && (tx.transaction_date||'') < pEnd)
           .reduce((s, tx) => s + parseFloat(tx.amount||0), 0);
-        if (periodSpend <= totalBudget) streakCount++;
-        else break;
+        const adherence = spend > 0 ? Math.min(1, totalBudget / spend) : 1.0;
+        adherences.push(adherence);
       }
-      streakScore = streakCount === 0 ? 0 : streakCount === 1 ? 20 : streakCount === 2 ? 30 : 40;
+      trendPeriodsTotal = adherences.length;
+      trendPeriodsUnder = adherences.filter(a => a >= 1.0).length;
+      if (trendPeriodsTotal === 0) {
+        trendScore = 15; // neutral — no completed periods yet
+      } else {
+        const avg = adherences.reduce((a, b) => a + b, 0) / trendPeriodsTotal;
+        trendScore = Math.round(avg * 30);
+      }
     }
-    const trendScore = streakScore; // kept as trendScore for component refs below
 
     const healthScore = Math.min(100, Math.max(0, budgetAdherenceScore + trendScore));
     const scoreColor = healthScore >= 85 ? C.green : healthScore >= 70 ? C.accent : healthScore >= 50 ? C.amber : C.red;
@@ -2437,12 +2445,12 @@ export default function App() {
 
     // ── Coaching tips ──────────────────────────────────
     const components = [
-      { key: 'budget', label: 'Budget', score: budgetAdherenceScore, max: 60 },
-      { key: 'streak', label: 'Streak',  score: trendScore, max: 40 },
+      { key: 'budget', label: 'Budget', score: budgetAdherenceScore, max: 70 },
+      { key: 'trend',  label: 'Trend',  score: trendScore, max: 30 },
     ];
     const getTip = (key) => {
       if (key === 'budget') {
-        if (!budgets.length) return { title: 'Set up budgets', body: 'Budget Adherence is worth 60 points but requires budgets. Go to the Budget tab to create some.' };
+        if (!budgets.length) return { title: 'Set up budgets', body: 'Budget Adherence is worth 70 points but requires budgets. Go to the Budget tab to create some.' };
         const overBudget = budgets.map(b => {
           const sp = transactions.filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= periodStart && getEffectiveCategory(tx) === b.category).reduce((s,tx)=>s+parseFloat(tx.amount||0),0);
           return { label: PLAID_CATEGORIES.find(c=>c.key===b.category)?.label||b.category, over: sp - parseFloat(b.monthly_limit||0) };
@@ -2451,12 +2459,12 @@ export default function App() {
           ? { title: `Overspending on ${overBudget.label}`, body: `You're $${fmtMoney(overBudget.over)} over your ${overBudget.label} budget this period. Cutting back here has the most impact on your score.` }
           : { title: 'On track this period', body: `You've used ${budgetAdherencePct}% of your budget. Stay under 100% to keep full points.` };
       }
-      if (key === 'streak') {
-        if (!budgets.length) return { title: 'Set up budgets', body: 'Budget Streak requires budgets to track. Go to the Budget tab to create some.' };
-        if (payPeriodOptions.length <= 1) return { title: 'Not enough history', body: 'Sync a few pay periods of transactions so we can track your streak.' };
-        return streakCount === 0
-          ? { title: 'Start your streak', body: 'Stay under your total budget for a full pay period to start building your streak.' }
-          : { title: `${streakCount}-period streak`, body: `You've stayed under budget for ${streakCount} consecutive period${streakCount > 1 ? 's' : ''}. Keep it going to reach the full 40 points.` };
+      if (key === 'trend') {
+        if (!budgets.length) return { title: 'Set up budgets', body: 'Budget Trend requires budgets to track. Go to the Budget tab to create some.' };
+        if (trendPeriodsTotal === 0) return { title: 'Not enough history', body: 'Complete a full pay period so we can start tracking your budget consistency over time.' };
+        return trendPeriodsUnder === trendPeriodsTotal
+          ? { title: 'Perfect consistency', body: `You've stayed under budget all ${trendPeriodsTotal} tracked period${trendPeriodsTotal > 1 ? 's' : ''}. Keep it up to hold full Trend points.` }
+          : { title: `${trendPeriodsUnder} of ${trendPeriodsTotal} periods under budget`, body: `Consistency is key — each period you stay under budget raises your Trend score. Periods where you went over are pulling it down.` };
       }
       return { title: '', body: '' };
     };
@@ -2497,12 +2505,13 @@ export default function App() {
       setInsightsChartTooltip(prev => prev?.index === idx ? null : { index: idx, actual: actualPace[idx], daily: rawDaily[idx], pace: budgetPace[idx] });
     };
 
-    // ── Category data (budgeted cats, current pay period) ──
+    // ── Category data (all categories, current pay period) ──
     const catSpend = {};
     transactions.filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= periodStart).forEach(tx => {
       const cat = getEffectiveCategory(tx);
-      if (cat && budgetedCats.has(cat)) catSpend[cat] = (catSpend[cat]||0) + parseFloat(tx.amount||0);
+      if (cat) catSpend[cat] = (catSpend[cat]||0) + parseFloat(tx.amount||0);
     });
+    const periodTotal = Object.values(catSpend).reduce((s, v) => s + v, 0);
     const catData = Object.entries(catSpend).sort(([,a],[,b])=>b-a);
 
     return (
@@ -2544,8 +2553,8 @@ export default function App() {
             </Svg>
             <View style={{ flex: 1, marginLeft: 16, gap: 10 }}>
               {[
-                { label: 'Budget', score: budgetAdherenceScore, max: 60, hint: budgetAdherencePct != null ? `${budgetAdherencePct}% of limit` : 'No budgets set' },
-                { label: 'Streak', score: trendScore, max: 40, hint: budgets.length === 0 ? 'No budgets set' : streakCount === 0 ? 'No streak yet' : `${streakCount} period${streakCount > 1 ? 's' : ''} under budget` },
+                { label: 'Budget', score: budgetAdherenceScore, max: 70, hint: budgetAdherencePct != null ? `${budgetAdherencePct}% of limit` : 'No budgets set' },
+                { label: 'Trend',  score: trendScore, max: 30, hint: budgets.length === 0 ? 'No budgets set' : trendPeriodsTotal === 0 ? 'No history yet' : `${trendPeriodsUnder}/${trendPeriodsTotal} periods under budget` },
               ].map(({ label, score, max, hint }) => {
                 const pct = Math.round((score / max) * 100);
                 const col = pct >= 80 ? C.green : pct >= 55 ? C.accent : pct >= 35 ? C.amber : C.red;
@@ -2683,7 +2692,7 @@ export default function App() {
           </View>
         )}
 
-        {/* ── Spending by Category (budgeted cats only) ── */}
+        {/* ── Spending by Category ── */}
         {catData.length > 0 && (
           <View style={s.section}>
             <Text style={[s.sectionTitle, { marginBottom: 14 }]}>Spending by Category</Text>
@@ -2707,10 +2716,10 @@ export default function App() {
                       <Text style={s.catAmt}>${fmtMoney(amt)}</Text>
                     </View>
                     <View style={s.barBg}>
-                      <View style={[s.bar, { width: `${pctOfBudget ?? Math.round((amt/totalCurr)*100)}%`, backgroundColor: barColor }]} />
+                      <View style={[s.bar, { width: `${pctOfBudget ?? Math.round((amt/periodTotal)*100)}%`, backgroundColor: barColor }]} />
                     </View>
                     <Text style={{ color: C.textMuted, fontSize: 10, marginTop: 4 }}>
-                      {pctOfBudget != null ? `$${fmtMoney(amt)} of $${fmtMoney(budgetLimit)} budget` : `$${fmtMoney(amt)} of $${fmtMoney(totalCurr)} total`}
+                      {pctOfBudget != null ? `$${fmtMoney(amt)} of $${fmtMoney(budgetLimit)} budget` : `$${fmtMoney(amt)} of $${fmtMoney(periodTotal)} total`}
                       <Text style={{ color: C.accent }}> · tap to view →</Text>
                     </Text>
                   </View>
@@ -2728,7 +2737,7 @@ export default function App() {
             <Text style={{ fontSize: 24 }}>💡</Text>
             <View style={{ flex: 1 }}>
               <Text style={{ color: C.accent, fontSize: 13, fontWeight: '700', marginBottom: 2 }}>Set up budgets to unlock your full score</Text>
-              <Text style={{ color: C.textSub, fontSize: 12 }}>Budget Adherence is worth up to 60 points.</Text>
+              <Text style={{ color: C.textSub, fontSize: 12 }}>Budget Adherence is worth up to 70 points.</Text>
             </View>
             <Text style={{ color: C.accent, fontSize: 18 }}>›</Text>
           </TouchableOpacity>
@@ -4567,8 +4576,8 @@ export default function App() {
               Your Financial Health Score (0–100) is made up of two components:
             </Text>
             {[
-              { label: 'Budget Adherence', max: 60, color: C.green, desc: 'Tracks your spending vs. budget limits for each category this pay period. Stay at or under your limit = full points. Going over reduces your score proportionally.' },
-              { label: 'Budget Streak', max: 40, color: C.accent, desc: 'Counts consecutive completed pay periods where your total spending stayed under your total budget. 1 period = 20 pts, 2 = 30 pts, 3+ = full 40 pts. One over-budget period resets the streak.' },
+              { label: 'Budget Adherence', max: 70, color: C.green, desc: 'Tracks your spending vs. budget limits for each category this pay period. Stay at or under your limit = full 70 points. Going over reduces your score — 20%+ over a category = 0 for that category.' },
+              { label: 'Budget Trend', max: 30, color: C.accent, desc: 'Measures how consistently you stay under your total budget across recent pay periods. Each completed period earns full credit if under budget, partial credit if over. The average across all tracked periods determines your Trend score.' },
             ].map(({ label, max, color, desc }) => (
               <View key={label} style={{ marginBottom: 16, padding: 12, backgroundColor: C.bg, borderRadius: 12, borderWidth: 1, borderColor: C.border }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
@@ -5676,7 +5685,7 @@ export default function App() {
               maxLength={10}
             />
             <Text style={s.label}>Pay Frequency</Text>
-            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 22 }}>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
               {[['weekly','Weekly'],['biweekly','Every 2 Wks'],['monthly','Monthly']].map(([k, l]) => (
                 <TouchableOpacity key={k}
                   style={{ flex: 1, paddingVertical: 10, borderRadius: 12, alignItems: 'center', backgroundColor: paydayFreq === k ? C.accent : C.surface, borderWidth: 1, borderColor: paydayFreq === k ? C.accent : C.border }}
@@ -5686,6 +5695,25 @@ export default function App() {
                 </TouchableOpacity>
               ))}
             </View>
+            {(() => {
+              if (!/^\d{4}-\d{2}-\d{2}$/.test(paydayNextDate)) return null;
+              try {
+                const freqD = paydayFreq === 'weekly' ? 7 : paydayFreq === 'biweekly' ? 14 : 30;
+                const now = new Date(); now.setHours(0,0,0,0);
+                const anchor = new Date(paydayNextDate + 'T00:00:00'); anchor.setHours(0,0,0,0);
+                while (anchor > now) { anchor.setDate(anchor.getDate() - freqD); anchor.setHours(0,0,0,0); }
+                const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+                const fmt = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                const endDate = new Date(anchor); endDate.setDate(endDate.getDate() + freqD - 1); endDate.setHours(0,0,0,0);
+                return (
+                  <View style={{ backgroundColor: C.accent+'18', borderRadius: 10, padding: 10, marginBottom: 16, borderWidth: 1, borderColor: C.accent+'44' }}>
+                    <Text style={{ color: C.accent, fontSize: 12, fontWeight: '700', marginBottom: 2 }}>Current period preview</Text>
+                    <Text style={{ color: C.textSub, fontSize: 12 }}>{fmt(anchor)} – {fmt(endDate)} · starts every {DAYS[anchor.getDay()]}</Text>
+                    <Text style={{ color: C.textMuted, fontSize: 11, marginTop: 3 }}>If this looks off by a day, adjust the date above by ±1 day.</Text>
+                  </View>
+                );
+              } catch { return null; }
+            })()}
             <TouchableOpacity style={s.btn} onPress={() => {
               if (!paydayNextDate || !/^\d{4}-\d{2}-\d{2}$/.test(paydayNextDate)) {
                 Alert.alert('Invalid Date', 'Enter your next payday in YYYY-MM-DD format (e.g. 2026-06-01).');
