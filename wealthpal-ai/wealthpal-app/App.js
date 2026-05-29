@@ -522,7 +522,7 @@ export default function App() {
 
   // ── Auto sync ────────────────────────────────────────
   const checkAutoSync = useCallback(() => {
-    if (!autoSyncEnabled || !userIdRef.current) return;
+    if (!autoSyncEnabled || !userIdRef.current || syncing) return;
     const now = new Date();
     if (now.getHours() < autoSyncHour) return;
     const todayStr = now.toDateString();
@@ -533,7 +533,7 @@ export default function App() {
     setLastSyncTime(newLastSync);
     AsyncStorage.setItem('lastSyncTime', String(newLastSync));
     syncTransactions();
-  }, [autoSyncEnabled, autoSyncHour, lastSyncTime]);
+  }, [autoSyncEnabled, autoSyncHour, lastSyncTime, syncing]);
 
   const manuallySyncNow = useCallback(() => {
     if (!userIdRef.current) return;
@@ -566,6 +566,8 @@ export default function App() {
   // AI coaching tip — generated once per budget period, cached in AsyncStorage
   useEffect(() => {
     if (!userIdRef.current || !transactions.length || activeTab !== 'insights') return;
+    // Don't consume free-tier quota silently — only generate if subscribed or quota remains
+    if (!isSubscribed && aiRequestsUsed >= 6) return;
     const periodKey = `aiCoach2_${getPeriodStart('paycycle')}`;
     AsyncStorage.getItem(periodKey).then(cached => {
       if (cached) { setAiCoachingTip(cached); return; }
@@ -1013,6 +1015,8 @@ export default function App() {
     closeDrawer();
     setTimeout(() => {
       setScreen('login'); setUserId(null); userIdRef.current = null;
+      // Critical: clear auth token so it can't be reused by the next user's session
+      setAuthToken(null); authTokenRef.current = null;
       setEmail(''); setPassword(''); setFirstName(''); setLastName('');
       setDisplayName(''); setError('');
       AsyncStorage.removeItem('displayName');
@@ -1023,6 +1027,11 @@ export default function App() {
       AsyncStorage.multiRemove(['savedUserId', 'savedToken', 'savedEmail']);
       setTransactions([]); setAccounts([]); setSelectedAccount(null);
       setLinkedAccount(null); setAccountsError(false); setDashboardData(null);
+      // Reset premium + user-specific state so it doesn't bleed to the next session
+      setIsSubscribed(false); setAiRequestsUsed(0);
+      setGoals([]); setBudgets([]); setRecurringTxs([]);
+      setGroups([]); setCurrentGroup(null); setGroupDetail(null);
+      setLoadingChat(false);
       setChatMessages([{ id: '0', role: 'assistant', text: "Hi! I'm your Finlit assistant. Ask me anything about your finances!" }]);
     }, 300);
   };
@@ -1270,7 +1279,7 @@ export default function App() {
     budgets.forEach(b => {
       const start = getPeriodStart(b.period || 'monthly', b.paycycle_start, b.paycycle_freq);
       const spent = transactions
-        .filter(tx => (tx.transaction_date || '') >= start && tx.category === b.category && !isIncomeTx(tx))
+        .filter(tx => (tx.transaction_date || '') >= start && getEffectiveCategory(tx) === b.category && !isIncomeTx(tx))
         .reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
       const limit = parseFloat(b.monthly_limit || 0);
       const pct = limit > 0 ? (spent / limit) * 100 : 0;
@@ -1364,7 +1373,8 @@ export default function App() {
           setPlaidStatus(''); setPlaidLoading(false);
         },
       });
-    } catch (err) { setPlaidError(err.message); setPlaidLoading(false); }
+    } catch (err) { setPlaidError(err.message); }
+    finally { setPlaidLoading(false); }
   };
 
   // ── Chat ────────────────────────────────────────────
@@ -2021,7 +2031,7 @@ export default function App() {
           <View style={s.balanceCard}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
               <View style={{ flex: 1 }}>
-                <Text style={s.balanceLabel}>{selectedAccount ? selectedAccount.name.toUpperCase() : 'TOTAL BALANCE'}</Text>
+                <Text style={s.balanceLabel}>{selectedAccount ? (selectedAccount.name || 'Account').toUpperCase() : 'TOTAL BALANCE'}</Text>
                 <Text style={s.balanceAmt}>{fmtCurrency(selectedAccount?.balances?.current || 0)}</Text>
                 {selectedAccount && <Text style={s.balanceSub}>{[accountBankMap[selectedAccount.account_id], selectedAccount.subtype].filter(Boolean).join(' · ')}</Text>}
               </View>
@@ -2054,7 +2064,7 @@ export default function App() {
                   <View style={[s.balanceCard, { marginTop: 0, marginBottom: 0 }]}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <View style={{ flex: 1 }}>
-                        <Text style={s.balanceLabel}>{item.name.toUpperCase()}</Text>
+                        <Text style={s.balanceLabel}>{(item.name || 'Account').toUpperCase()}</Text>
                         <Text style={s.balanceAmt}>{fmtCurrency(item.balances?.current || 0)}</Text>
                         <Text style={s.balanceSub}>{[accountBankMap[item.account_id], item.subtype].filter(Boolean).join(' · ')}</Text>
                       </View>
@@ -2358,7 +2368,7 @@ export default function App() {
             {(() => {
               const overBudget = budgets.filter(b => {
                 const start = getPeriodStart(b.period || 'monthly');
-                const spent = transactions.filter(tx => (tx.transaction_date || '') >= start && tx.category === b.category).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
+                const spent = transactions.filter(tx => (tx.transaction_date || '') >= start && getEffectiveCategory(tx) === b.category && !isIncomeTx(tx)).reduce((s, tx) => s + parseFloat(tx.amount || 0), 0);
                 return spent > parseFloat(b.monthly_limit || 0);
               });
               return overBudget.length > 0 ? (
@@ -5253,8 +5263,8 @@ export default function App() {
               />
 
               <TouchableOpacity
-                style={[s.btn, (savingBudget || !newBudgetCat.trim() || !newBudgetLimit) && s.btnOff]}
-                disabled={savingBudget || !newBudgetCat.trim() || !newBudgetLimit}
+                style={[s.btn, (savingBudget || !newBudgetCat.trim() || isNaN(parseFloat(newBudgetLimit)) || parseFloat(newBudgetLimit) <= 0) && s.btnOff]}
+                disabled={savingBudget || !newBudgetCat.trim() || isNaN(parseFloat(newBudgetLimit)) || parseFloat(newBudgetLimit) <= 0}
                 onPress={async () => {
                   setSavingBudget(true);
                   try {

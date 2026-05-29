@@ -83,6 +83,21 @@ function selfOnly(req, res, next) {
     }
     next();
 }
+// Ensures the authenticated user is a member of the requested group
+async function requireGroupMember(req, res, next) {
+    const authUser = req.authUser;
+    const { groupId } = req.params;
+    try {
+        const { data } = await supabase_1.default.from("group_members").select("role").eq("group_id", groupId).eq("user_id", authUser.id).single();
+        if (!data)
+            return res.status(403).json({ error: "Access denied — not a member of this group" });
+        req.groupRole = data.role;
+        next();
+    }
+    catch {
+        return res.status(403).json({ error: "Access denied" });
+    }
+}
 // ============================================
 // HEALTH CHECK
 // ============================================
@@ -183,9 +198,8 @@ app.post("/api/plaid/create-link-token", requireAuth, async (req, res) => {
         res.json({ link_token: linkToken });
     }
     catch (error) {
-        const plaidError = error?.response?.data || error?.message || error;
-        console.error("Error creating link token:", JSON.stringify(plaidError));
-        res.status(500).json({ error: "Failed to create link token", detail: plaidError });
+        console.error("Error creating link token:", error?.response?.data || error?.message || error);
+        res.status(500).json({ error: "Failed to create link token" });
     }
 });
 app.post("/api/plaid/exchange-token", requireAuth, async (req, res) => {
@@ -498,12 +512,16 @@ app.delete("/api/transactions", requireAuth, async (req, res) => {
         res.status(500).json({ error: error?.message || "Failed to delete transactions" });
     }
 });
-// Legacy sync endpoint (kept for compatibility)
-app.post("/api/transactions/sync", async (req, res) => {
+// Legacy sync endpoint — secured with auth (unauthenticated version removed for security)
+app.post("/api/transactions/sync", requireAuth, async (req, res) => {
+    const authUser = req.authUser;
     try {
-        const { userId, accessToken, startDate, endDate } = req.body;
-        if (!userId || !accessToken || !startDate || !endDate) {
+        const { userId, accessToken } = req.body;
+        if (!userId || !accessToken) {
             return res.status(400).json({ error: "Missing required fields" });
+        }
+        if (authUser.id !== userId) {
+            return res.status(403).json({ error: "Access denied" });
         }
         const { transactions } = await plaidService.getTransactions(accessToken);
         let synced = 0;
@@ -861,7 +879,7 @@ app.post("/api/groups", requireAuth, async (req, res) => {
         res.status(500).json({ error: e?.message });
     }
 });
-app.get("/api/groups/:groupId/detail", requireAuth, async (req, res) => {
+app.get("/api/groups/:groupId/detail", requireAuth, requireGroupMember, async (req, res) => {
     try {
         const [membersRes, goalsRes] = await Promise.all([
             supabase_1.default.from("group_members").select("*").eq("group_id", req.params.groupId),
@@ -895,7 +913,7 @@ app.get("/api/groups/:groupId/detail", requireAuth, async (req, res) => {
         res.status(500).json({ error: e?.message });
     }
 });
-app.post("/api/groups/:groupId/members", requireAuth, async (req, res) => {
+app.post("/api/groups/:groupId/members", requireAuth, requireGroupMember, async (req, res) => {
     try {
         const { email, share_transactions, share_accounts } = req.body;
         const { data: user } = await supabase_1.default.from("users").select("id").eq("email", email).single();
@@ -908,7 +926,7 @@ app.post("/api/groups/:groupId/members", requireAuth, async (req, res) => {
         res.status(500).json({ error: e?.message });
     }
 });
-app.patch("/api/groups/:groupId/members/:email", requireAuth, async (req, res) => {
+app.patch("/api/groups/:groupId/members/:email", requireAuth, requireGroupMember, async (req, res) => {
     try {
         const { share_transactions, share_accounts } = req.body;
         const { error } = await supabase_1.default.from("group_members").update({ share_transactions, share_accounts }).eq("group_id", req.params.groupId).eq("email", req.params.email);
@@ -920,7 +938,7 @@ app.patch("/api/groups/:groupId/members/:email", requireAuth, async (req, res) =
         res.status(500).json({ error: e?.message });
     }
 });
-app.delete("/api/groups/:groupId/members/:email", requireAuth, async (req, res) => {
+app.delete("/api/groups/:groupId/members/:email", requireAuth, requireGroupMember, async (req, res) => {
     try {
         await supabase_1.default.from("group_members").delete().eq("group_id", req.params.groupId).eq("email", req.params.email);
         res.json({ message: "Member removed" });
@@ -929,7 +947,7 @@ app.delete("/api/groups/:groupId/members/:email", requireAuth, async (req, res) 
         res.status(500).json({ error: e?.message });
     }
 });
-app.get("/api/groups/:groupId/shared-transactions", requireAuth, async (req, res) => {
+app.get("/api/groups/:groupId/shared-transactions", requireAuth, requireGroupMember, async (req, res) => {
     try {
         const { data: members, error: membersError } = await supabase_1.default
             .from("group_members")
@@ -965,7 +983,7 @@ app.get("/api/groups/:groupId/shared-transactions", requireAuth, async (req, res
         res.status(500).json({ error: e?.message });
     }
 });
-app.post("/api/groups/:groupId/goals", requireAuth, async (req, res) => {
+app.post("/api/groups/:groupId/goals", requireAuth, requireGroupMember, async (req, res) => {
     try {
         const { title, target_amount, deadline, created_by } = req.body;
         const { data, error } = await supabase_1.default.from("group_goals").insert([{ group_id: req.params.groupId, title, target_amount, current_amount: 0, deadline, created_by }]).select();
@@ -977,9 +995,10 @@ app.post("/api/groups/:groupId/goals", requireAuth, async (req, res) => {
         res.status(500).json({ error: e?.message });
     }
 });
-app.patch("/api/groups/:groupId/goals/:goalId", requireAuth, async (req, res) => {
+app.patch("/api/groups/:groupId/goals/:goalId", requireAuth, requireGroupMember, async (req, res) => {
     try {
-        const { error } = await supabase_1.default.from("group_goals").update(req.body).eq("id", req.params.goalId);
+        const { title, target_amount, current_amount, deadline, notes } = req.body;
+        const { error } = await supabase_1.default.from("group_goals").update({ title, target_amount, current_amount, deadline, notes }).eq("id", req.params.goalId);
         if (error)
             throw error;
         res.json({ message: "Goal updated" });
@@ -988,7 +1007,7 @@ app.patch("/api/groups/:groupId/goals/:goalId", requireAuth, async (req, res) =>
         res.status(500).json({ error: e?.message });
     }
 });
-app.delete("/api/groups/:groupId", requireAuth, async (req, res) => {
+app.delete("/api/groups/:groupId", requireAuth, requireGroupMember, async (req, res) => {
     try {
         await supabase_1.default.from("group_members").delete().eq("group_id", req.params.groupId);
         await supabase_1.default.from("group_goals").delete().eq("group_id", req.params.groupId);
@@ -1005,7 +1024,7 @@ app.delete("/api/groups/:groupId", requireAuth, async (req, res) => {
 // ============================================
 // GROUP BUDGET ROUTES
 // ============================================
-app.get("/api/groups/:groupId/budgets", requireAuth, async (req, res) => {
+app.get("/api/groups/:groupId/budgets", requireAuth, requireGroupMember, async (req, res) => {
     try {
         const { data, error } = await supabase_1.default.from("group_budgets").select("*").eq("group_id", req.params.groupId).order("category");
         if (error)
@@ -1016,7 +1035,7 @@ app.get("/api/groups/:groupId/budgets", requireAuth, async (req, res) => {
         res.status(500).json({ error: e?.message });
     }
 });
-app.post("/api/groups/:groupId/budgets", requireAuth, async (req, res) => {
+app.post("/api/groups/:groupId/budgets", requireAuth, requireGroupMember, async (req, res) => {
     try {
         const { category, monthly_limit, period, created_by } = req.body;
         const { data, error } = await supabase_1.default.from("group_budgets").insert([{ group_id: req.params.groupId, category, monthly_limit, period: period || "monthly", created_by }]).select();
@@ -1028,7 +1047,7 @@ app.post("/api/groups/:groupId/budgets", requireAuth, async (req, res) => {
         res.status(500).json({ error: e?.message });
     }
 });
-app.delete("/api/groups/:groupId/budgets/:budgetId", requireAuth, async (req, res) => {
+app.delete("/api/groups/:groupId/budgets/:budgetId", requireAuth, requireGroupMember, async (req, res) => {
     try {
         const { error } = await supabase_1.default.from("group_budgets").delete().eq("id", req.params.budgetId);
         if (error)
