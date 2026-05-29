@@ -5691,11 +5691,11 @@ export default function App() {
         <View style={s.modalOverlay}>
           <View style={s.modalCard}>
             <Text style={s.modalTitle}>Set Your Payday</Text>
-            <Text style={{ color: C.textSub, fontSize: 13, marginBottom: 18 }}>This tells Finlit when your pay cycle resets for paycycle budgets.</Text>
-            <Text style={s.label}>Next Payday Date</Text>
+            <Text style={{ color: C.textSub, fontSize: 13, marginBottom: 18 }}>Enter the date you most recently got paid. Finlit uses this to know exactly when your pay cycle starts.</Text>
+            <Text style={s.label}>Most Recent Payday</Text>
             <TextInput
               style={[s.input, { marginBottom: 18 }]}
-              placeholder="YYYY-MM-DD"
+              placeholder="YYYY-MM-DD  (e.g. when you last got paid)"
               placeholderTextColor={C.textMuted}
               value={paydayNextDate}
               onChangeText={setPaydayNextDate}
@@ -5717,24 +5717,25 @@ export default function App() {
               if (!/^\d{4}-\d{2}-\d{2}$/.test(paydayNextDate)) return null;
               try {
                 const freqD = paydayFreq === 'weekly' ? 7 : paydayFreq === 'biweekly' ? 14 : 30;
-                const now = new Date(); now.setHours(0,0,0,0);
+                // The entered date IS the period start — no walk needed for a past date
                 const anchor = new Date(paydayNextDate + 'T00:00:00'); anchor.setHours(0,0,0,0);
-                while (anchor > now) { anchor.setDate(anchor.getDate() - freqD); anchor.setHours(0,0,0,0); }
                 const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
                 const fmt = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
                 const endDate = new Date(anchor); endDate.setDate(endDate.getDate() + freqD - 1); endDate.setHours(0,0,0,0);
+                const nextStart = new Date(anchor); nextStart.setDate(nextStart.getDate() + freqD); nextStart.setHours(0,0,0,0);
                 return (
                   <View style={{ backgroundColor: C.accent+'18', borderRadius: 10, padding: 10, marginBottom: 16, borderWidth: 1, borderColor: C.accent+'44' }}>
-                    <Text style={{ color: C.accent, fontSize: 12, fontWeight: '700', marginBottom: 2 }}>Current period preview</Text>
-                    <Text style={{ color: C.textSub, fontSize: 12 }}>{fmt(anchor)} – {fmt(endDate)} · starts every {DAYS[anchor.getDay()]}</Text>
-                    <Text style={{ color: C.textMuted, fontSize: 11, marginTop: 3 }}>If this looks off by a day, adjust the date above by ±1 day.</Text>
+                    <Text style={{ color: C.accent, fontSize: 12, fontWeight: '700', marginBottom: 2 }}>Period preview</Text>
+                    <Text style={{ color: C.textSub, fontSize: 12 }}>This period: {fmt(anchor)} – {fmt(endDate)}</Text>
+                    <Text style={{ color: C.textSub, fontSize: 12 }}>Next period: {fmt(nextStart)} onwards</Text>
+                    <Text style={{ color: C.textMuted, fontSize: 11, marginTop: 3 }}>Repeats every {DAYS[anchor.getDay()]} · every {freqD === 7 ? 'week' : freqD === 14 ? '2 weeks' : 'month'}</Text>
                   </View>
                 );
               } catch { return null; }
             })()}
             <TouchableOpacity style={s.btn} onPress={() => {
               if (!paydayNextDate || !/^\d{4}-\d{2}-\d{2}$/.test(paydayNextDate)) {
-                Alert.alert('Invalid Date', 'Enter your next payday in YYYY-MM-DD format (e.g. 2026-06-01).');
+                Alert.alert('Invalid Date', 'Enter your most recent payday in YYYY-MM-DD format (e.g. 2026-05-16).');
                 return;
               }
               const pd = { nextDate: paydayNextDate, frequency: paydayFreq };
