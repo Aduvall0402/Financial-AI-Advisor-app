@@ -425,6 +425,7 @@ export default function App() {
   const [txFilterAccountVisible, setTxFilterAccountVisible] = useState(false);
   const [txFilterDateFrom, setTxFilterDateFrom] = useState(null);
   const [dbAccountMap, setDbAccountMap] = useState({}); // db_uuid → display label
+  const [accountBankMap, setAccountBankMap] = useState({}); // plaid account_id → institution name
 
   // Transactions bulk select
   const [selectedTxIds, setSelectedTxIds] = useState(new Set());
@@ -559,23 +560,32 @@ export default function App() {
   // AI coaching tip — generated once per budget period, cached in AsyncStorage
   useEffect(() => {
     if (!userIdRef.current || !transactions.length || activeTab !== 'insights') return;
-    const periodKey = `aiCoach_${getPeriodStart('paycycle')}`;
+    const periodKey = `aiCoach2_${getPeriodStart('paycycle')}`;
     AsyncStorage.getItem(periodKey).then(cached => {
       if (cached) { setAiCoachingTip(cached); return; }
       // Build a data-rich prompt for personalized advice
       setAiCoachingLoading(true);
       const currentPeriodStart = getPeriodStart('paycycle');
-      const cutoff = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
-      const spendTxs = transactions.filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= cutoff);
-      const totalSpend = spendTxs.reduce((s,tx)=>s+parseFloat(tx.amount||0),0);
-      const catMap = {};
-      spendTxs.forEach(tx => { const c = getEffectiveCategory(tx)||'Other'; catMap[c]=(catMap[c]||0)+parseFloat(tx.amount||0); });
-      const topCats = Object.entries(catMap).sort(([,a],[,b])=>b-a).slice(0,4).map(([c,a])=>`${PLAID_CATEGORIES.find(p=>p.key===c)?.label||c}: $${a.toFixed(0)}`).join(', ');
-      const budgetSummary = budgets.map(b => {
-        const spent = transactions.filter(tx=>!isIncomeTx(tx)&&(tx.transaction_date||'')>=currentPeriodStart&&getEffectiveCategory(tx)===b.category).reduce((s,tx)=>s+parseFloat(tx.amount||0),0);
-        return `${PLAID_CATEGORIES.find(p=>p.key===b.category)?.label||b.category}: $${spent.toFixed(0)} spent of $${parseFloat(b.monthly_limit).toFixed(0)} limit`;
-      }).join(', ');
-      const prompt = `My spending over the past 30 days: $${totalSpend.toFixed(0)} total. Top categories (past 30 days): ${topCats}. ${budgets.length > 0 ? `Current period budget status: ${budgetSummary}.` : 'No budgets set yet.'} Based on this recent history, give me 2 specific, actionable tips for the upcoming pay period. Be direct and mention specific dollar amounts or categories. Keep it under 60 words total.`;
+      const freqD = userPayday?.frequency === 'weekly' ? 7 : userPayday?.frequency === 'biweekly' ? 14 : 30;
+      const localD = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      const todayD = new Date(); todayD.setHours(0,0,0,0);
+      // Build per-category spending for last 3 rolling windows
+      const windows = [1,2,3].map(w => {
+        const wEnd = new Date(todayD); wEnd.setDate(todayD.getDate() - (w-1)*freqD);
+        const wStart = new Date(todayD); wStart.setDate(todayD.getDate() - w*freqD);
+        const wEndStr = localD(wEnd), wStartStr = localD(wStart);
+        const catM = {};
+        transactions.filter(tx=>!isIncomeTx(tx)&&(tx.transaction_date||'')>=wStartStr&&(tx.transaction_date||'')<wEndStr).forEach(tx=>{const c=getEffectiveCategory(tx)||'Other';catM[c]=(catM[c]||0)+parseFloat(tx.amount||0);});
+        return catM;
+      });
+      const budgetLines = budgets.map(b => {
+        const lbl = PLAID_CATEGORIES.find(p=>p.key===b.category)?.label||b.category;
+        const lim = parseFloat(b.monthly_limit||0);
+        const [w1,w2,w3] = windows.map(w=>Math.round(w[b.category]||0));
+        const currentSpent = transactions.filter(tx=>!isIncomeTx(tx)&&(tx.transaction_date||'')>=currentPeriodStart&&getEffectiveCategory(tx)===b.category).reduce((s,tx)=>s+parseFloat(tx.amount||0),0);
+        return `${lbl}: limit $${lim.toFixed(0)}, current period $${currentSpent.toFixed(0)}, prev periods: $${w2}/$${w3}`;
+      }).join('\n');
+      const prompt = `My budget data (biweekly periods):\n${budgetLines || 'No budgets set.'}\n\nBased on my actual spending patterns across multiple pay periods, give me 2 specific actionable tips. Identify real problem areas (categories consistently over budget or trending upward). Give concrete dollar targets based on my actual numbers, not generic advice. Do NOT suggest to simply "allocate wisely". Keep it under 70 words.`;
       apiCall('/api/ai/chat', { method: 'POST', body: JSON.stringify({ message: prompt, history: [] }) })
         .then(r => r.json()).then(data => {
           const tip = data.response || '';
@@ -1025,13 +1035,16 @@ export default function App() {
         setSelectedAccount(dedupedAccounts[0]);
         setLinkedAccount(data.itemId);
         setAccountsError(false);
-        // Build a map from DB UUID → display label (e.g. "Chase Checking, Savings")
+        // Build maps from DB UUID → label, and plaid account_id → institution name
         if (data.dbAccounts?.length) {
           const map = {};
+          const bankMap = {};
           data.dbAccounts.forEach((item, idx) => {
             map[item.id] = item.institutionName || `Bank ${idx + 1}`;
+            item.accounts?.forEach(acc => { if (acc.account_id) bankMap[acc.account_id] = item.institutionName || ''; });
           });
           setDbAccountMap(map);
+          setAccountBankMap(bankMap);
         }
       } else {
         setAccountsError(true);
@@ -1997,7 +2010,7 @@ export default function App() {
               <View style={{ flex: 1 }}>
                 <Text style={s.balanceLabel}>{selectedAccount ? selectedAccount.name.toUpperCase() : 'TOTAL BALANCE'}</Text>
                 <Text style={s.balanceAmt}>{fmtCurrency(selectedAccount?.balances?.current || 0)}</Text>
-                {selectedAccount && <Text style={s.balanceSub}>{selectedAccount.subtype} · {selectedAccount.type}</Text>}
+                {selectedAccount && <Text style={s.balanceSub}>{[accountBankMap[selectedAccount.account_id], selectedAccount.subtype].filter(Boolean).join(' · ')}</Text>}
               </View>
               {(loadingAccounts || loadingTx) && (
                 <ActivityIndicator color={C.accent} size="small" style={{ marginTop: 4 }} />
@@ -2030,7 +2043,7 @@ export default function App() {
                       <View style={{ flex: 1 }}>
                         <Text style={s.balanceLabel}>{item.name.toUpperCase()}</Text>
                         <Text style={s.balanceAmt}>{fmtCurrency(item.balances?.current || 0)}</Text>
-                        <Text style={s.balanceSub}>{item.subtype} · {item.type}</Text>
+                        <Text style={s.balanceSub}>{[accountBankMap[item.account_id], item.subtype].filter(Boolean).join(' · ')}</Text>
                       </View>
                       {(loadingAccounts || loadingTx) && (
                         <ActivityIndicator color={C.accent} size="small" style={{ marginTop: 4 }} />
@@ -2476,14 +2489,16 @@ export default function App() {
       if (key === 'budget') {
         if (!budgets.length) return { title: 'Set up budgets', body: 'Budget Adherence is worth 70 points but requires budgets. Go to the Budget tab to create some.' };
         const overBudgets = budgets.map(b => {
-          const sp = transactions.filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= rollStartStr && (tx.transaction_date||'') < rollEnd && getEffectiveCategory(tx) === b.category).reduce((s,tx)=>s+parseFloat(tx.amount||0),0);
-          return { label: PLAID_CATEGORIES.find(c=>c.key===b.category)?.label||b.category, over: sp - parseFloat(b.monthly_limit||0) };
+          const sp = transactions.filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= periodStart && getEffectiveCategory(tx) === b.category).reduce((s,tx)=>s+parseFloat(tx.amount||0),0);
+          return { label: PLAID_CATEGORIES.find(c=>c.key===b.category)?.label||b.category, over: sp - parseFloat(b.monthly_limit||0), spent: sp };
         }).filter(b => b.over > 0).sort((a,b)=>b.over-a.over);
         if (overBudgets.length > 0) {
           const list = overBudgets.map(b => `${b.label} ($${fmtMoney(b.over)} over)`).join(', ');
-          return { title: `${overBudgets.length} budget${overBudgets.length > 1 ? 's' : ''} over in last ${freqDays} days`, body: `You went over on: ${list}. Cutting back will improve your score.` };
+          return { title: `${overBudgets.length} budget${overBudgets.length > 1 ? 's' : ''} over this period`, body: `You're over on: ${list}. Cutting back here has the most impact on your score.` };
         }
-        return { title: `On track — last ${freqDays} days`, body: `You've used ${budgetAdherencePct}% of your budget in the last ${freqDays} days. Keep it under 100% to maintain full points.` };
+        const currentPeriodSpend = transactions.filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= periodStart && budgetedCats.has(getEffectiveCategory(tx))).reduce((s,tx)=>s+parseFloat(tx.amount||0),0);
+        const pct = totalBudget > 0 ? Math.round((currentPeriodSpend / totalBudget) * 100) : 0;
+        return { title: 'On track this period', body: `You've used ${pct}% of your budget this pay period. Stay under 100% to keep full points.` };
       }
       if (key === 'trend') {
         if (!budgets.length) return { title: 'Set up budgets', body: 'Budget Trend requires budgets to track. Go to the Budget tab to create some.' };
@@ -2557,7 +2572,7 @@ export default function App() {
         <View style={{ backgroundColor: C.surface, borderRadius: 22, padding: 20, marginBottom: 14, borderWidth: 1, borderColor: C.border }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <Text style={{ color: C.textSub, fontSize: 11, fontWeight: '700', letterSpacing: 1 }}>FINANCIAL HEALTH SCORE</Text>
-            <Text style={{ color: C.textMuted, fontSize: 10 }}>Last period: {fmtPeriodRange(scoreBasedOnPeriod, userPayday?.frequency || 'biweekly')}</Text>
+            <Text style={{ color: C.textMuted, fontSize: 10 }}>{(() => { const fD = d => d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); const end = new Date(today); end.setDate(today.getDate()-1); return `Last ${freqDays}d · ${fD(new Date(rollStartStr+'T00:00:00'))} – ${fD(end)}`; })()}</Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Svg width={gaugeSize} height={gaugeSize}>
@@ -2624,21 +2639,22 @@ export default function App() {
               <Text style={{ fontSize: 16 }}>✦</Text>
               <Text style={{ color: C.accent, fontSize: 11, fontWeight: '800', letterSpacing: 0.5, flex: 1 }}>FINLIT AI · THIS PERIOD</Text>
               <TouchableOpacity onPress={async () => {
-                const periodKey = `aiCoach_${getPeriodStart('paycycle')}`;
+                const periodKey = `aiCoach2_${getPeriodStart('paycycle')}`;
                 await AsyncStorage.removeItem(periodKey);
                 setAiCoachingTip('');
               }}>
                 <Text style={{ color: C.textMuted, fontSize: 11 }}>Refresh</Text>
               </TouchableOpacity>
             </View>
-            {aiCoachingLoading ? (
+            {aiCoachingLoading && !aiCoachingTip && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <ActivityIndicator size="small" color={C.accent} />
                 <Text style={{ color: C.textSub, fontSize: 13 }}>Generating personalized tips…</Text>
               </View>
-            ) : (
-              <Text style={{ color: C.text, fontSize: 13, lineHeight: 20 }}>{aiCoachingTip}</Text>
             )}
+            {aiCoachingTip ? (
+              <Text style={{ color: aiCoachingLoading ? C.textMuted : C.text, fontSize: 13, lineHeight: 20 }}>{aiCoachingTip}</Text>
+            ) : null}
           </View>
         )}
 
@@ -2700,6 +2716,10 @@ export default function App() {
                   yAxisLabel="" yAxisSuffix="" segments={4}
                   onDataPointClick={({ index }) => {
                     setInsightsChartTooltip(prev => prev?.index === index ? null : { index, actual: actualPace[index], daily: rawDaily[index], pace: budgetPace[index] });
+                  }}
+                  renderDotContent={({ x, y, index }) => {
+                    if (index !== insightsChartTooltip?.index) return null;
+                    return <Circle key={`hl-${index}`} cx={x} cy={y} r={7} fill={C.text} stroke={C.surface} strokeWidth={2.5} />;
                   }}
                 />
               </ScrollView>
@@ -5405,7 +5425,7 @@ export default function App() {
             </View>
             <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false}>
               {Array.from(new Set(transactions.map(tx => getEffectiveCategory(tx)).filter(Boolean))).sort().map(key => {
-                const label = PLAID_CATEGORIES.find(p => p.key === key)?.label || key.replace(/_/g, ' ');
+                const label = PLAID_CATEGORIES.find(p => p.key === key)?.label || key.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
                 const checked = txFilterCategories.has(key);
                 return (
                   <TouchableOpacity
