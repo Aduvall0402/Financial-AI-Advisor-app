@@ -2388,13 +2388,20 @@ export default function App() {
     const selEndDate = new Date(selStart + 'T00:00:00'); selEndDate.setDate(selEndDate.getDate() + freqDays); selEndDate.setHours(0,0,0,0);
     const selEnd = _localFmt(selEndDate);
 
-    // 1. Budget Adherence (0-70) — always based on current period (not selected past period)
+    // 1. Budget Adherence (0-70) — based on the last COMPLETED pay period
+    // Using the in-progress period gives 70/70 whenever a new period starts with no spend,
+    // which is misleading. The last completed period is the meaningful data point.
     let budgetAdherenceScore = 35;
     let budgetAdherencePct = null;
-    if (budgets.length > 0 && totalBudget > 0) {
+    let scoreBasedOnPeriod = periodStart; // for display
+    if (budgets.length > 0 && totalBudget > 0 && payPeriodOptions.length > 1) {
+      const lastStart = payPeriodOptions[1].startStr;
+      const lastEndDate = new Date(lastStart + 'T00:00:00'); lastEndDate.setDate(lastEndDate.getDate() + freqDays); lastEndDate.setHours(0,0,0,0);
+      const lastEnd = _localFmt(lastEndDate);
+      scoreBasedOnPeriod = lastStart;
       const catScores = budgets.map(b => {
         const catSpent = transactions
-          .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= periodStart && getEffectiveCategory(tx) === b.category)
+          .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= lastStart && (tx.transaction_date||'') < lastEnd && getEffectiveCategory(tx) === b.category)
           .reduce((s, tx) => s + parseFloat(tx.amount||0), 0);
         const lim = parseFloat(b.monthly_limit || 0);
         if (lim <= 0) return 1.0;
@@ -2405,7 +2412,10 @@ export default function App() {
       });
       const avgScore = catScores.reduce((a, b) => a + b, 0) / catScores.length;
       budgetAdherenceScore = Math.round(avgScore * 70);
-      budgetAdherencePct = Math.round((periodBudgetedSpend / totalBudget) * 100);
+      const lastBudgetedSpend = transactions
+        .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= lastStart && (tx.transaction_date||'') < lastEnd && budgetedCats.has(getEffectiveCategory(tx)))
+        .reduce((s, tx) => s + parseFloat(tx.amount||0), 0);
+      budgetAdherencePct = Math.round((lastBudgetedSpend / totalBudget) * 100);
     }
 
     // 2. Budget Trend (0-30) — consistency across past completed pay periods (6-week rolling window)
@@ -2441,10 +2451,9 @@ export default function App() {
     }
 
     const healthScore = Math.min(100, Math.max(0, budgetAdherenceScore + trendScore));
-    // Require actual spend data and history to reach Excellent
-    const noSpendYet = budgets.length > 0 && periodBudgetedSpend === 0;
-    const scoreColor = noSpendYet ? C.textMuted : healthScore >= 90 ? C.green : healthScore >= 75 ? C.accent : healthScore >= 55 ? C.amber : C.red;
-    const scoreLabel = noSpendYet ? 'No Data Yet' : healthScore >= 90 ? 'Excellent' : healthScore >= 75 ? 'Good' : healthScore >= 55 ? 'Fair' : 'Needs Attention';
+    const noHistory = budgets.length > 0 && payPeriodOptions.length <= 1;
+    const scoreColor = noHistory ? C.textMuted : healthScore >= 90 ? C.green : healthScore >= 75 ? C.accent : healthScore >= 55 ? C.amber : C.red;
+    const scoreLabel = noHistory ? 'No History Yet' : healthScore >= 90 ? 'Excellent' : healthScore >= 75 ? 'Good' : healthScore >= 55 ? 'Fair' : 'Needs Attention';
 
     // ── SVG Gauge ──────────────────────────────────────
     const gaugeSize = 170;
@@ -2466,15 +2475,18 @@ export default function App() {
     const getTip = (key) => {
       if (key === 'budget') {
         if (!budgets.length) return { title: 'Set up budgets', body: 'Budget Adherence is worth 70 points but requires budgets. Go to the Budget tab to create some.' };
+        if (payPeriodOptions.length <= 1) return { title: 'No completed periods yet', body: 'Complete a full pay period so we can evaluate your budget performance.' };
+        const tipEndDate = new Date(scoreBasedOnPeriod + 'T00:00:00'); tipEndDate.setDate(tipEndDate.getDate() + freqDays); tipEndDate.setHours(0,0,0,0);
+        const tipEnd = _localFmt(tipEndDate);
         const overBudgets = budgets.map(b => {
-          const sp = transactions.filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= periodStart && getEffectiveCategory(tx) === b.category).reduce((s,tx)=>s+parseFloat(tx.amount||0),0);
+          const sp = transactions.filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= scoreBasedOnPeriod && (tx.transaction_date||'') < tipEnd && getEffectiveCategory(tx) === b.category).reduce((s,tx)=>s+parseFloat(tx.amount||0),0);
           return { label: PLAID_CATEGORIES.find(c=>c.key===b.category)?.label||b.category, over: sp - parseFloat(b.monthly_limit||0) };
         }).filter(b => b.over > 0).sort((a,b)=>b.over-a.over);
         if (overBudgets.length > 0) {
           const list = overBudgets.map(b => `${b.label} ($${fmtMoney(b.over)} over)`).join(', ');
-          return { title: `${overBudgets.length} budget${overBudgets.length > 1 ? 's' : ''} over limit`, body: `You're over on: ${list}. Cutting back on the highest overage has the most impact.` };
+          return { title: `${overBudgets.length} budget${overBudgets.length > 1 ? 's' : ''} over last period`, body: `Last period you went over on: ${list}. Cutting back this period will improve your score.` };
         }
-        return { title: 'On track this period', body: `You've used ${budgetAdherencePct}% of your budget. Stay under 100% to keep full points.` };
+        return { title: 'Last period on track', body: `You used ${budgetAdherencePct}% of your budget last period. Keep it under 100% to maintain full points.` };
       }
       if (key === 'trend') {
         if (!budgets.length) return { title: 'Set up budgets', body: 'Budget Trend requires budgets to track. Go to the Budget tab to create some.' };
@@ -2556,7 +2568,7 @@ export default function App() {
         <View style={{ backgroundColor: C.surface, borderRadius: 22, padding: 20, marginBottom: 14, borderWidth: 1, borderColor: C.border }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <Text style={{ color: C.textSub, fontSize: 11, fontWeight: '700', letterSpacing: 1 }}>FINANCIAL HEALTH SCORE</Text>
-            <Text style={{ color: C.textMuted, fontSize: 10 }}>{fmtPeriodRange(periodStart, userPayday?.frequency || 'biweekly')}</Text>
+            <Text style={{ color: C.textMuted, fontSize: 10 }}>Last period: {fmtPeriodRange(scoreBasedOnPeriod, userPayday?.frequency || 'biweekly')}</Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Svg width={gaugeSize} height={gaugeSize}>
