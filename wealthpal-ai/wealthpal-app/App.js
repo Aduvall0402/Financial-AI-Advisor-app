@@ -2305,20 +2305,22 @@ export default function App() {
                 </TouchableOpacity>
               ) : null;
             })()}
-            <TouchableOpacity
-              style={[s.quickCard, { borderColor: C.accent }]}
-              onPress={() => { setPaydayNextDate(userPayday?.nextDate ?? ''); setPaydayFreq(userPayday?.frequency ?? 'biweekly'); setPaydayModalVisible(true); }}
-              activeOpacity={0.8}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                <Icon char="📅" color={C.accent} size={40} radius={12} />
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>{userPayday ? 'Edit Payday' : 'Set Your Payday'}</Text>
-                  <Text style={{ color: C.textSub, fontSize: 12 }}>{userPayday ? `${userPayday.frequency === 'biweekly' ? 'Every 2 wks' : userPayday.frequency} · next: ${userPayday.nextDate}` : 'Tell us when you get paid so paycycle budgets work automatically.'}</Text>
+            {!userPayday && (
+              <TouchableOpacity
+                style={[s.quickCard, { borderColor: C.accent }]}
+                onPress={() => { setPaydayNextDate(''); setPaydayFreq('biweekly'); setPaydayModalVisible(true); }}
+                activeOpacity={0.8}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                  <Icon char="📅" color={C.accent} size={40} radius={12} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 2 }}>Set Your Payday</Text>
+                    <Text style={{ color: C.textSub, fontSize: 12 }}>Tell us when you get paid so paycycle budgets work automatically.</Text>
+                  </View>
+                  <Text style={{ color: C.accent, fontSize: 20 }}>›</Text>
                 </View>
-                <Text style={{ color: C.accent, fontSize: 20 }}>›</Text>
-              </View>
-            </TouchableOpacity>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               style={[s.quickCard, { borderColor: C.accent }]}
               onPress={() => setActiveTab('chat')}
