@@ -2433,7 +2433,7 @@ export default function App() {
       trendPeriodsTotal = adherences.length;
       trendPeriodsUnder = adherences.filter(a => a >= 1.0).length;
       if (trendPeriodsTotal === 0) {
-        trendScore = 15; // neutral — no completed periods within window yet
+        trendScore = 0; // no history = no trend points yet
       } else {
         const avg = adherences.reduce((a, b) => a + b, 0) / trendPeriodsTotal;
         trendScore = Math.round(avg * 30);
@@ -2441,8 +2441,10 @@ export default function App() {
     }
 
     const healthScore = Math.min(100, Math.max(0, budgetAdherenceScore + trendScore));
-    const scoreColor = healthScore >= 85 ? C.green : healthScore >= 70 ? C.accent : healthScore >= 50 ? C.amber : C.red;
-    const scoreLabel = healthScore >= 85 ? 'Excellent' : healthScore >= 70 ? 'Good' : healthScore >= 50 ? 'Fair' : 'Needs Attention';
+    // Require actual spend data and history to reach Excellent
+    const noSpendYet = budgets.length > 0 && periodBudgetedSpend === 0;
+    const scoreColor = noSpendYet ? C.textMuted : healthScore >= 90 ? C.green : healthScore >= 75 ? C.accent : healthScore >= 55 ? C.amber : C.red;
+    const scoreLabel = noSpendYet ? 'No Data Yet' : healthScore >= 90 ? 'Excellent' : healthScore >= 75 ? 'Good' : healthScore >= 55 ? 'Fair' : 'Needs Attention';
 
     // ── SVG Gauge ──────────────────────────────────────
     const gaugeSize = 170;
@@ -2552,7 +2554,10 @@ export default function App() {
 
         {/* ── Score card ── */}
         <View style={{ backgroundColor: C.surface, borderRadius: 22, padding: 20, marginBottom: 14, borderWidth: 1, borderColor: C.border }}>
-          <Text style={{ color: C.textSub, fontSize: 11, fontWeight: '700', letterSpacing: 1, marginBottom: 12 }}>FINANCIAL HEALTH SCORE</Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <Text style={{ color: C.textSub, fontSize: 11, fontWeight: '700', letterSpacing: 1 }}>FINANCIAL HEALTH SCORE</Text>
+            <Text style={{ color: C.textMuted, fontSize: 10 }}>{fmtPeriodRange(periodStart, userPayday?.frequency || 'biweekly')}</Text>
+          </View>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Svg width={gaugeSize} height={gaugeSize}>
               <Circle cx={cx} cy={cy} r={r} fill="none" stroke={C.border} strokeWidth={strokeW} strokeLinecap="round"
