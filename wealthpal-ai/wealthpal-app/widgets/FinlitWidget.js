@@ -18,7 +18,7 @@ const BAR_BG  = '#2a4a6e';
 function BudgetCol({ label, spent, limit, pct, colW }) {
   const safePct  = isNaN(pct) || !isFinite(pct) ? 0 : pct;
   const over     = safePct >= 100;
-  const barColor = over ? RED : safePct >= 80 ? AMBER : ACCENT;
+  const barColor = safePct >= 100 ? RED : safePct >= 85 ? '#FF6B35' : safePct >= 60 ? AMBER : GREEN;
   const fillW    = Math.max(2, Math.min(colW - 2, Math.round(safePct / 100 * colW)));
   const emptyW   = colW - fillW;
 

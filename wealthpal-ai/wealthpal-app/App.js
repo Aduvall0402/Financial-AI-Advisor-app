@@ -2390,7 +2390,9 @@ export default function App() {
 
     // ── Selected pay period (drives both chart and categories) ──────────────
     const selectedPeriodOption = payPeriodOptions[Math.min(insightsPeriodOffset, payPeriodOptions.length - 1)];
-    const selStart = selectedPeriodOption.startStr;
+    // For current period (offset 0) use the fallback-corrected periodStart so the category
+    // section never shows empty when nextDate is stored as today.
+    const selStart = insightsPeriodOffset === 0 ? periodStart : selectedPeriodOption.startStr;
     const selEndDate = new Date(selStart + 'T00:00:00'); selEndDate.setDate(selEndDate.getDate() + freqDays); selEndDate.setHours(0,0,0,0);
     const selEnd = _localFmt(selEndDate);
 
@@ -2470,13 +2472,15 @@ export default function App() {
     const getTip = (key) => {
       if (key === 'budget') {
         if (!budgets.length) return { title: 'Set up budgets', body: 'Budget Adherence is worth 70 points but requires budgets. Go to the Budget tab to create some.' };
-        const overBudget = budgets.map(b => {
+        const overBudgets = budgets.map(b => {
           const sp = transactions.filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= periodStart && getEffectiveCategory(tx) === b.category).reduce((s,tx)=>s+parseFloat(tx.amount||0),0);
           return { label: PLAID_CATEGORIES.find(c=>c.key===b.category)?.label||b.category, over: sp - parseFloat(b.monthly_limit||0) };
-        }).filter(b => b.over > 0).sort((a,b)=>b.over-a.over)[0];
-        return overBudget
-          ? { title: `Overspending on ${overBudget.label}`, body: `You're $${fmtMoney(overBudget.over)} over your ${overBudget.label} budget this period. Cutting back here has the most impact on your score.` }
-          : { title: 'On track this period', body: `You've used ${budgetAdherencePct}% of your budget. Stay under 100% to keep full points.` };
+        }).filter(b => b.over > 0).sort((a,b)=>b.over-a.over);
+        if (overBudgets.length > 0) {
+          const list = overBudgets.map(b => `${b.label} ($${fmtMoney(b.over)} over)`).join(', ');
+          return { title: `${overBudgets.length} budget${overBudgets.length > 1 ? 's' : ''} over limit`, body: `You're over on: ${list}. Cutting back on the highest overage has the most impact.` };
+        }
+        return { title: 'On track this period', body: `You've used ${budgetAdherencePct}% of your budget. Stay under 100% to keep full points.` };
       }
       if (key === 'trend') {
         if (!budgets.length) return { title: 'Set up budgets', body: 'Budget Trend requires budgets to track. Go to the Budget tab to create some.' };
@@ -2721,7 +2725,7 @@ export default function App() {
               const budgetLimit = budgetForCat ? parseFloat(budgetForCat.monthly_limit || 0) : 0;
               const pctOfBudget = budgetLimit > 0 ? Math.min(100, Math.floor((amt / budgetLimit) * 100)) : null;
               const barColor = pctOfBudget != null
-                ? (amt >= budgetLimit ? C.red : pctOfBudget >= 75 ? '#1EDFD5' : CAT_COLORS[i % CAT_COLORS.length])
+                ? (pctOfBudget >= 100 ? C.red : pctOfBudget >= 85 ? '#FF6B35' : pctOfBudget >= 60 ? C.amber : C.green)
                 : CAT_COLORS[i % CAT_COLORS.length];
               return (
                 <TouchableOpacity key={cat} style={s.insightCard} activeOpacity={0.75}
@@ -3350,7 +3354,7 @@ export default function App() {
             const spent = getBudgetSpend2(b);
             const limit = parseFloat(b.monthly_limit || 0);
             const pct = limit > 0 ? Math.min(100, Math.floor((spent / limit) * 100)) : 0;
-            const barColor = spent >= limit ? C.red : pct >= 75 ? '#1EDFD5' : C.green;
+            const barColor = pct >= 100 ? C.red : pct >= 85 ? '#FF6B35' : pct >= 60 ? C.amber : C.green;
             const remaining = Math.max(0, limit - spent);
             const catInfo = PLAID_CATEGORIES.find(c => c.key === b.category);
             const catLabel = catInfo?.label || b.category;
@@ -4153,7 +4157,7 @@ export default function App() {
             const spent = getBudgetSpend(b);
             const limit = parseFloat(b.monthly_limit || 0);
             const pct = limit > 0 ? Math.min(100, Math.floor((spent / limit) * 100)) : 0;
-            const barColor = spent >= limit ? C.red : pct >= 75 ? '#1EDFD5' : C.green;
+            const barColor = pct >= 100 ? C.red : pct >= 85 ? '#FF6B35' : pct >= 60 ? C.amber : C.green;
             const remaining = Math.max(0, limit - spent);
             const catInfo = PLAID_CATEGORIES.find(c => c.key === b.category);
             const catLabel = catInfo?.label || b.category;
