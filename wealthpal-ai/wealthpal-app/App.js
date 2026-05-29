@@ -745,6 +745,9 @@ export default function App() {
         setUserId(m.savedUserId); userIdRef.current = m.savedUserId;
         AsyncStorage.setItem('widgetUserId', m.savedUserId);
         setScreen('dashboard');
+        // Trigger autosync check now that userIdRef is set (refs aren't reactive so
+        // the initial useCallback check fired before login completed)
+        setTimeout(checkAutoSync, 1500);
         setDashboardLoading(true);
         const uid = m.savedUserId;
         Promise.all([
@@ -876,6 +879,7 @@ export default function App() {
       const firstName = data.first_name || data.session.user.user_metadata?.full_name?.split(' ')[0] || email.split('@')[0];
       setUserId(uid); userIdRef.current = uid;
       AsyncStorage.setItem('widgetUserId', uid);
+      setTimeout(checkAutoSync, 1500);
       if (stayLoggedIn) {
         AsyncStorage.setItem('savedUserId', uid);
         if (token) AsyncStorage.setItem('savedToken', token);
@@ -934,6 +938,7 @@ export default function App() {
       if (refreshToken) AsyncStorage.setItem('savedRefreshToken', refreshToken);
       setUserId(uid); userIdRef.current = uid;
       AsyncStorage.setItem('widgetUserId', uid);
+      setTimeout(checkAutoSync, 1500);
       setDisplayName(firstName.trim());
       AsyncStorage.setItem('displayName', firstName.trim());
       setPassword(''); setFirstName(''); setLastName('');
