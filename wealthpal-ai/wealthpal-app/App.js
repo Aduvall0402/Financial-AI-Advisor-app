@@ -2399,16 +2399,20 @@ export default function App() {
       budgetAdherencePct = Math.round((periodBudgetedSpend / totalBudget) * 100);
     }
 
-    // 2. Budget Trend (0-30) — consistency across past completed pay periods
+    // 2. Budget Trend (0-30) — consistency across past completed pay periods (6-week rolling window)
     // Each period earns min(1, budget/spent): full credit if under, partial if over
+    // Periods older than 42 days fall off and no longer affect the score
     let trendScore = 0;
     let trendPeriodsUnder = 0;
     let trendPeriodsTotal = 0;
     if (budgets.length > 0 && totalBudget > 0) {
       const dateFmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 42); cutoff.setHours(0,0,0,0);
+      const cutoffStr = dateFmt(cutoff);
       const adherences = [];
       for (let i = 1; i < payPeriodOptions.length; i++) {
         const pStart = payPeriodOptions[i].startStr;
+        if (pStart < cutoffStr) break; // period started more than 6 weeks ago — drop off
         const pEndDate = new Date(pStart + 'T00:00:00'); pEndDate.setDate(pEndDate.getDate() + freqDays); pEndDate.setHours(0,0,0,0);
         const pEnd = dateFmt(pEndDate);
         const spend = transactions
@@ -2420,7 +2424,7 @@ export default function App() {
       trendPeriodsTotal = adherences.length;
       trendPeriodsUnder = adherences.filter(a => a >= 1.0).length;
       if (trendPeriodsTotal === 0) {
-        trendScore = 15; // neutral — no completed periods yet
+        trendScore = 15; // neutral — no completed periods within window yet
       } else {
         const avg = adherences.reduce((a, b) => a + b, 0) / trendPeriodsTotal;
         trendScore = Math.round(avg * 30);
