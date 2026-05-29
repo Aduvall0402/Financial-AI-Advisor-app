@@ -2359,10 +2359,20 @@ export default function App() {
 
     // ── Score components ────────────────────────────────
     const rangeDays = { '7d': 7, '30d': 30, '3m': 90, '6m': 180, 'all': 90 }[insightsRange] || 30;
-    const periodStart = getPeriodStart('paycycle');
     const freqDays = userPayday?.frequency === 'weekly' ? 7 : userPayday?.frequency === 'biweekly' ? 14 : 30;
     const budgetedCats = new Set(budgets.map(b => b.category));
     const totalBudget = budgets.reduce((s, b) => s + parseFloat(b.monthly_limit || 0), 0);
+
+    // If the computed period start has no spending transactions (e.g. nextDate stored as today),
+    // fall back to the previous period so the UI always shows real data.
+    const _localFmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const _rawStart = getPeriodStart('paycycle');
+    const _hasTxsInPeriod = transactions.some(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= _rawStart);
+    const periodStart = (() => {
+      if (_hasTxsInPeriod) return _rawStart;
+      const prev = new Date(_rawStart + 'T00:00:00'); prev.setDate(prev.getDate() - freqDays); prev.setHours(0,0,0,0);
+      return _localFmt(prev);
+    })();
 
     // Spending in budgeted categories this pay period
     const periodBudgetedSpend = transactions
