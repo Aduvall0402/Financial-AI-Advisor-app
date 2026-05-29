@@ -452,6 +452,8 @@ export default function App() {
   const [paydayModalVisible, setPaydayModalVisible] = useState(false);
   const [paydayNextDate, setPaydayNextDate] = useState('');
   const [paydayFreq, setPaydayFreq] = useState('biweekly');
+  const [paydayDow, setPaydayDow] = useState(5); // 0=Sun…6=Sat, default Friday
+  const [paydayShifted, setPaydayShifted] = useState(false); // biweekly alternate-week toggle
   const [pendingVerifyEmail, setPendingVerifyEmail] = useState('');
   // Post-sync transaction review
   const [postSyncTxs, setPostSyncTxs] = useState([]);
@@ -2308,7 +2310,7 @@ export default function App() {
             {!userPayday && (
               <TouchableOpacity
                 style={[s.quickCard, { borderColor: C.accent }]}
-                onPress={() => { setPaydayNextDate(''); setPaydayFreq('biweekly'); setPaydayModalVisible(true); }}
+                onPress={() => { const d=userPayday?.nextDate?new Date(userPayday.nextDate+'T00:00:00').getDay():5; setPaydayDow(d); setPaydayFreq(userPayday?.frequency??'biweekly'); setPaydayShifted(false); setPaydayModalVisible(true); }}
                 activeOpacity={0.8}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
@@ -3309,7 +3311,7 @@ export default function App() {
         </View>
         <TouchableOpacity
           style={{ flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.surface, borderRadius: 14, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: C.accent + '55' }}
-          onPress={() => { setPaydayNextDate(userPayday?.nextDate ?? ''); setPaydayFreq(userPayday?.frequency ?? 'biweekly'); setPaydayModalVisible(true); }}
+          onPress={() => { const d=userPayday?.nextDate?new Date(userPayday.nextDate+'T00:00:00').getDay():5; setPaydayDow(d); setPaydayFreq(userPayday?.frequency??'biweekly'); setPaydayShifted(false); setPaydayModalVisible(true); }}
         >
           <View style={{ flex: 1 }}>
             <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 3 }}>{userPayday ? 'Edit Pay Period' : 'Set Your Pay Period'}</Text>
@@ -4095,7 +4097,7 @@ export default function App() {
         </View>
         <TouchableOpacity
           style={{ flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.surface, borderRadius: 14, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: C.accent + '55' }}
-          onPress={() => { setPaydayNextDate(userPayday?.nextDate ?? ''); setPaydayFreq(userPayday?.frequency ?? 'biweekly'); setPaydayModalVisible(true); }}
+          onPress={() => { const d=userPayday?.nextDate?new Date(userPayday.nextDate+'T00:00:00').getDay():5; setPaydayDow(d); setPaydayFreq(userPayday?.frequency??'biweekly'); setPaydayShifted(false); setPaydayModalVisible(true); }}
         >
           <View style={{ flex: 1 }}>
             <Text style={{ color: C.text, fontSize: 14, fontWeight: '700', marginBottom: 3 }}>{userPayday ? 'Edit Pay Period' : 'Set Your Pay Period'}</Text>
@@ -5691,60 +5693,66 @@ export default function App() {
         <View style={s.modalOverlay}>
           <View style={s.modalCard}>
             <Text style={s.modalTitle}>Set Your Payday</Text>
-            <Text style={{ color: C.textSub, fontSize: 13, marginBottom: 18 }}>Enter the date you most recently got paid. Finlit uses this to know exactly when your pay cycle starts.</Text>
-            <Text style={s.label}>Most Recent Payday</Text>
-            <TextInput
-              style={[s.input, { marginBottom: 18 }]}
-              placeholder="YYYY-MM-DD  (e.g. when you last got paid)"
-              placeholderTextColor={C.textMuted}
-              value={paydayNextDate}
-              onChangeText={setPaydayNextDate}
-              keyboardType="numeric"
-              maxLength={10}
-            />
+            <Text style={{ color: C.textSub, fontSize: 13, marginBottom: 18 }}>Pick the day you get paid and how often. Finlit handles the rest.</Text>
+            <Text style={s.label}>Pay Day</Text>
+            <View style={{ flexDirection: 'row', gap: 6, marginBottom: 18 }}>
+              {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((label, dow) => (
+                <TouchableOpacity key={dow}
+                  style={{ flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center', backgroundColor: paydayDow === dow ? C.accent : C.surface, borderWidth: 1, borderColor: paydayDow === dow ? C.accent : C.border }}
+                  onPress={() => { setPaydayDow(dow); setPaydayShifted(false); }}
+                >
+                  <Text style={{ color: paydayDow === dow ? '#fff' : C.textSub, fontWeight: '600', fontSize: 12 }}>{label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
             <Text style={s.label}>Pay Frequency</Text>
             <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
               {[['weekly','Weekly'],['biweekly','Every 2 Wks'],['monthly','Monthly']].map(([k, l]) => (
                 <TouchableOpacity key={k}
                   style={{ flex: 1, paddingVertical: 10, borderRadius: 12, alignItems: 'center', backgroundColor: paydayFreq === k ? C.accent : C.surface, borderWidth: 1, borderColor: paydayFreq === k ? C.accent : C.border }}
-                  onPress={() => setPaydayFreq(k)}
+                  onPress={() => { setPaydayFreq(k); setPaydayShifted(false); }}
                 >
                   <Text style={{ color: paydayFreq === k ? '#fff' : C.textSub, fontWeight: '600', fontSize: 12 }}>{l}</Text>
                 </TouchableOpacity>
               ))}
             </View>
             {(() => {
-              if (!/^\d{4}-\d{2}-\d{2}$/.test(paydayNextDate)) return null;
-              try {
-                const freqD = paydayFreq === 'weekly' ? 7 : paydayFreq === 'biweekly' ? 14 : 30;
-                // The entered date IS the period start — no walk needed for a past date
-                const anchor = new Date(paydayNextDate + 'T00:00:00'); anchor.setHours(0,0,0,0);
-                const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-                const fmt = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                const endDate = new Date(anchor); endDate.setDate(endDate.getDate() + freqD - 1); endDate.setHours(0,0,0,0);
-                const nextStart = new Date(anchor); nextStart.setDate(nextStart.getDate() + freqD); nextStart.setHours(0,0,0,0);
-                return (
-                  <View style={{ backgroundColor: C.accent+'18', borderRadius: 10, padding: 10, marginBottom: 16, borderWidth: 1, borderColor: C.accent+'44' }}>
-                    <Text style={{ color: C.accent, fontSize: 12, fontWeight: '700', marginBottom: 2 }}>Period preview</Text>
-                    <Text style={{ color: C.textSub, fontSize: 12 }}>This period: {fmt(anchor)} – {fmt(endDate)}</Text>
-                    <Text style={{ color: C.textSub, fontSize: 12 }}>Next period: {fmt(nextStart)} onwards</Text>
-                    <Text style={{ color: C.textMuted, fontSize: 11, marginTop: 3 }}>Repeats every {DAYS[anchor.getDay()]} · every {freqD === 7 ? 'week' : freqD === 14 ? '2 weeks' : 'month'}</Text>
+              const freqD = paydayFreq === 'weekly' ? 7 : paydayFreq === 'biweekly' ? 14 : 30;
+              const today = new Date(); today.setHours(0,0,0,0);
+              const todayDow = today.getDay();
+              let daysBack = (todayDow - paydayDow + 7) % 7;
+              const anchor = new Date(today); anchor.setDate(today.getDate() - daysBack - (paydayShifted ? freqD : 0)); anchor.setHours(0,0,0,0);
+              const fmt = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+              const fmtStr = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+              const endDate = new Date(anchor); endDate.setDate(anchor.getDate() + freqD - 1); endDate.setHours(0,0,0,0);
+              const nextStart = new Date(anchor); nextStart.setDate(anchor.getDate() + freqD); nextStart.setHours(0,0,0,0);
+              const computedDateStr = fmtStr(anchor);
+              return (
+                <>
+                  <View style={{ backgroundColor: C.accent+'18', borderRadius: 10, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: C.accent+'44' }}>
+                    <Text style={{ color: C.accent, fontSize: 12, fontWeight: '700', marginBottom: 4 }}>Period preview</Text>
+                    <Text style={{ color: C.text, fontSize: 13, fontWeight: '600' }}>{fmt(anchor)} – {fmt(endDate)}</Text>
+                    <Text style={{ color: C.textSub, fontSize: 12, marginTop: 2 }}>Next period starts {fmt(nextStart)}</Text>
                   </View>
-                );
-              } catch { return null; }
+                  {paydayFreq !== 'monthly' && (
+                    <TouchableOpacity
+                      style={{ alignItems: 'center', marginBottom: 16, paddingVertical: 8 }}
+                      onPress={() => setPaydayShifted(s => !s)}
+                    >
+                      <Text style={{ color: C.accent, fontSize: 13 }}>Dates look off by a week? Tap to shift ↕</Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity style={s.btn} onPress={() => {
+                    const pd = { nextDate: computedDateStr, frequency: paydayFreq };
+                    setUserPayday(pd);
+                    AsyncStorage.setItem('userPayday', JSON.stringify(pd));
+                    setPaydayModalVisible(false);
+                  }}>
+                    <Text style={s.btnText}>Save Payday</Text>
+                  </TouchableOpacity>
+                </>
+              );
             })()}
-            <TouchableOpacity style={s.btn} onPress={() => {
-              if (!paydayNextDate || !/^\d{4}-\d{2}-\d{2}$/.test(paydayNextDate)) {
-                Alert.alert('Invalid Date', 'Enter your most recent payday in YYYY-MM-DD format (e.g. 2026-05-16).');
-                return;
-              }
-              const pd = { nextDate: paydayNextDate, frequency: paydayFreq };
-              setUserPayday(pd);
-              AsyncStorage.setItem('userPayday', JSON.stringify(pd));
-              setPaydayModalVisible(false);
-            }}>
-              <Text style={s.btnText}>Save Payday</Text>
-            </TouchableOpacity>
             {userPayday && (
               <TouchableOpacity style={s.linkRow} onPress={() => { setUserPayday(null); AsyncStorage.removeItem('userPayday'); setPaydayModalVisible(false); }}>
                 <Text style={[s.linkText, { color: C.red }]}>Clear Payday</Text>
