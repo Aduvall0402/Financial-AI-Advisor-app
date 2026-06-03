@@ -1121,14 +1121,18 @@ export default function App() {
         const txRes = await apiCall(`/api/transactions/${userIdRef.current}`);
         const txData = txRes.ok ? await txRes.json() : {};
         const allTxs = txData.transactions || [];
-        // Only show review for transactions newly inserted THIS sync
+        // Only review transactions from last 30 days — skip old historical re-syncs
+        const thirtyDaysAgo = new Date(); thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        const cutoffStr = `${thirtyDaysAgo.getFullYear()}-${String(thirtyDaysAgo.getMonth()+1).padStart(2,'0')}-${String(thirtyDaysAgo.getDate()).padStart(2,'0')}`;
         const newIds = new Set(data.newTxIds || []);
+        // Cap at 10 — never overwhelm with a long review queue
         const fresh = newIds.size > 0
           ? allTxs.filter(tx =>
               newIds.has(tx.id) &&
               !isIncomeTx(tx) &&
-              !reviewedInSessionRef.current.has(tx.id)
-            )
+              !reviewedInSessionRef.current.has(tx.id) &&
+              (tx.transaction_date || '') >= cutoffStr
+            ).slice(0, 10)
           : [];
         if (fresh.length > 0) {
           setPostSyncTxs(fresh);
