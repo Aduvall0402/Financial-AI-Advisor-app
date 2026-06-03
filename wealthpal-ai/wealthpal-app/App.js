@@ -1392,8 +1392,7 @@ export default function App() {
           setPlaidStatus(''); setPlaidLoading(false);
         },
       });
-    } catch (err) { setPlaidError(err.message); }
-    finally { setPlaidLoading(false); }
+    } catch (err) { setPlaidError(err?.message || 'Connection failed'); setPlaidLoading(false); }
   };
 
   // ── Chat ────────────────────────────────────────────
@@ -2491,21 +2490,23 @@ export default function App() {
     const selEndDate = new Date(selStart + 'T00:00:00'); selEndDate.setDate(selEndDate.getDate() + freqDays); selEndDate.setHours(0,0,0,0);
     const selEnd = _localFmt(selEndDate);
 
-    // Rolling window helpers — score uses pure rolling days, not configured period dates.
-    // This means the score is always accurate regardless of payday settings.
     const today = new Date(); today.setHours(0,0,0,0);
-    const rollEnd = _localFmt(today); // exclusive upper bound = today midnight
-    const rollStart = new Date(today); rollStart.setDate(today.getDate() - freqDays);
-    const rollStartStr = _localFmt(rollStart);
-    const scoreBasedOnPeriod = rollStartStr; // for display label
 
-    // 1. Budget Adherence (0-70) — last freqDays of spending vs budget limits
+    // Score is based entirely on COMPLETED pay periods — no current in-progress period.
+    // payPeriodOptions[1] = the last fully completed period.
+    const lastCompletedOption = payPeriodOptions.length > 1 ? payPeriodOptions[1] : null;
+    const lastStart = lastCompletedOption?.startStr || null;
+    const lastEndDate = lastStart ? (() => { const d = new Date(lastStart + 'T00:00:00'); d.setDate(d.getDate() + freqDays); d.setHours(0,0,0,0); return d; })() : null;
+    const lastEnd = lastEndDate ? _localFmt(lastEndDate) : null;
+    const scoreBasedOnPeriod = lastStart; // for display label
+
+    // 1. Budget Adherence (0-70) — last COMPLETED pay period only
     let budgetAdherenceScore = 35;
     let budgetAdherencePct = null;
-    if (budgets.length > 0 && totalBudget > 0) {
+    if (budgets.length > 0 && totalBudget > 0 && lastStart && lastEnd) {
       const catScores = budgets.map(b => {
         const catSpent = transactions
-          .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= rollStartStr && (tx.transaction_date||'') < rollEnd && getEffectiveCategory(tx) === b.category)
+          .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= lastStart && (tx.transaction_date||'') < lastEnd && getEffectiveCategory(tx) === b.category)
           .reduce((s, tx) => s + parseFloat(tx.amount||0), 0);
         const lim = parseFloat(b.monthly_limit || 0);
         if (lim <= 0) return 1.0;
@@ -2516,25 +2517,23 @@ export default function App() {
       });
       const avgScore = catScores.reduce((a, b) => a + b, 0) / catScores.length;
       budgetAdherenceScore = Math.round(avgScore * 70);
-      const rollingBudgetedSpend = transactions
-        .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= rollStartStr && (tx.transaction_date||'') < rollEnd && budgetedCats.has(getEffectiveCategory(tx)))
+      const lastBudgetedSpend = transactions
+        .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= lastStart && (tx.transaction_date||'') < lastEnd && budgetedCats.has(getEffectiveCategory(tx)))
         .reduce((s, tx) => s + parseFloat(tx.amount||0), 0);
-      budgetAdherencePct = Math.round((rollingBudgetedSpend / totalBudget) * 100);
+      budgetAdherencePct = Math.round((lastBudgetedSpend / totalBudget) * 100);
     }
 
-    // 2. Budget Trend (0-30) — rolling windows going back up to 42 days (3 biweekly periods)
-    // Window 1 = freqDays–2*freqDays ago, Window 2 = 2*freqDays–3*freqDays ago, etc.
+    // 2. Budget Trend (0-30) — payPeriodOptions[2+] (periods before the last completed one)
     let trendScore = 0;
     let trendPeriodsUnder = 0;
     let trendPeriodsTotal = 0;
     if (budgets.length > 0 && totalBudget > 0) {
       const adherences = [];
-      // Start at w=2: window 1 is the budget adherence window, trend looks at older windows
-      for (let w = 2; w * freqDays <= 42 + freqDays; w++) {
-        const wEnd = new Date(today); wEnd.setDate(today.getDate() - (w - 1) * freqDays);
-        const wStart = new Date(today); wStart.setDate(today.getDate() - w * freqDays);
-        const wEndStr = _localFmt(wEnd);
-        const wStartStr = _localFmt(wStart);
+      // i=1 is used for budget adherence; trend starts at i=2 (older completed periods)
+      for (let i = 2; i < payPeriodOptions.length; i++) {
+        const wStartStr = payPeriodOptions[i].startStr;
+        const wEndDate = new Date(wStartStr + 'T00:00:00'); wEndDate.setDate(wEndDate.getDate() + freqDays); wEndDate.setHours(0,0,0,0);
+        const wEndStr = _localFmt(wEndDate);
         const spend = transactions
           .filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= wStartStr && (tx.transaction_date||'') < wEndStr && budgetedCats.has(getEffectiveCategory(tx)))
           .reduce((s, tx) => s + parseFloat(tx.amount||0), 0);
@@ -2546,7 +2545,7 @@ export default function App() {
       if (trendPeriodsTotal === 0) {
         trendScore = 0;
       } else {
-        const maxWindows = Math.floor(42 / freqDays); // 3 for biweekly, 6 for weekly
+        const maxWindows = Math.max(1, payPeriodOptions.length - 2); // periods available beyond the budget adherence one
         const qualityAvg = adherences.reduce((a, b) => a + b, 0) / trendPeriodsTotal;
         const quantityFactor = Math.min(1, trendPeriodsTotal / maxWindows);
         trendScore = Math.round(qualityAvg * quantityFactor * 30);
@@ -2662,7 +2661,7 @@ export default function App() {
         <View style={{ backgroundColor: C.surface, borderRadius: 22, padding: 20, marginBottom: 14, borderWidth: 1, borderColor: C.border }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <Text style={{ color: C.textSub, fontSize: 11, fontWeight: '700', letterSpacing: 1 }}>FINANCIAL HEALTH SCORE</Text>
-            <Text style={{ color: C.textMuted, fontSize: 10 }}>{(() => { const fD = d => d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); const end = new Date(today); end.setDate(today.getDate()-1); return `Last ${freqDays}d · ${fD(new Date(rollStartStr+'T00:00:00'))} – ${fD(end)}`; })()}</Text>
+            <Text style={{ color: C.textMuted, fontSize: 10 }}>{lastStart && lastEnd ? (() => { const fD = d => d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); return `Last period · ${fD(new Date(lastStart+'T00:00:00'))} – ${fD(new Date(new Date(lastEnd+'T00:00:00').getTime()-86400000))}`; })() : 'No completed periods'}</Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Svg width={gaugeSize} height={gaugeSize}>
@@ -2908,65 +2907,44 @@ export default function App() {
         ) : (
           <>
             <Text style={s.sectionTitle}>Transactions</Text>
-            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-              <TouchableOpacity style={[s.syncBtn, { backgroundColor: C.accent + '22', borderColor: C.accent }]}
-                onPress={() => { const d=new Date(); setAddTxDate(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`); setAddTxMerchant(''); setAddTxAmount(''); setAddTxCategory('GENERAL_MERCHANDISE'); setAddTxVisible(true); }}>
-                <Text style={[s.syncText, { color: C.accent }]}>+ Add</Text>
-              </TouchableOpacity>
+            <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
               {bulkSelectMode ? (
                 <>
-                  <TouchableOpacity style={[s.syncBtn, { backgroundColor: C.accent + '22', borderColor: C.accent }]} onPress={exportCSV}>
-                    <Text style={[s.syncText, { color: C.accent }]}>Export {selectedTxIds.size > 0 ? `(${selectedTxIds.size})` : 'All'}</Text>
-                  </TouchableOpacity>
                   {selectedTxIds.size > 0 && (
-                    <TouchableOpacity
-                      style={[s.syncBtn, { backgroundColor: C.red + '22', borderColor: C.red }]}
-                      onPress={() => {
-                        Alert.alert(
-                          'Delete Transactions',
-                          `Delete ${selectedTxIds.size} transaction${selectedTxIds.size !== 1 ? 's' : ''}? This cannot be undone.`,
-                          [
-                            { text: 'Cancel', style: 'cancel' },
-                            {
-                              text: 'Delete', style: 'destructive',
-                              onPress: async () => {
-                                const ids = [...selectedTxIds];
-                                try {
-                                  await apiCall(`/api/transactions`, {
-                                    method: 'DELETE',
-                                    body: JSON.stringify({ ids }),
-                                  });
-                                } catch {}
-                                setTransactions(prev => prev.filter(tx => !ids.includes(tx.id)));
-                                setSelectedTxIds(new Set());
-                                setBulkSelectMode(false);
-                              },
-                            },
-                          ]
-                        );
-                      }}
-                    >
+                    <TouchableOpacity style={[s.syncBtn, { backgroundColor: C.red + '22', borderColor: C.red }]}
+                      onPress={() => Alert.alert('Delete', `Delete ${selectedTxIds.size} transaction${selectedTxIds.size !== 1 ? 's' : ''}?`,
+                        [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => {
+                          const ids = [...selectedTxIds];
+                          try { await apiCall(`/api/transactions`, { method: 'DELETE', body: JSON.stringify({ ids }) }); } catch {}
+                          setTransactions(prev => prev.filter(tx => !ids.includes(tx.id)));
+                          setSelectedTxIds(new Set()); setBulkSelectMode(false);
+                        }}])}>
                       <Text style={[s.syncText, { color: C.red }]}>Delete ({selectedTxIds.size})</Text>
                     </TouchableOpacity>
                   )}
+                  <TouchableOpacity style={[s.syncBtn, { backgroundColor: C.accent + '22', borderColor: C.accent }]} onPress={exportCSV}>
+                    <Text style={[s.syncText, { color: C.accent }]}>↓ CSV</Text>
+                  </TouchableOpacity>
                   <TouchableOpacity style={s.syncBtn} onPress={() => { setBulkSelectMode(false); setSelectedTxIds(new Set()); }}>
                     <Text style={s.syncText}>Done</Text>
                   </TouchableOpacity>
                 </>
               ) : (
                 <>
-                  <TouchableOpacity style={s.syncBtn} onPress={exportCSV}>
-                    <Text style={s.syncText}>↓ CSV</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={s.syncBtn} disabled={receiptScanLoading} onPress={() => Alert.alert('Scan Receipt', 'Choose a source', [
-                    { text: 'Camera', onPress: () => handleScanReceipt(true) },
-                    { text: 'Gallery', onPress: () => handleScanReceipt(false) },
-                    { text: 'Cancel', style: 'cancel' },
-                  ])}>
-                    {receiptScanLoading ? <ActivityIndicator size="small" color={C.accent} /> : <Text style={s.syncText}>Scan</Text>}
+                  <TouchableOpacity style={[s.syncBtn, { backgroundColor: C.accent + '22', borderColor: C.accent }]}
+                    onPress={() => { const d=new Date(); setAddTxDate(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`); setAddTxMerchant(''); setAddTxAmount(''); setAddTxCategory('GENERAL_MERCHANDISE'); setAddTxVisible(true); }}>
+                    <Text style={[s.syncText, { color: C.accent }]}>+ Add</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={s.syncBtn} onPress={() => setTxSearchActive(true)}>
-                    <Text style={s.syncText}>Search</Text>
+                    <Text style={s.syncText}>🔍</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={s.syncBtn} onPress={() => Alert.alert('More', '', [
+                    { text: 'Scan Receipt', onPress: () => Alert.alert('Scan Receipt', 'Choose a source', [{ text: 'Camera', onPress: () => handleScanReceipt(true) }, { text: 'Gallery', onPress: () => handleScanReceipt(false) }, { text: 'Cancel', style: 'cancel' }]) },
+                    { text: 'Export CSV', onPress: exportCSV },
+                    { text: 'Select Multiple', onPress: () => setBulkSelectMode(true) },
+                    { text: 'Cancel', style: 'cancel' },
+                  ])}>
+                    <Text style={s.syncText}>⋯</Text>
                   </TouchableOpacity>
                 </>
               )}
@@ -4383,11 +4361,11 @@ export default function App() {
         </View>
       )}
       {chatMessages.length <= 1 && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingHorizontal: 16, paddingBottom: 8 }} contentContainerStyle={{ gap: 8, paddingRight: 16 }}>
-          {['How am I doing this month?', 'Where should I cut spending?', 'Am I saving enough?', "What's my biggest expense?"].map(q => (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingHorizontal: 12, paddingVertical: 6 }} contentContainerStyle={{ gap: 6, alignItems: 'center' }}>
+          {['How am I doing?', 'Cut my spending', 'Am I saving enough?', 'Biggest expense?'].map(q => (
             <TouchableOpacity key={q} onPress={() => setChatInput(q)}
-              style={{ paddingHorizontal: 14, paddingVertical: 7, borderRadius: 16, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border }}>
-              <Text style={{ color: C.textSub, fontSize: 12 }}>{q}</Text>
+              style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border }}>
+              <Text style={{ color: C.textSub, fontSize: 11 }}>{q}</Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
