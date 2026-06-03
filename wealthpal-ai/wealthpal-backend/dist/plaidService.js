@@ -3,7 +3,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.plaidClient = void 0;
 exports.createLinkToken = createLinkToken;
 exports.exchangePublicToken = exchangePublicToken;
-exports.refreshTransactions = refreshTransactions;
 exports.getTransactions = getTransactions;
 exports.getAccounts = getAccounts;
 const plaid_1 = require("plaid");
@@ -50,18 +49,7 @@ async function exchangePublicToken(publicToken) {
         throw error;
     }
 }
-// Refresh transactions — triggers Plaid to pull latest data for the item
-async function refreshTransactions(accessToken) {
-    try {
-        await exports.plaidClient.transactionsRefresh({ access_token: accessToken });
-        console.log("transactionsRefresh called successfully");
-    }
-    catch (error) {
-        // Not fatal — log and continue
-        const detail = error?.response?.data || error?.message;
-        console.log("transactionsRefresh skipped:", JSON.stringify(detail));
-    }
-}
+// refreshTransactions removed — requires transactions_refresh product not available on this account
 // Fetch transactions via transactionsSync (cursor-based).
 // Pass initialCursor to fetch only transactions added since that cursor (incremental).
 // Omit initialCursor to fetch all historical transactions (full sync).

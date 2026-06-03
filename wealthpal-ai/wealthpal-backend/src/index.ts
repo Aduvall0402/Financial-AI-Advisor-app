@@ -212,8 +212,8 @@ app.post("/api/plaid/exchange-token", requireAuth, async (req: Request, res: Res
         }]);
       if (error) throw error;
     } else {
-      // Update the access token and item_id on the existing row
-      await supabase.from("accounts").update({ plaid_access_token: accessToken, plaid_account_id: itemId }).eq("id", matchedRow.id);
+      // Update access token + reset cursor — old cursor is invalid for new token
+      await supabase.from("accounts").update({ plaid_access_token: accessToken, plaid_account_id: itemId, plaid_sync_cursor: null }).eq("id", matchedRow.id);
     }
     res.json({ plaid_account_id: itemId, itemId, message: "Account connected" });
   } catch (error: any) {
@@ -318,11 +318,21 @@ app.post("/api/transactions/sync/:userId", requireAuth, selfOnly, async (req: Re
     for (const acct of accountData) {
       if (!acct.plaid_access_token) continue;
       try {
-        await plaidService.refreshTransactions(acct.plaid_access_token);
-        const { transactions, nextCursor } = await plaidService.getTransactions(
-          acct.plaid_access_token,
-          acct.plaid_sync_cursor || undefined
-        );
+        let syncCursor: string | undefined = acct.plaid_sync_cursor || undefined;
+        let result: { transactions: any[]; nextCursor: string | undefined };
+        try {
+          result = await plaidService.getTransactions(acct.plaid_access_token, syncCursor);
+        } catch (cursorErr: any) {
+          // Stale cursor (e.g. from a re-linked account) — reset and do a full sync
+          if (cursorErr?.message?.includes('cursor') || cursorErr?.message?.includes('INVALID_FIELD')) {
+            console.log(`Cursor invalid for account ${acct.id}, resetting to full sync`);
+            await supabase.from("accounts").update({ plaid_sync_cursor: null }).eq("id", acct.id);
+            result = await plaidService.getTransactions(acct.plaid_access_token, undefined);
+          } else {
+            throw cursorErr;
+          }
+        }
+        const { transactions, nextCursor } = result;
         totalTx += transactions.length;
         for (const tx of transactions) {
           // Insert only — never overwrite existing rows (preserves reviewed, category, etc.)

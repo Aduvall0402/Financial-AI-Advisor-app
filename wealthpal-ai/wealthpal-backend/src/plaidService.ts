@@ -46,17 +46,7 @@ export async function exchangePublicToken(publicToken: string) {
   }
 }
 
-// Refresh transactions — triggers Plaid to pull latest data for the item
-export async function refreshTransactions(accessToken: string) {
-  try {
-    await plaidClient.transactionsRefresh({ access_token: accessToken });
-    console.log("transactionsRefresh called successfully");
-  } catch (error: any) {
-    // Not fatal — log and continue
-    const detail = error?.response?.data || error?.message;
-    console.log("transactionsRefresh skipped:", JSON.stringify(detail));
-  }
-}
+// refreshTransactions removed — requires transactions_refresh product not available on this account
 
 // Fetch transactions via transactionsSync (cursor-based).
 // Pass initialCursor to fetch only transactions added since that cursor (incremental).

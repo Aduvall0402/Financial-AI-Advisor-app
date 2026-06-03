@@ -5,7 +5,6 @@ export declare function exchangePublicToken(publicToken: string): Promise<{
     accessToken: string;
     itemId: string;
 }>;
-export declare function refreshTransactions(accessToken: string): Promise<void>;
 export declare function getTransactions(accessToken: string, initialCursor?: string): Promise<{
     transactions: any[];
     nextCursor: string | undefined;
