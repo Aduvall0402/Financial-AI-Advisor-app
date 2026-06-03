@@ -2552,7 +2552,11 @@ export default function App() {
       }
     }
 
-    // healthScore, noHistory, scoreColor, scoreLabel defined below in coaching section
+    // ── Health Score = Trend only (completed periods only, no current period) ──
+    const healthScore = Math.min(100, Math.max(0, Math.round((trendScore / 30) * 100)));
+    const noHistory = budgets.length === 0 || payPeriodOptions.length <= 2;
+    const scoreColor = noHistory ? C.textMuted : healthScore >= 90 ? C.green : healthScore >= 75 ? C.accent : healthScore >= 55 ? C.amber : C.red;
+    const scoreLabel = noHistory ? 'No History Yet' : healthScore >= 90 ? 'Excellent' : healthScore >= 75 ? 'Good' : healthScore >= 55 ? 'Fair' : 'Needs Attention';
 
     // ── SVG Gauge ──────────────────────────────────────
     const gaugeSize = 170;
@@ -2565,13 +2569,6 @@ export default function App() {
     const sx = cx + r * Math.cos(toRad(startDeg)), sy = cy + r * Math.sin(toRad(startDeg));
     const ex = cx + r * Math.cos(toRad(endDeg)), ey = cy + r * Math.sin(toRad(endDeg));
     const largeArc = (healthScore / 100) * sweep > 180 ? 1 : 0;
-
-    // ── Health Score = Trend only (completed periods only, no current period) ──
-    // Score out of 100 = trendScore scaled from 30
-    const healthScore = Math.min(100, Math.max(0, Math.round((trendScore / 30) * 100)));
-    const noHistory = budgets.length === 0 || payPeriodOptions.length <= 2;
-    const scoreColor = noHistory ? C.textMuted : healthScore >= 90 ? C.green : healthScore >= 75 ? C.accent : healthScore >= 55 ? C.amber : C.red;
-    const scoreLabel = noHistory ? 'No History Yet' : healthScore >= 90 ? 'Excellent' : healthScore >= 75 ? 'Good' : healthScore >= 55 ? 'Fair' : 'Needs Attention';
 
     // ── Coaching tips (trend only) ──────────────────────
     const components = [
@@ -4349,17 +4346,17 @@ export default function App() {
           <Text style={{ color: C.textSub, fontSize: 13 }}>Finlit is thinking…</Text>
         </View>
       )}
+      {chatMessages.length <= 1 && (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 14, paddingTop: 8, paddingBottom: 4 }}>
+          {['How am I doing?', 'Cut my spending', 'Am I saving enough?', 'Biggest expense?'].map(q => (
+            <TouchableOpacity key={q} onPress={() => setChatInput(q)}
+              style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border }}>
+              <Text style={{ color: C.textSub, fontSize: 11 }}>{q}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
       <View style={s.chatBar}>
-        {chatMessages.length <= 1 && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ position: 'absolute', bottom: '100%', left: 0, right: 0, backgroundColor: C.bg, borderTopWidth: 1, borderTopColor: C.border, paddingHorizontal: 12, paddingVertical: 7 }} contentContainerStyle={{ gap: 6, alignItems: 'center' }}>
-            {['How am I doing?', 'Cut my spending', 'Am I saving enough?', 'Biggest expense?'].map(q => (
-              <TouchableOpacity key={q} onPress={() => setChatInput(q)}
-                style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border }}>
-                <Text style={{ color: C.textSub, fontSize: 11 }}>{q}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        )}
         <TouchableOpacity
           onPress={isRecording ? stopRecording : startRecording}
           disabled={transcribingVoice}
