@@ -2055,7 +2055,7 @@ export default function App() {
               <View style={{ flex: 1 }}>
                 <Text style={s.balanceLabel}>{selectedAccount ? (selectedAccount.name || 'Account').toUpperCase() : 'TOTAL BALANCE'}</Text>
                 <Text style={s.balanceAmt}>{fmtCurrency(selectedAccount?.balances?.current || 0)}</Text>
-                {selectedAccount && <Text style={s.balanceSub}>{[accountBankMap[selectedAccount.account_id], selectedAccount.subtype].filter(Boolean).join(' · ')}</Text>}
+                {selectedAccount && <Text style={s.balanceSub}>{[accountBankMap[selectedAccount.account_id], selectedAccount.subtype, selectedAccount.mask ? `••••${selectedAccount.mask}` : null].filter(Boolean).join(' · ')}</Text>}
               </View>
               {(loadingAccounts || loadingTx) && (
                 <ActivityIndicator color={C.accent} size="small" style={{ marginTop: 4 }} />
@@ -2088,7 +2088,7 @@ export default function App() {
                       <View style={{ flex: 1 }}>
                         <Text style={s.balanceLabel}>{(item.name || 'Account').toUpperCase()}</Text>
                         <Text style={s.balanceAmt}>{fmtCurrency(item.balances?.current || 0)}</Text>
-                        <Text style={s.balanceSub}>{[accountBankMap[item.account_id], item.subtype].filter(Boolean).join(' · ')}</Text>
+                        <Text style={s.balanceSub}>{[accountBankMap[item.account_id], item.subtype, item.mask ? `••••${item.mask}` : null].filter(Boolean).join(' · ')}</Text>
                       </View>
                       {(loadingAccounts || loadingTx) && (
                         <ActivityIndicator color={C.accent} size="small" style={{ marginTop: 4 }} />
@@ -2552,10 +2552,7 @@ export default function App() {
       }
     }
 
-    const healthScore = Math.min(100, Math.max(0, budgetAdherenceScore + trendScore));
-    const noHistory = budgets.length > 0 && payPeriodOptions.length <= 1;
-    const scoreColor = noHistory ? C.textMuted : healthScore >= 90 ? C.green : healthScore >= 75 ? C.accent : healthScore >= 55 ? C.amber : C.red;
-    const scoreLabel = noHistory ? 'No History Yet' : healthScore >= 90 ? 'Excellent' : healthScore >= 75 ? 'Good' : healthScore >= 55 ? 'Fair' : 'Needs Attention';
+    // healthScore, noHistory, scoreColor, scoreLabel defined below in coaching section
 
     // ── SVG Gauge ──────────────────────────────────────
     const gaugeSize = 170;
@@ -2569,36 +2566,29 @@ export default function App() {
     const ex = cx + r * Math.cos(toRad(endDeg)), ey = cy + r * Math.sin(toRad(endDeg));
     const largeArc = (healthScore / 100) * sweep > 180 ? 1 : 0;
 
-    // ── Coaching tips ──────────────────────────────────
+    // ── Health Score = Trend only (completed periods only, no current period) ──
+    // Score out of 100 = trendScore scaled from 30
+    const healthScore = Math.min(100, Math.max(0, Math.round((trendScore / 30) * 100)));
+    const noHistory = budgets.length === 0 || payPeriodOptions.length <= 2;
+    const scoreColor = noHistory ? C.textMuted : healthScore >= 90 ? C.green : healthScore >= 75 ? C.accent : healthScore >= 55 ? C.amber : C.red;
+    const scoreLabel = noHistory ? 'No History Yet' : healthScore >= 90 ? 'Excellent' : healthScore >= 75 ? 'Good' : healthScore >= 55 ? 'Fair' : 'Needs Attention';
+
+    // ── Coaching tips (trend only) ──────────────────────
     const components = [
-      { key: 'budget', label: 'Budget', score: budgetAdherenceScore, max: 70 },
-      { key: 'trend',  label: 'Trend',  score: trendScore, max: 30 },
+      { key: 'trend', label: 'Trend', score: trendScore, max: 30 },
     ];
     const getTip = (key) => {
-      if (key === 'budget') {
-        if (!budgets.length) return { title: 'Set up budgets', body: 'Budget Adherence is worth 70 points but requires budgets. Go to the Budget tab to create some.' };
-        const overBudgets = budgets.map(b => {
-          const sp = transactions.filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= periodStart && getEffectiveCategory(tx) === b.category).reduce((s,tx)=>s+parseFloat(tx.amount||0),0);
-          return { label: PLAID_CATEGORIES.find(c=>c.key===b.category)?.label||b.category, over: sp - parseFloat(b.monthly_limit||0), spent: sp };
-        }).filter(b => b.over > 0).sort((a,b)=>b.over-a.over);
-        if (overBudgets.length > 0) {
-          const list = overBudgets.map(b => `${b.label} ($${fmtMoney(b.over)} over)`).join(', ');
-          return { title: `${overBudgets.length} budget${overBudgets.length > 1 ? 's' : ''} over this period`, body: `You're over on: ${list}. Cutting back here has the most impact on your score.` };
-        }
-        const currentPeriodSpend = transactions.filter(tx => !isIncomeTx(tx) && (tx.transaction_date||'') >= periodStart && budgetedCats.has(getEffectiveCategory(tx))).reduce((s,tx)=>s+parseFloat(tx.amount||0),0);
-        const pct = totalBudget > 0 ? Math.round((currentPeriodSpend / totalBudget) * 100) : 0;
-        return { title: 'On track this period', body: `You've used ${pct}% of your budget this pay period. Stay under 100% to keep full points.` };
-      }
       if (key === 'trend') {
         if (!budgets.length) return { title: 'Set up budgets', body: 'Budget Trend requires budgets to track. Go to the Budget tab to create some.' };
-        if (trendPeriodsTotal === 0) return { title: 'Not enough history', body: 'Complete a full pay period so we can start tracking your budget consistency over time.' };
-        return trendPeriodsUnder === trendPeriodsTotal
-          ? { title: 'Perfect consistency', body: `You've stayed under budget all ${trendPeriodsTotal} tracked period${trendPeriodsTotal > 1 ? 's' : ''}. Keep it up to hold full Trend points.` }
-          : { title: `${trendPeriodsUnder} of ${trendPeriodsTotal} periods under budget`, body: `Consistency is key — each period you stay under budget raises your Trend score. Periods where you went over are pulling it down.` };
+        if (trendPeriodsTotal === 0) return { title: 'Not enough history', body: 'Complete your first full pay period under budget to start building your Trend score.' };
+        if (trendPeriodsUnder === trendPeriodsTotal) {
+          return { title: 'Perfect consistency', body: `You've stayed under budget all ${trendPeriodsTotal} tracked completed period${trendPeriodsTotal > 1 ? 's' : ''}. Keep it up to hold a high Trend score.` };
+        }
+        return { title: `${trendPeriodsUnder} of ${trendPeriodsTotal} periods under budget`, body: `Consistency is key — staying under budget in completed periods raises your score. Periods where you overspent are pulling it down.` };
       }
       return { title: '', body: '' };
     };
-    const weakComponents = [...components].sort((a,b) => (a.score/a.max) - (b.score/b.max)).slice(0, 2).filter(c => (c.score/c.max) < 0.85);
+    const weakComponents = [{ key: 'trend', label: 'Trend', score: trendScore, max: 30 }].filter(c => (c.score / c.max) < 0.85);
 
     // ── Spending pace chart (pay period) ───────────────
     const chartPeriodStartDate = new Date(selStart + 'T00:00:00');
@@ -2679,8 +2669,7 @@ export default function App() {
             </Svg>
             <View style={{ flex: 1, marginLeft: 16, gap: 10 }}>
               {[
-                { label: 'Budget', score: budgetAdherenceScore, max: 70, hint: budgetAdherencePct != null ? `${budgetAdherencePct}% of limit` : 'No budgets set' },
-                { label: 'Trend',  score: trendScore, max: 30, hint: budgets.length === 0 ? 'No budgets set' : trendPeriodsTotal === 0 ? 'No history yet' : `${trendPeriodsUnder}/${trendPeriodsTotal} periods under budget` },
+                { label: 'Trend', score: trendScore, max: 30, hint: budgets.length === 0 ? 'No budgets set' : trendPeriodsTotal === 0 ? 'No history yet' : `${trendPeriodsUnder}/${trendPeriodsTotal} periods under budget` },
               ].map(({ label, score, max, hint }) => {
                 const pct = Math.round((score / max) * 100);
                 const col = pct >= 80 ? C.green : pct >= 55 ? C.accent : pct >= 35 ? C.amber : C.red;
@@ -4360,17 +4349,17 @@ export default function App() {
           <Text style={{ color: C.textSub, fontSize: 13 }}>Finlit is thinking…</Text>
         </View>
       )}
-      {chatMessages.length <= 1 && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingHorizontal: 12, paddingVertical: 6 }} contentContainerStyle={{ gap: 6, alignItems: 'center' }}>
-          {['How am I doing?', 'Cut my spending', 'Am I saving enough?', 'Biggest expense?'].map(q => (
-            <TouchableOpacity key={q} onPress={() => setChatInput(q)}
-              style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border }}>
-              <Text style={{ color: C.textSub, fontSize: 11 }}>{q}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      )}
       <View style={s.chatBar}>
+        {chatMessages.length <= 1 && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ position: 'absolute', bottom: '100%', left: 0, right: 0, backgroundColor: C.bg, borderTopWidth: 1, borderTopColor: C.border, paddingHorizontal: 12, paddingVertical: 7 }} contentContainerStyle={{ gap: 6, alignItems: 'center' }}>
+            {['How am I doing?', 'Cut my spending', 'Am I saving enough?', 'Biggest expense?'].map(q => (
+              <TouchableOpacity key={q} onPress={() => setChatInput(q)}
+                style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border }}>
+                <Text style={{ color: C.textSub, fontSize: 11 }}>{q}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
         <TouchableOpacity
           onPress={isRecording ? stopRecording : startRecording}
           disabled={transcribingVoice}
@@ -4734,8 +4723,7 @@ export default function App() {
               Your Financial Health Score (0–100) is made up of two components:
             </Text>
             {[
-              { label: 'Budget Adherence', max: 70, color: C.green, desc: 'Tracks your spending vs. budget limits for each category this pay period. Stay at or under your limit = full 70 points. Going over reduces your score — 20%+ over a category = 0 for that category.' },
-              { label: 'Budget Trend', max: 30, color: C.accent, desc: 'Measures how consistently you stay under your total budget across recent pay periods. Each completed period earns full credit if under budget, partial credit if over. The average across all tracked periods determines your Trend score.' },
+              { label: 'Budget Trend', max: 100, color: C.accent, desc: 'Your score (0–100) is based entirely on completed pay periods — the current in-progress period never counts. Each completed period where you stayed under your total budget raises your score. Periods where you overspent pull it down. More consistent history = higher score.' },
             ].map(({ label, max, color, desc }) => (
               <View key={label} style={{ marginBottom: 16, padding: 12, backgroundColor: C.bg, borderRadius: 12, borderWidth: 1, borderColor: C.border }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
